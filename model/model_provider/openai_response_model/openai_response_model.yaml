@@ -1,0 +1,21 @@
+provider: openai
+interface: openai_response
+model: your-openai-response-model
+api_key_env: OPENAI_API_KEY
+organization_env: OPENAI_ORGANIZATION
+base_url: https://api.openai.com/v1
+stream: UNSET
+
+parameters:
+  max_tokens: UNSET
+  temperature: UNSET
+  top_p: UNSET
+  thinking_enable: UNSET
+  reasoning_effort: UNSET
+  parallel_tool_calls: UNSET
+  tools: UNSET
+  tool_choice: UNSET
+
+client_kwargs: {}
+generate_kwargs: {}
+extra_body: {}
