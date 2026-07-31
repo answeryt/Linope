@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "max_chars": 20000,
+  "chars_per_token": 4,
+  "context_window_fraction": 0.06,
+  "max_dynamic_chars": 500000,
+  "head_ratio": 0.7,
+  "tail_ratio": 0.2
+}
