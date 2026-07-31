@@ -1,4 +1,4 @@
-"""``ephemeral_system_prompt`` 的一次性提示词插件。"""
+"""One-shot prompt plugin for ``ephemeral_system_prompt``."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .core import (
 
 @dataclass(frozen=True, slots=True)
 class EphemeralSystemPromptPlugin:
-    """从 Agent 读取并立即清空临时系统提示词。"""
+    """Read and immediately clear the transient system prompt from the agent."""
 
     name: str = "ephemeral_system_prompt"
     priority: int = 100
@@ -28,8 +28,9 @@ class EphemeralSystemPromptPlugin:
         agent = context.require("agent")
         value = getattr(agent, "ephemeral_system_prompt", None)
 
-        # 先清空再返回。这样即使后续请求构建或发送失败，该提示词也不会在
-        # 下一个独立请求中意外重放；当前请求自身的重试会复用已构建消息。
+        # Clear before returning. If a later request build or send fails, the
+        # prompt will not replay on the next independent request; retries for
+        # the current request reuse the already-built message.
         agent.ephemeral_system_prompt = None
 
         if not isinstance(value, str):
@@ -44,13 +45,13 @@ _builder = TransientPromptBuilder(_registry)
 
 
 def consume_ephemeral_system_prompt(agent: Any) -> str:
-    """消费 Agent 上尚未使用的临时系统提示词。"""
+    """Consume any unused transient system prompt on the agent."""
 
     return _builder.consume({"agent": agent})
 
 
 def merge_ephemeral_system_prompt(base_prompt: str | None, agent: Any) -> str:
-    """把一次性系统提示词合并到缓存系统提示词末尾。"""
+    """Append the one-shot system prompt to the cached system prompt."""
 
     transient = consume_ephemeral_system_prompt(agent)
     return "\n\n".join(

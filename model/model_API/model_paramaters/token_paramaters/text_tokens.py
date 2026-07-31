@@ -1,8 +1,8 @@
 def estimate_text_tokens_rough(text: str) -> int:
-    """按 model_metadata.py 的规则粗略估算文本 Token。
-
-    ASCII 及普通非 CJK 文本约按 4 字符一个 Token 计算；
-    CJK、韩文及全角字符约按一个字符一个 Token 计算。
+    """
+    Estimate the text tokens for a given text string, using a rough approximation based on the model's metadata.
+    ASCII and normal non-CJK text is approximately 4 characters per token;
+    CJK, Korean, and full-width characters are approximately one character per token.
     """
     if not text:
         return 0

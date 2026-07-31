@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""模型推理内容块插件。"""
+"""Model reasoning content block plugin."""
 
 from typing import Literal
 from uuid import uuid4
@@ -12,7 +12,7 @@ def _generate_id() -> str:
 
 
 class ThinkingBlock(BaseModel):
-    """模型推理内容，允许保留模型提供商的扩展字段。"""
+    """Model reasoning content, allowing the model provider to preserve extended fields."""
 
     model_config = ConfigDict(extra="allow")
 

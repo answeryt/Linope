@@ -2,10 +2,10 @@ import json
 
 
 def estimate_tool_tokens_rough(tools: list[dict]) -> int:
-    """按工具名称、描述和参数 Schema 的字符量粗略估算 Token。
+    """Estimate the token count for a list of tools, using a rough approximation based on the character count of the tool name, description, and parameter schema.
 
-    与原脚本相同，主要字段总字符数按约 4 字符一个 Token 换算。
-    本插件不维护跨调用缓存，缓存策略留给未来连接层决定。
+    The total character count of the main fields is approximately 4 characters per token.
+    This plugin does not maintain cross-call caching, the caching strategy is left to the future connection layer.
     """
     total_chars = 0
     for tool in tools or []:

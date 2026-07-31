@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""普通文本内容块插件。"""
+"""Plain text content block plugin."""
 
 from typing import Literal
 from uuid import uuid4
@@ -12,7 +12,7 @@ def _generate_id() -> str:
 
 
 class TextBlock(BaseModel):
-    """普通文本内容。"""
+    """Plain text content."""
 
     type: Literal["text"] = "text"
     text: str

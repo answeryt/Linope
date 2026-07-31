@@ -2,10 +2,10 @@ def estimate_message_tokens_rough(
     message: dict,
     text_estimator,
 ) -> int:
-    """估算单条消息的文本 Token，不计图片固定成本。
+    """Estimate the text tokens for a single message, without counting the fixed cost of images.
 
-    text_estimator 由调用侧传入，因此本插件不导入或绑定具体文本估算插件。
-    Base64 图片会替换为短占位符，避免将图片字节当作文本 Token。
+    text_estimator is passed in by the caller, so this plugin does not import or bind any specific text estimation plugins.
+    Base64 images are replaced with short placeholders to avoid counting image bytes as text tokens.
     """
     if not isinstance(message, dict):
         return text_estimator(str(message))
@@ -42,7 +42,7 @@ def estimate_messages_tokens_rough(
     text_estimator,
     image_estimator,
 ) -> int:
-    """估算消息列表 Token；具体文本和图片算法由调用侧注入。"""
+    """Estimate the total token count for a list of messages; specific text and image estimation algorithms are injected by the caller."""
     total = 0
     for message in messages or []:
         total += estimate_message_tokens_rough(message, text_estimator)

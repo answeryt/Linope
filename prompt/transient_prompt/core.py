@@ -1,7 +1,8 @@
-"""一次性提示词插件的通用编排框架。
+"""Generic orchestration framework for one-shot prompt plugins.
 
-瞬态插件不使用缓存。每次调用 ``consume`` 都表示宿主准备构建一个新的
-模型请求；插件应在返回提示词后同步清除自己的来源，使内容最多被加载一次。
+Transient plugins are not cached. Each call to ``consume`` indicates the host
+is building a new model request; plugins should synchronously clear their
+source after returning prompt text so content is loaded at most once.
 """
 
 from __future__ import annotations
@@ -13,16 +14,16 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class TransientPromptPluginError(RuntimeError):
-    """一次性提示词插件执行失败。"""
+    """One-shot prompt plugin execution failed."""
 
 
 class DuplicateTransientPluginError(TransientPromptPluginError):
-    """注册了重名的一次性提示词插件。"""
+    """A transient prompt plugin with the same name was already registered."""
 
 
 @dataclass(frozen=True, slots=True)
 class TransientPromptContext:
-    """传递给一次性提示词插件的只读上下文。"""
+    """Read-only context passed to transient prompt plugins."""
 
     values: Mapping[str, Any] = field(default_factory=dict)
 
@@ -41,7 +42,7 @@ class TransientPromptContext:
             return self.values[key]
         except KeyError as exc:
             raise TransientPromptPluginError(
-                f"缺少必需的一次性提示词上下文：{key}"
+                f"Missing required transient prompt context: {key}"
             ) from exc
 
 
@@ -50,21 +51,21 @@ TransientPromptOutput = str | Sequence[str] | None
 
 @runtime_checkable
 class TransientPromptPlugin(Protocol):
-    """独立的一次性提示词插件协议。"""
+    """Protocol for an isolated one-shot prompt plugin."""
 
     name: str
     priority: int
 
     def enabled(self, context: TransientPromptContext) -> bool:
-        """返回插件在本次请求中是否启用。"""
+        """Return whether the plugin is enabled for this request."""
 
     def consume(self, context: TransientPromptContext) -> TransientPromptOutput:
-        """返回并消费本次请求的提示词。"""
+        """Return and consume prompt text for this request."""
 
 
 @dataclass(frozen=True, slots=True)
 class TransientPromptFragment:
-    """单个插件消费后产生的提示词片段。"""
+    """Prompt fragment produced after a single plugin consumption."""
 
     plugin: str
     priority: int
@@ -72,7 +73,7 @@ class TransientPromptFragment:
 
 
 class TransientPromptRegistry:
-    """维护相互独立的一次性提示词插件。"""
+    """Maintains mutually isolated transient prompt plugins."""
 
     def __init__(self) -> None:
         self._plugins: dict[str, tuple[int, TransientPromptPlugin]] = {}
@@ -80,14 +81,14 @@ class TransientPromptRegistry:
 
     def register(self, plugin: TransientPromptPlugin) -> None:
         if not isinstance(plugin, TransientPromptPlugin):
-            raise TypeError("插件必须实现 TransientPromptPlugin 协议")
+            raise TypeError("Plugin must implement the TransientPromptPlugin protocol")
         if not isinstance(plugin.name, str) or not plugin.name.strip():
-            raise ValueError("插件 name 必须是非空字符串")
+            raise ValueError("Plugin name must be a non-empty string")
         if not isinstance(plugin.priority, int):
-            raise ValueError("插件 priority 必须是整数")
+            raise ValueError("Plugin priority must be an integer")
         if plugin.name in self._plugins:
             raise DuplicateTransientPluginError(
-                f"一次性提示词插件已存在：{plugin.name}"
+                f"Transient prompt plugin already exists: {plugin.name}"
             )
         self._plugins[plugin.name] = (self._next_order, plugin)
         self._next_order += 1
@@ -104,7 +105,7 @@ class TransientPromptRegistry:
 
 
 class TransientPromptBuilder:
-    """按优先级消费插件，并组装当前请求的一次性提示词。"""
+    """Consume plugins by priority and assemble the transient prompt for the current request."""
 
     def __init__(
         self,
@@ -113,7 +114,7 @@ class TransientPromptBuilder:
         separator: str = "\n\n",
     ) -> None:
         if not separator:
-            raise ValueError("separator 不能为空")
+            raise ValueError("separator must not be empty")
         self.registry = registry or TransientPromptRegistry()
         self.separator = separator
 
@@ -149,7 +150,7 @@ class TransientPromptBuilder:
                     )
             except Exception as exc:
                 raise TransientPromptPluginError(
-                    f"一次性提示词插件 {plugin.name!r} 执行失败"
+                    f"Transient prompt plugin {plugin.name!r} failed"
                 ) from exc
         return tuple(fragments)
 
@@ -161,7 +162,7 @@ class TransientPromptBuilder:
         normalized: list[str] = []
         for candidate in candidates:
             if not isinstance(candidate, str):
-                raise TypeError("插件输出必须是字符串、字符串序列或 None")
+                raise TypeError("Plugin output must be a string, sequence of strings, or None")
             content = candidate.strip()
             if content:
                 normalized.append(content)

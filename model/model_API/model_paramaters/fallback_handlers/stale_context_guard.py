@@ -1,5 +1,5 @@
 def should_reject_cached_context(model: str, context_length: int) -> bool:
-    """识别原脚本中已知会低报上下文窗口的陈旧缓存。"""
+    """Identify known stale context caches that report a lower context window."""
     model_lower = str(model or "").lower()
     if _looks_like_kimi(model_lower) and context_length <= 32_768:
         return True
@@ -14,7 +14,7 @@ def should_reject_metadata_context(
     model: str,
     context_length: int,
 ) -> bool:
-    """识别原脚本中已知会低报上下文窗口的 Provider 元数据。"""
+    """Identify known stale context provider metadata that reports a lower context window."""
     model_lower = str(model or "").lower()
     return _looks_like_kimi(model_lower) and context_length == 32_768
 

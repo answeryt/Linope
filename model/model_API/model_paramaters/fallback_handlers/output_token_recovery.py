@@ -4,9 +4,9 @@ import re
 def parse_available_output_tokens_from_error(
     error_message: str,
 ) -> int | None:
-    """从已知 Provider 错误格式中提取可用输出 Token。
+    """Extract available output tokens from known provider error formats.
 
-    只处理输出上限过大，不改变模型的上下文窗口。
+    Only handles output limit exceeded, does not change the model's context window.
     """
     error_lower = str(error_message or "").lower()
     if not _looks_like_output_cap_error(error_lower):
@@ -75,7 +75,7 @@ def parse_available_output_tokens_from_error(
 
 
 def is_output_cap_error(error_message: str) -> bool:
-    """判断错误是否由输出 Token 参数过大导致。"""
+    """Check if the error is caused by the output token parameter being too large."""
     error_lower = str(error_message or "").lower()
     mentions_output_parameter = any(
         name in error_lower

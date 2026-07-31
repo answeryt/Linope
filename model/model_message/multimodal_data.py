@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""图片、音频、视频及文件等多模态数据插件。"""
+"""Multimodal data plugin for images, audio, video, and files."""
 
 from typing import Literal
 from uuid import uuid4
@@ -12,7 +12,7 @@ def _generate_id() -> str:
 
 
 class Base64Source(BaseModel):
-    """以内嵌 Base64 字符串表示的二进制数据来源。"""
+    """Binary data source represented by an embedded Base64 string."""
 
     type: Literal["base64"] = "base64"
     data: str
@@ -20,7 +20,7 @@ class Base64Source(BaseModel):
 
 
 class URLSource(BaseModel):
-    """以 URL 表示的二进制数据来源。"""
+    """Binary data source represented by a URL."""
 
     type: Literal["url"] = "url"
     url: AnyUrl
@@ -28,12 +28,12 @@ class URLSource(BaseModel):
 
     @field_serializer("url")
     def serialize_url(self, url: AnyUrl) -> str:
-        """将 Pydantic URL 序列化为普通字符串。"""
+        """Serialize a Pydantic URL to a regular string."""
         return str(url)
 
 
 class DataBlock(BaseModel):
-    """图片、音频、视频及文件等多模态数据。"""
+    """Multimodal data for images, audio, video, and files."""
 
     type: Literal["data"] = "data"
     id: str = Field(default_factory=_generate_id)

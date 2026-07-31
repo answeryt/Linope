@@ -5,7 +5,7 @@ def estimate_image_tokens(
     message: dict,
     cost_per_image: int = DEFAULT_IMAGE_TOKEN_COST,
 ) -> int:
-    """统计消息中的图片内容，并按固定成本估算 Token。"""
+    """Count image content in a message and estimate tokens based on a fixed cost."""
     if not isinstance(message, dict):
         return 0
 

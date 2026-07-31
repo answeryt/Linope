@@ -9,7 +9,7 @@ CONTEXT_PROBE_TIERS = (
 
 
 def get_next_context_probe_tier(current_length: int) -> int | None:
-    """返回下一个更低的上下文探测档位。"""
+    """Return the next lower context probe tier."""
     for context_length in CONTEXT_PROBE_TIERS:
         if context_length < current_length:
             return context_length

@@ -1,7 +1,8 @@
-"""通用、可缓存且相互隔离的系统提示词插件框架。
+"""Generic, cacheable, and mutually isolated system prompt plugin framework.
 
-核心模块只负责编排，不包含任何产品特定提示词。插件只能读取
-``PromptContext`` 并返回文本，不能通过框架查询、导入或调用其他插件。
+The core module is responsible for orchestration only and contains no
+product-specific prompts. Plugins may only read ``PromptContext`` and return
+text; they must not query, import, or invoke other plugins through the framework.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class PromptTier(str, Enum):
-    """系统提示词的固定拼接层级。"""
+    """Fixed assembly tiers for system prompts."""
 
     STABLE = "stable"
     CONTEXT = "context"
@@ -30,23 +31,24 @@ _TIER_ORDER = {
 
 
 class PromptPluginError(RuntimeError):
-    """系统提示词插件错误。"""
+    """System prompt plugin error."""
 
 
 class DuplicatePluginError(PromptPluginError):
-    """注册了重名插件。"""
+    """A plugin with the same name was already registered."""
 
 
 class PluginIsolationError(PromptPluginError):
-    """插件声明了框架禁止的插件间依赖。"""
+    """A plugin declared a cross-plugin dependency forbidden by the framework."""
 
 
 @dataclass(frozen=True, slots=True)
 class PromptContext:
-    """所有插件共享的只读输入。
+    """Read-only input shared by all plugins.
 
-    ``values`` 会被浅拷贝并包装为只读映射，避免插件之间通过修改共享
-    字典传递状态。``cache_key`` 由宿主按会话提供；为 ``None`` 时不缓存。
+    ``values`` is shallow-copied and wrapped as a read-only mapping so plugins
+    cannot pass state by mutating a shared dict. ``cache_key`` is supplied by
+    the host per session; when ``None``, caching is disabled.
     """
 
     values: Mapping[str, Any] = field(default_factory=dict)
@@ -66,7 +68,7 @@ class PromptContext:
         try:
             return self.values[key]
         except KeyError as exc:
-            raise PromptPluginError(f"缺少必需的提示词上下文：{key}") from exc
+            raise PromptPluginError(f"Missing required prompt context: {key}") from exc
 
 
 PromptOutput = str | Sequence[str] | None
@@ -74,10 +76,11 @@ PromptOutput = str | Sequence[str] | None
 
 @runtime_checkable
 class SystemPromptPlugin(Protocol):
-    """独立提示词插件协议。
+    """Protocol for an isolated prompt plugin.
 
-    插件应只依赖本协议及自身业务依赖。框架不会向插件暴露注册表、
-    builder 或其他插件实例，因此插件之间无法通过框架相互调用。
+    Plugins should depend only on this protocol and their own business logic.
+    The framework does not expose the registry, builder, or other plugin
+    instances to plugins, so plugins cannot invoke one another through it.
     """
 
     name: str
@@ -85,15 +88,15 @@ class SystemPromptPlugin(Protocol):
     priority: int
 
     def enabled(self, context: PromptContext) -> bool:
-        """返回当前上下文是否启用插件。"""
+        """Return whether the plugin is enabled for the current context."""
 
     def render(self, context: PromptContext) -> PromptOutput:
-        """渲染一个或多个提示词片段。"""
+        """Render one or more prompt fragments."""
 
 
 @dataclass(frozen=True, slots=True)
 class FunctionPromptPlugin:
-    """将独立函数适配为提示词插件。"""
+    """Adapt a standalone function as a prompt plugin."""
 
     name: str
     render_fn: Callable[[PromptContext], PromptOutput]
@@ -110,7 +113,7 @@ class FunctionPromptPlugin:
 
 @dataclass(frozen=True, slots=True)
 class PromptFragment:
-    """完成规范化后的单个提示词片段。"""
+    """A single normalized prompt fragment."""
 
     plugin: str
     tier: PromptTier
@@ -120,7 +123,7 @@ class PromptFragment:
 
 @dataclass(frozen=True, slots=True)
 class PromptParts:
-    """按缓存友好顺序排列的三层提示词。"""
+    """Three prompt layers ordered for cache-friendly assembly."""
 
     stable: str = ""
     context: str = ""
@@ -143,7 +146,7 @@ class PromptParts:
 
 @dataclass(frozen=True, slots=True)
 class PluginFailure:
-    """在容错模式下记录的插件失败。"""
+    """Plugin failure recorded in fault-tolerant mode."""
 
     plugin: str
     error: Exception
@@ -151,7 +154,7 @@ class PluginFailure:
 
 @dataclass(frozen=True, slots=True)
 class PromptBuildResult:
-    """系统提示词构建结果及可选诊断信息。"""
+    """System prompt build result with optional diagnostics."""
 
     parts: PromptParts
     fragments: tuple[PromptFragment, ...]
@@ -169,7 +172,7 @@ class _RegisteredPlugin:
 
 
 class SystemPromptRegistry:
-    """维护独立插件集合，不提供插件间查找能力。"""
+    """Maintains an isolated plugin set with no cross-plugin lookup."""
 
     def __init__(self) -> None:
         self._plugins: dict[str, _RegisteredPlugin] = {}
@@ -183,7 +186,7 @@ class SystemPromptRegistry:
     def register(self, plugin: SystemPromptPlugin) -> None:
         self._validate(plugin)
         if plugin.name in self._plugins:
-            raise DuplicatePluginError(f"系统提示词插件已存在：{plugin.name}")
+            raise DuplicatePluginError(f"System prompt plugin already exists: {plugin.name}")
         self._plugins[plugin.name] = _RegisteredPlugin(
             plugin=plugin,
             order=self._next_order,
@@ -204,7 +207,7 @@ class SystemPromptRegistry:
             self._revision += 1
 
     def snapshot(self) -> tuple[SystemPromptPlugin, ...]:
-        """返回稳定排序后的插件快照，不暴露给插件本身。"""
+        """Return a stably sorted plugin snapshot, not exposed to plugins."""
 
         entries = sorted(
             self._plugins.values(),
@@ -219,26 +222,27 @@ class SystemPromptRegistry:
     @staticmethod
     def _validate(plugin: SystemPromptPlugin) -> None:
         if not isinstance(plugin, SystemPromptPlugin):
-            raise TypeError("插件必须实现 SystemPromptPlugin 协议")
+            raise TypeError("Plugin must implement the SystemPromptPlugin protocol")
         if not isinstance(plugin.name, str) or not plugin.name.strip():
-            raise ValueError("插件 name 必须是非空字符串")
+            raise ValueError("Plugin name must be a non-empty string")
         if not isinstance(plugin.tier, PromptTier):
-            raise ValueError("插件 tier 必须是 PromptTier")
+            raise ValueError("Plugin tier must be a PromptTier")
         if not isinstance(plugin.priority, int):
-            raise ValueError("插件 priority 必须是整数")
+            raise ValueError("Plugin priority must be an integer")
 
-        # 显式拒绝常见的插件依赖声明。插件组合只能由宿主通过注册顺序
-        # 和共享上下文完成，不能形成插件依赖图。
+        # Explicitly reject common plugin dependency declarations. Composition
+        # may only be done by the host via registration order and shared
+        # context, not via a plugin dependency graph.
         for attribute in ("depends_on", "dependencies", "requires_plugins"):
             dependency = getattr(plugin, attribute, None)
             if dependency:
                 raise PluginIsolationError(
-                    f"插件 {plugin.name!r} 声明了禁止的插件间依赖：{attribute}"
+                    f"Plugin {plugin.name!r} declared a forbidden cross-plugin dependency: {attribute}"
                 )
 
 
 class SystemPromptBuilder:
-    """调用隔离插件并组装系统提示词。"""
+    """Invoke isolated plugins and assemble the system prompt."""
 
     def __init__(
         self,
@@ -249,9 +253,9 @@ class SystemPromptBuilder:
         max_cache_entries: int = 128,
     ) -> None:
         if not separator:
-            raise ValueError("separator 不能为空")
+            raise ValueError("separator must not be empty")
         if max_cache_entries < 0:
-            raise ValueError("max_cache_entries 不能为负数")
+            raise ValueError("max_cache_entries must not be negative")
         self.registry = registry or SystemPromptRegistry()
         self.separator = separator
         self.fail_fast = fail_fast
@@ -325,7 +329,7 @@ class SystemPromptBuilder:
             except Exception as exc:
                 if self.fail_fast:
                     raise PromptPluginError(
-                        f"系统提示词插件 {plugin.name!r} 执行失败"
+                        f"System prompt plugin {plugin.name!r} failed"
                     ) from exc
                 failures.append(PluginFailure(plugin=plugin.name, error=exc))
 
@@ -343,7 +347,7 @@ class SystemPromptBuilder:
         return result
 
     def invalidate(self, cache_key: Hashable | None = None) -> None:
-        """清除全部缓存，或清除指定宿主会话的缓存。"""
+        """Clear all cache entries, or clear cache for a specific host session."""
 
         if cache_key is None:
             self._cache.clear()
@@ -359,7 +363,7 @@ class SystemPromptBuilder:
     ) -> PromptContext:
         if isinstance(context, PromptContext):
             if cache_key is not None and cache_key != context.cache_key:
-                raise ValueError("cache_key 与 PromptContext.cache_key 冲突")
+                raise ValueError("cache_key conflicts with PromptContext.cache_key")
             return context
         return PromptContext(values=context or {}, cache_key=cache_key)
 
@@ -371,7 +375,7 @@ class SystemPromptBuilder:
         normalized: list[str] = []
         for candidate in candidates:
             if not isinstance(candidate, str):
-                raise TypeError("插件输出必须是字符串、字符串序列或 None")
+                raise TypeError("Plugin output must be a string, sequence of strings, or None")
             content = candidate.strip()
             if content:
                 normalized.append(content)

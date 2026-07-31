@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""工具执行结果及结果状态插件。"""
+"""Tool execution result and result status plugin."""
 
 from enum import StrEnum
 from typing import Any, Literal
@@ -11,7 +11,7 @@ from .text_block import TextBlock
 
 
 class ToolResultState(StrEnum):
-    """工具执行结果状态机。"""
+    """Tool execution result state machine."""
 
     SUCCESS = "success"
     ERROR = "error"
@@ -21,7 +21,7 @@ class ToolResultState(StrEnum):
 
 
 class ToolResultBlock(BaseModel):
-    """工具执行产生的文本或多模态结果。"""
+    """Text or multimodal results produced by tool execution."""
 
     model_config = ConfigDict(use_enum_values=True)
 
