@@ -1,0 +1,40 @@
+steps:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: begin
+  - name: pypyr.steps.call
+    while:
+      max: 3
+    swallow: True
+    in:
+      call:
+        groups: sg1
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: end
+sg1:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: 'sg1.{whileCounter}'
+  - name: pypyr.steps.call
+    while:
+      max: 3
+    in:
+      call:
+        groups: sg2
+  - name: pypyr.steps.assert
+    in:
+      assert:
+        this: false
+sg2:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: 'sg2.{whileCounter}'

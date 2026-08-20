@@ -1,0 +1,7 @@
+# To execute this pipeline, shell something like:
+# pypyr echo "text goes here"
+context_parser: pypyr.parser.string
+steps:
+  - name: pypyr.steps.echo
+    in:
+      echoMe: '{argString}'

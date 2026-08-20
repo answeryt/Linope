@@ -1,0 +1,67 @@
+steps:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: A
+  - name: pypyr.steps.pyimport
+    in:
+      pyImport: import math
+  - name: pypyr.steps.pype
+    in:
+      pype:
+        name: tests/pipelines/pype/pyimport/child-new-context
+        args:
+          a: -3
+          b: 4
+        out:
+          freshchildlist: out
+
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        unpack: True
+        addMe: '{freshchildlist}'
+
+  # child only import doesn't apply to parent
+  - name: pypyr.steps.assert
+    swallow: True
+    in:
+      assert: !py arb_func_in_arbmod2('should fail')
+  - name: pypyr.steps.assert
+    in:
+      assert:
+        this: '{runErrors[0][description]}'
+        equals: name 'arb_func_in_arbmod2' is not defined
+
+  # parent imports apply to child
+  - name: pypyr.steps.pype
+    in:
+      a: -3
+      b: 4
+      pype:
+        name: child-parent-context
+
+  # can use child imports in parent because shared context
+  - name: pypyr.steps.pyimport
+    comment: repeat import to same parent works
+    in:
+      pyImport: import tests.arbpack.arbmultiattr
+
+  - name: pypyr.steps.assert
+    swallow: True
+    in:
+      arb_int: 6.1
+      assert:
+        this: !py arb_func_in_arbmod2('will work 2') +
+          tests.arbpack.arbmod3.arb_func_in_arbmod3(' too 2') +
+          tests.arbpack.arbmultiattr.get_func(' end ') + 
+          str(math.floor(arb_int))
+        equals: will work too 2 end 6
+
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: D

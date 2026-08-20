@@ -1,0 +1,27 @@
+steps:
+  - name: pypyr.steps.py
+    in:
+      pycode: assert context.current_pipeline.name == 'tests/pipelines/pype/pipeerr'
+
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: A
+
+  - name: pypyr.steps.pype
+    swallow: True
+    in:
+      arb: B
+      pype:
+        name: pipeerr_child
+
+  - name: pypyr.steps.py
+    in:
+      pycode: assert context.current_pipeline.name == 'tests/pipelines/pype/pipeerr'
+  
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: C
