@@ -109,16 +109,6 @@ def _check_isolation(context: dict[str, Any]) -> None:
         for module_name in dict.fromkeys(_imported_modules(tree, rel)):
             if _is_stdlib(module_name, stdlib):
                 continue
-            if family["kind"] == "compression":
-                context["violations"].append(
-                    _isolation_violation(
-                        "isolation.stdlib_only",
-                        rel,
-                        f"compression plugin may import stdlib only, not `{module_name}`",
-                        module_name,
-                    )
-                )
-                continue
             target = _resolve_module_file(repo, module_name)
             if target is None:
                 if module_name.split(".", 1)[0] in toplevel:

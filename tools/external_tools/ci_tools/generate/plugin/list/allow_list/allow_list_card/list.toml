@@ -1,0 +1,9 @@
+paths = [
+  "kernel",
+  "tools/external_tools/ci_tools/generate/serve_generate",
+  "tools/external_tools/ci_tools/generate/session_generate",
+  "tools/external_tools/ci_tools/generate/third_party_generate.py",
+]
+
+[inject]
+message_tokens = ["text_estimator"]

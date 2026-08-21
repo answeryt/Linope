@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Allow list: explicit exceptions and required injection holes.
+"""Allow list: the only handwritten inventory.
 
-Pardons isolation edges listed in ``.gates/isolation-allowlist.json``.
-Token aggregators must take estimator callables from the caller instead of
-importing sibling plugins.
+``paths`` are exempted from the generated deny list. Isolation edges in
+``.gates/isolation-allowlist.json`` are pardoned after deny checks run.
+Required injected parameters are listed under ``inject``.
 """
 
 from __future__ import annotations
@@ -20,10 +20,6 @@ PARDONABLE_ISOLATION_RULES = {
     "isolation.project_import",
     "isolation.sibling_import",
     "isolation.cross_plugin_import",
-}
-
-TOKEN_REQUIRED_BY_STEM: dict[str, tuple[str, ...]] = {
-    "message_tokens": ("text_estimator",),
 }
 
 
@@ -75,21 +71,34 @@ def _is_allowlisted(
 
 def _check_injection(context: dict[str, Any]) -> None:
     repo = Path(context["repo_root"])
+    inject = _inject_map(context.get("allow_list") or {})
+    if not inject:
+        return
     for family in context["families"]:
-        if family["kind"] != "token":
-            continue
         root = repo / family["root"]
         if not root.is_dir():
             continue
-        for path in sorted(root.glob("*.py")):
-            if path.name == "__init__.py":
+        for name in family.get("files") or []:
+            path = root / name
+            if not path.is_file() or path.name == "__init__.py":
                 continue
             rel = path.relative_to(repo).as_posix()
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
             except (OSError, UnicodeError, SyntaxError):
                 continue
-            _check_injection_file(context, rel, tree, path.stem)
+            _check_injection_file(context, rel, tree, path.stem, inject)
+
+
+def _inject_map(allow_list: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    raw = allow_list.get("inject")
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, tuple[str, ...]] = {}
+    for stem, names in raw.items():
+        if isinstance(names, (list, tuple)):
+            result[str(stem)] = tuple(str(name) for name in names)
+    return result
 
 
 def _check_injection_file(
@@ -97,8 +106,9 @@ def _check_injection_file(
     rel: str,
     tree: ast.Module,
     stem: str,
+    inject: dict[str, tuple[str, ...]],
 ) -> None:
-    required = TOKEN_REQUIRED_BY_STEM.get(stem)
+    required = inject.get(stem)
     if not required:
         return
     params = _all_param_names(tree)

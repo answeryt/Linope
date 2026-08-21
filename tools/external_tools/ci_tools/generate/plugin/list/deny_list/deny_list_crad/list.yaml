@@ -1,0 +1,26 @@
+families:
+  - context/context_compression/semantic_compression
+  - context/context_compression/sliding_window
+  - context/context_compression/summary_compression
+  - model/model_API/model_interface
+  - model/model_API/model_paramaters/fallback_handlers
+  - model/model_API/model_paramaters/interface_paramaters
+  - model/model_API/model_paramaters/token_paramaters
+  - model/model_message
+  - model/model_provider
+  - prompt/system_prompt
+  - prompt/transient_prompt
+  - tools/agent_tools/browser_tools
+  - tools/agent_tools/coding_tools
+  - tools/agent_tools/computer_control_tools
+  - tools/agent_tools/file_tools
+  - tools/agent_tools/skill_tools
+  - tools/agent_tools/terminal_tools
+  - tools/agent_tools/vision_tools
+  - tools/agent_tools/web_search_tools
+  - tools/external_tools/ci_tools/generate/plugin
+  - tools/external_tools/ci_tools/generate/plugin/host_sibling
+  - tools/external_tools/ci_tools/generate/plugin/list/allow_list
+  - tools/external_tools/ci_tools/generate/plugin/list/deny_list
+  - tools/external_tools/mcp
+  - tools/external_tools/mcp/mcp_transport
