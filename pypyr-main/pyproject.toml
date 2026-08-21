@@ -1,0 +1,79 @@
+[build-system]
+build-backend = "flit_core.buildapi"
+requires = ["flit_core >=3.2,<4"]
+
+[project]
+authors = [{name = "Thomas Gaigher", email = "info@pypyr.io"}]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Utilities",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Typing :: Typed",
+]
+dependencies = [
+  "python-dateutil",
+  "ruamel.yaml >= 0.17.32",
+  "tomli >= 1.1.0 ; python_version < '3.11'",
+  "tomli-w",
+]
+description = "task-runner for automation pipelines defined in yaml. cli & api."
+dynamic = ["version"]
+keywords = ["task-runner", "automation", "devops", "ci/cd", "pipeline runner"]
+license = {file = "LICENSE"}
+name = "pypyr"
+readme = "README.md"
+requires-python = ">=3.7"
+
+[project.optional-dependencies]
+dev = [
+  "bumpversion",
+  "coverage",
+  "flake8",
+  "flake8-docstrings",
+  "flit",
+  "pyfakefs",
+  "pytest",
+]
+
+[project.scripts]
+pypyr = "pypyr.cli:main"
+
+[project.urls]
+Home = "https://pypyr.io"
+# keep empty line to prevent autoformat on save reordering Home further down
+Documentation = "https://pypyr.io/docs/"
+"Release Notes" = "https://pypyr.io/updates/releases/"
+Source = "https://github.com/pypyr/pypyr/"
+Tracker = "https://github.com/pypyr/pypyr/issues"
+Twitter = "https://twitter.com/pypyrpipes"
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if 0:",
+  "if __name__ == .__main__.:",
+]
+fail_under = 100
+
+[tool.coverage.run]
+branch = true
+source = ["pypyr"]
+
+[tool.flit.sdist]
+exclude = ["docs"]
+
+[tool.pypyr.vars]
+package_name = "pypyr"
+version_cmd = "pypyr pypyrversion"
+version_index = 1
+
+[tool.pytest.ini_options]
+junit_family = "xunit2"

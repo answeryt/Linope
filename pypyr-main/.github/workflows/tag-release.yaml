@@ -1,0 +1,31 @@
+name: tag-release
+
+# only runs on main push AFTER full ci lint/test/build job matrix completes.
+on:
+  workflow_run:
+    workflows:
+      - lint-test-build
+    branches:
+      - main
+    types:
+      - completed
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          # pull all tags also
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: run tag pipeline.
+        uses: pypyr/run-in-tox-action@main
+        with:
+          pipeline: ops/tag

@@ -1,0 +1,167 @@
+context_parser: pypyr.parser.list
+steps:
+  - name: pypyr.steps.call
+    comment: set default config & environment values.
+    in:
+      call: set_config
+  - name: pypyr.steps.call
+    comment: lint & test code. this runs on every pipeline invocation.
+    in:
+      call: 
+        - lint
+        - test
+  - name: pypyr.steps.call
+    comment: optionally do extras like package & publish after lint & test.
+    run: '{argList}'
+    in:
+      call: '{argList}'
+
+lint:
+  - name: pypyr.steps.cmd
+    comment: lint with flake8
+    description: --> flake8 linting
+    in:
+      cmd: flake8
+
+test:
+  - name: pypyr.steps.cmd
+    comment: test & coverage
+    description: --> tests, output to terminal with line nos.
+    skip: '{isCi}'
+    in:
+      cmd:
+        - coverage run -m pytest {test_dir}
+        - coverage report --show-missing --skip-covered
+  - name: pypyr.steps.cmd
+    comment: test & coverage but with file output
+    description: --> tests, output to file
+    run: '{isCi}'
+    in:
+      cmd:
+        - coverage run -m pytest --junitxml={output_test_results} {test_dir}
+        - coverage report --show-missing --skip-covered
+        - coverage xml -o {output_coverage}
+  
+package:
+  - name: pypyr.steps.cmd
+    comment: build wheel + sdist 
+    description: --> build wheel + sdist to dist/
+    in:
+      cmd: flit build
+
+publish:
+  - name: pypyr.steps.call
+    in:
+      call: get_version
+  - name: pypyr.steps.cmd
+    description: --> publishing package to pypi
+    comment: publish does a build/package itself, no need to call flit build separately.
+    in:
+      cmd: flit publish
+
+  - name: pypyr.steps.venv
+    description: --> create venv to verify pypi install
+    in:
+      venv:
+        path: .venv/pypi-verify
+        quiet: True
+
+  - name: pypyr.steps.cmd
+    description: --> giving pypi 10s before testing release
+    in:
+      cmd: sleep 10
+
+  - name: pypyr.steps.cmd
+    description: --> installing just published release from pypi for smoke-test
+    comment: only support posix, not windows.
+    retry:
+      max: 5
+      sleep: 10
+    in:
+      cmd: .venv/pypi-verify/bin/pip install --upgrade --no-cache-dir {package_name}=={version}
+  - name: pypyr.steps.cmd
+    description: --> get version
+    in:
+      cmd:
+        run: .venv/pypi-verify/bin/{version_cmd}
+        save: True
+
+  - name: pypyr.steps.cmd
+    description: --> remove pypi verification venv
+    in:
+      cmd: rm -rf .venv/pypi-verify
+
+  - name: pypyr.steps.set
+    description: --> parsing new version descriptor
+    comment: version string looks like this - pypyr 5.5.0 python 3.10.6
+    in:
+      set:
+        pypi_version: !py cmdOut.stdout.split()[version_index]
+
+  - name: pypyr.steps.assert
+    description: --> checking published package version as expected
+    in:
+      assert:
+        this: '{pypi_version}'
+        equals: '{version}'
+
+get_version:
+  - name: pypyr.steps.default
+    comment: initialize isConfigSet only if it doesn't exist in context already
+    in:
+      defaults:
+        isConfigSet: false
+  - name: pypyr.steps.call
+    comment: set default config & environment values only if not already set.
+    skip: '{isConfigSet}'
+    in:
+      call: set_config
+  - name: pypyr.steps.cmd
+    description: --> get version
+    in:
+      cmd:
+        run: '{version_cmd}'
+        save: True
+
+  - name: pypyr.steps.set
+    comment: version string looks like this - pypyr 5.5.0 python 3.10.6
+    in:
+      set:
+        version: !py cmdOut.stdout.split()[version_index]
+  - name: pypyr.steps.echo
+    in:
+      echoMe: version is {version}
+
+set_config:
+  - pypyr.steps.python
+  - name: pypyr.steps.default
+    comment: set configuration parameters & vars used throughout pipeline.
+    in:
+      defaults:
+        test_dir: tests
+        output_results_dir: .test-results
+        output_coverage: "{output_results_dir}/codecoverage/coverage.xml"
+        output_test_results: "{output_results_dir}/testresults/junitresults.xml"
+        argList: null
+  - pypyr.steps.configvars
+  - name: pypyr.steps.assert
+    description: --> check expected keys in pyproject.toml
+    foreach:
+      - package_name
+      - version_cmd
+      - version_index
+    in:
+      assert:
+        this: !py i in locals()
+  - name: pypyr.steps.envget
+    comment: CI is true in a github action environment.
+    in:
+      envGet:
+        env: CI
+        key: isCi
+        default: False
+  - name: pypyr.steps.set
+    comment: flag that config has been set.
+    in:
+      set:
+        isConfigSet: True

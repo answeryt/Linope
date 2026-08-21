@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""智能体推理与行动循环中的协作提示插件。"""
+"""Collaboration hints in agent reasoning and action loop."""
 
 from typing import Literal
 from uuid import uuid4
@@ -15,7 +15,7 @@ def _generate_id() -> str:
 
 
 class HintBlock(BaseModel):
-    """智能体推理与行动循环中的文本或多模态协作提示。"""
+    """Text or multimodal collaboration hints in agent reasoning and action loop."""
 
     type: Literal["hint"] = "hint"
     hint: str | list[TextBlock | DataBlock]

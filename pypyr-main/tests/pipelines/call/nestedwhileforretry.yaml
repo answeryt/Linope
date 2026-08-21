@@ -1,0 +1,71 @@
+steps:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: begin
+  - name: pypyr.steps.call
+    while:
+      max: 3
+    foreach: ['a','b','c']
+    retry:
+      max: 4
+    in:
+      call:
+        groups: sg1
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: 'root.{whileCounter}.{i}.{retryCounter}'
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: end
+sg1:
+  - name: pypyr.steps.set
+    in:
+      set:
+        outerwhile: '{whileCounter}'
+        sg1i: '{i}'
+  - name: pypyr.steps.call
+    foreach: ['i', 'ii', 'iii']
+    while:
+      max: 2
+    retry:
+      max: 3
+    in:
+      call:
+        groups: sg2
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: 'sg1.{outerwhile}.{sg1i}.{whileCounter}.{i}.{retryCounter}'
+  - name: pypyr.steps.assert
+    run: !py 'retryCounter < 2'
+    in:
+      assert:
+        this: false
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: sg1 end
+sg2:
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: 'sg2.{outerwhile}.{sg1i}.{whileCounter}.{i}.{retryCounter}'
+  - name: pypyr.steps.assert
+    run: !py 'retryCounter < 3'
+    in:
+      assert:
+        this: false
+  - name: pypyr.steps.append
+    in:
+      append:
+        list: out
+        addMe: sg2 end

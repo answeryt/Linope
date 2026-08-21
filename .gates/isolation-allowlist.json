@@ -1,0 +1,12 @@
+{
+  "edges": [
+    [
+      "tools/agent_tools/file_tools/file_tools.py",
+      "coding_context"
+    ],
+    [
+      "tools/agent_tools/skill_tools/skill_manager_tool.py",
+      "prompt_builder"
+    ]
+  ]
+}
