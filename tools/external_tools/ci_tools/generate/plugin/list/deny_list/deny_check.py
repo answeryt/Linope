@@ -23,6 +23,7 @@ SKIP_DIR_NAMES = {
     ".git",
     "node_modules",
     "pypyr-main",
+    "faststream-main",
 }
 
 
