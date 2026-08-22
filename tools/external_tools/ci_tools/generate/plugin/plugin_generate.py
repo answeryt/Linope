@@ -12,7 +12,7 @@ Generate plugins write allow/deny list cards in ``--format``. ``--check``
 fails when a committed list card is stale, or when any error-severity
 violation exists.
 
-Families are walked from ``PROJECT_TOPLEVEL`` on disk. The only handwritten
+Families are walked from top-level directories on disk. The only handwritten
 inventory is the allow-list card. The deny list is generated as discovered
 families minus those allow-list paths.
 """
@@ -33,13 +33,12 @@ PLUGIN_VERSION = "1.0"
 LIST_FORMATS = ("json", "yaml", "toml", "md")
 LIST_FORMAT_ALIASES = {"yml": "yaml", "markdown": "md"}
 
-PROJECT_TOPLEVEL = ("model", "context", "prompt", "tools", "kernel")
-
 SKIP_DIR_NAMES = {
     "__pycache__",
     ".git",
     "node_modules",
     "pypyr-main",
+    "faststream-main",
 }
 
 PROVIDER_HINT_KEYS = ("provider", "interface")
@@ -72,13 +71,21 @@ def load_allowlist(repo: Path) -> list[tuple[str, str]]:
     return result
 
 
+def discover_project_roots(repo: Path) -> list[Path]:
+    """Top-level directories on disk, minus cache, dot, and vendored trees."""
+    if not repo.is_dir():
+        return []
+    return [
+        child
+        for child in sorted(repo.iterdir(), key=lambda item: item.name.lower())
+        if child.is_dir() and not _skip_dir_name(child.name)
+    ]
+
+
 def discover_families(repo: Path) -> list[dict[str, Any]]:
     """Walk project roots and collect directories that look like plugin families."""
     dirs: set[str] = set()
-    for top in PROJECT_TOPLEVEL:
-        base = repo / top
-        if not base.is_dir():
-            continue
+    for base in discover_project_roots(repo):
         for path in base.rglob("*"):
             if _should_skip(repo, path):
                 continue
@@ -161,19 +168,24 @@ def _assign_family_files(repo: Path, families: list[dict[str, Any]]) -> None:
         family["files"] = owned
 
 
+def _skip_dir_name(name: str) -> bool:
+    """Skip cache, hidden, and vendored ``*-main`` checkouts (pypyr-main, …)."""
+    return name in SKIP_DIR_NAMES or name.startswith(".") or name.endswith("-main")
+
+
 def _should_skip(repo: Path, path: Path) -> bool:
     try:
         parts = path.relative_to(repo).parts
     except ValueError:
         parts = path.parts
-    return any(part in SKIP_DIR_NAMES or part.startswith(".") for part in parts)
+    return any(_skip_dir_name(part) for part in parts)
 
 
 def _has_direct_python(path: Path) -> bool:
     if not path.is_dir():
         return False
     for child in path.iterdir():
-        if child.name in SKIP_DIR_NAMES or child.name.startswith("."):
+        if _skip_dir_name(child.name):
             continue
         if child.is_file() and child.suffix == ".py":
             return True
@@ -192,7 +204,7 @@ def _dir_has_provider_config(path: Path) -> bool:
     if not path.is_dir():
         return False
     for child in path.rglob("*.json"):
-        if any(part in SKIP_DIR_NAMES for part in child.parts):
+        if any(_skip_dir_name(part) for part in child.parts):
             continue
         if _is_provider_json(child):
             return True
@@ -303,7 +315,7 @@ def build_context(
         "repo_root": str(repo),
         "families": denied,
         "allowed_families": allowed,
-        "project_toplevel": list(PROJECT_TOPLEVEL),
+        "project_toplevel": [path.name for path in discover_project_roots(repo)],
         "allowlist": load_allowlist(repo),
         "deny_list": {"families": [family["root"] for family in denied]},
         "allow_list": allow_list,

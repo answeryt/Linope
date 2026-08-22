@@ -1,0 +1,30 @@
+{
+  "layer": "async",
+  "role": "runtime",
+  "title": "async：Scheduler 调度 Execution，Loop 控制 Execution，Event 改变 Runtime",
+  "vocabulary": {
+    "Microservice": "部署边界。微服务指 Agent 本体。",
+    "Process": "一个具有独立目标、状态、资源和生命周期的 Agent Work Unit。",
+    "Execution": "Process 内部可被 Scheduler 独立调度的最小执行单元。",
+    "Task": "用户/Agent 想要完成的目标。",
+    "Loop": "Execution 使用的控制机制。",
+    "Event": "Runtime 中发生的状态变化。"
+  },
+  "tree": "Microservice\n                      │\n                   Process\n                      │\n          ┌───────────┼───────────┐\n          │           │           │\n        State      Resources    Memory\n                      │\n                  Scheduler\n                      │\n            ┌─────────┼─────────┐\n            ↓         ↓         ↓\n        Execution  Execution  Execution\n            │         │         │\n          Agent      Tool      Event\n           Loop       Loop      Loop",
+  "owns": [
+    "Scheduler",
+    "Execution",
+    "Loop",
+    "Event"
+  ],
+  "requirements": [
+    "Runtime 是 Process 被调度起来之后的现场。Event 是 Runtime 里发生的状态变化。",
+    "Scheduler 只调度 Execution，不调度 Process，不调度 Task，不调度 Microservice。",
+    "Execution 必须属于某个 Process，是该 Process 内最小可独立调度的执行单元。",
+    "Execution 不代表用户目标。目标停在 Task / Process。",
+    "Loop 不是 Work Unit，也不是可部署对象；它是某个 Execution 使用的控制机制。",
+    "同一 Process 内，Scheduler 可以同时挂起多个 Execution，分别使用 Agent Loop、Tool Loop、Event Loop。",
+    "Agent Loop 推进目标；Tool Loop 推进工具调用；Event Loop 等待 Runtime Event 再继续。三者都是 Execution 的 Loop，不是三种 Process。",
+    "Event 只改变 Runtime 状态并让 Scheduler 重新选择，不创建新的 Agent 本体，也不创建新的 Task。"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "layer": "process",
+  "role": "work_unit",
+  "title": "process：Process 是带目标的 Agent Work Unit",
+  "vocabulary": {
+    "Microservice": "部署边界。微服务指 Agent 本体。",
+    "Process": "一个具有独立目标、状态、资源和生命周期的 Agent Work Unit。",
+    "Execution": "Process 内部可被 Scheduler 独立调度的最小执行单元。",
+    "Task": "用户/Agent 想要完成的目标。",
+    "Loop": "Execution 使用的控制机制。",
+    "Event": "Runtime 中发生的状态变化。"
+  },
+  "tree": "Microservice\n                      │\n                   Process\n                      │\n          ┌───────────┼───────────┐\n          │           │           │\n        State      Resources    Memory\n                      │\n                  Scheduler\n                      │\n            ┌─────────┼─────────┐\n            ↓         ↓         ↓\n        Execution  Execution  Execution\n            │         │         │\n          Agent      Tool      Event\n           Loop       Loop      Loop",
+  "owns": [
+    "Process",
+    "State",
+    "Resources",
+    "Memory"
+  ],
+  "requirements": [
+    "Process 是 Agent Work Unit：必须有独立目标、状态、资源和生命周期。",
+    "目标来自 Task。Process 是该目标的运行时实体，不是第二条用户目标。",
+    "Process 持有 State、Resources、Memory。这三者属于 Process，不属于单个 Execution。",
+    "Scheduler 从 Resources 长出：先有 Process 的资源，再把可调度权切给 Execution。",
+    "Process 不执行。执行只发生在 Scheduler 选出的 Execution 上。",
+    "一个 Process 下可以同时存在多个 Execution，分别使用 Agent Loop、Tool Loop、Event Loop。",
+    "Process 结束时，其下全部 Execution 一并结束。",
+    "State 描述这个 Work Unit 是否还活着；它不是 Execution 的 run/wait，也不是部署进程的起停。"
+  ]
+}
