@@ -30,3 +30,26 @@ ChatModelBase / _xxx/_model.py
 ## 设计思想
 
 将接口与接口的相关参数分离，提供高定制化能力。
+
+## 与 Kernel 持久执行的边界
+
+模型请求属于有外部副作用的 Task Function，不能直接写在可重放 Process Function
+中。`model_interface` 继续保持 Provider SDK 薄封装；重试、资源 lease、结果记录
+和 Replay 由 `kernel/thred/executor` 与 `kernel/process/journal` 负责。
+
+```text
+Process Function
+  → ctx.run(model_task, input)
+  → Task Executor
+  → model_interface.call_api(...)
+  → Journal 保存 output / error
+  → Process Replay 直接读取历史结果
+```
+
+迁移状态：
+
+- [x] 保持 Provider Interface 为无 Journal、无重试的薄 SDK 边界；
+- [x] Kernel 已提供 `@task`、Task Executor 和结果/错误 Replay；
+- [x] Kernel 已提供模型并发与配额可使用的 Resource lease 接口；
+- [ ] 在上层 Model 实现中将各 Provider 调用注册为稳定命名、版本化的 Task；
+- [ ] 为 Provider 请求传递稳定幂等键并记录 token/配额指标。

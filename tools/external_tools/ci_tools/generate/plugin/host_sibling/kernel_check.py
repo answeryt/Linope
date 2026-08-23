@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Host-sibling check: kernel follows the Process / Execution / Loop tree.
+"""Host-sibling check for the Process-driven Service + Resources kernel.
 
-Inventory (layers, loops, inject) comes from the allow-list card. This file
+Layer and injection inventory comes from the allow-list card. This file
 only walks ``kernel/`` and appends violations. Isolation stays in deny_check.
 """
 
@@ -17,13 +17,28 @@ PLUGIN_VERSION = "1.0"
 
 SKIP_DIR_NAMES = {"__pycache__", ".git", "node_modules"}
 EXCLUDE_TOP = frozenset({"check"})
-CORE_PREFIXES = ("kernel/process/", "kernel/async/", "kernel/thred/")
+CORE_PREFIXES = (
+    "kernel/process/",
+    "kernel/thred/",
+    "kernel/resource/",
+)
 OS_MODULES = frozenset({"multiprocessing", "subprocess", "threading", "concurrent"})
 DEPLOY_MODULES = frozenset({"fastapi", "faststream", "starlette", "uvicorn", "redis"})
-ENVELOPE_FORBIDDEN = frozenset({"wait_reason", "priority", "execution_id"})
-QUEUE_TAILS = frozenset({"broker_plugin", "stream_subscriber_plugin", "registrator_plugin"})
-
-
+LLM_PROVIDER_MODULES = frozenset(
+    {"anthropic", "cohere", "genai", "litellm", "mistralai", "ollama", "openai", "transformers"}
+)
+LLM_PROVIDER_PREFIXES = ("google.genai", "google.generativeai")
+LLM_EXECUTOR_NAMES = frozenset(
+    {
+        "_echo_model",
+        "call_model",
+        "invoke_model",
+        "llm_client",
+        "llm_handler",
+        "model_client",
+        "model_handler",
+    }
+)
 def run(context: dict[str, Any]) -> dict[str, Any]:
     repo = Path(context["repo_root"])
     kernel = repo / "kernel"
@@ -31,16 +46,11 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
         return context
     card = context.get("allow_list") or {}
     layers = _string_lists(card.get("kernel_layers"))
-    loops = {
-        name: paths[0]
-        for name, paths in _string_lists(card.get("kernel_loops")).items()
-        if paths
-    }
     inject = _string_lists(card.get("inject"))
     if not layers:
         _error(context, "kernel.layer.toplevel", "kernel", "allow list is missing kernel_layers")
         return context
-    _check_tree(context, repo, kernel, layers, loops)
+    _check_tree(context, repo, kernel, layers)
     for rel, path, tree in _iter_py(repo, kernel):
         if path.name.endswith("_plugin.py"):
             name = _const(tree, "PLUGIN_NAME")
@@ -48,19 +58,32 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
                 _error(context, "kernel.vocab.plugin_prefix", rel, "PLUGIN_NAME must start with `kernel_`")
         if _under(rel, CORE_PREFIXES):
             _check_imports(context, rel, tree)
-        if rel.endswith("scheduler_plugin.py"):
-            _require_fns(context, rel, tree, ("decide", "select"), "kernel.role.scheduler_surface")
-        if rel.endswith("process_control_block_plugin.py"):
-            _require_keys(context, rel, tree, "build_pcb", ("process_id", "agent", "state", "memory", "budget"), "kernel.role.pcb_fields")
-        if rel.endswith("execution_plugin.py"):
-            _require_keys(context, rel, tree, "build_execution", ("execution_id", "process_id"), "kernel.role.execution_fields")
-        if rel.endswith("event_plugin.py"):
-            _require_keys(context, rel, tree, "event", ("type", "event_id"), "kernel.role.event_fields")
-        if rel.endswith("task_envelope_plugin.py"):
-            _check_envelope(context, rel, tree)
-        if rel.endswith("loop_plugin.py") or rel.endswith("dispatch_plugin.py"):
-            if "/services/task/" in rel or "/async/dispatch/" in rel:
-                _check_no_queue(context, rel, tree)
+        if rel.endswith("process_state_plugin.py"):
+            _require_keys(
+                context,
+                rel,
+                tree,
+                "build_process_run",
+                (
+                    "process_id",
+                    "run_id",
+                    "process_type",
+                    "definition_version",
+                    "state",
+                    "pending_activations",
+                    "resource_leases",
+                ),
+                "kernel.role.process_run_fields",
+            )
+        if rel.endswith("activation_envelope_plugin.py"):
+            _require_keys(
+                context,
+                rel,
+                tree,
+                "normalize_activation",
+                ("activation_id", "process_id", "process_type", "input"),
+                "kernel.role.activation_fields",
+            )
         stem = path.stem.removesuffix("_plugin")
         required = inject.get(stem) or inject.get(path.stem)
         if required:
@@ -73,11 +96,15 @@ def _check_tree(
     repo: Path,
     kernel: Path,
     layers: dict[str, list[str]],
-    loops: dict[str, str],
 ) -> None:
     allowed_top = set(layers) | EXCLUDE_TOP
     for child in kernel.iterdir():
-        if child.is_dir() and not _skip(child.name) and child.name not in allowed_top:
+        if (
+            child.is_dir()
+            and not _skip(child.name)
+            and child.name not in allowed_top
+            and any(child.rglob("*_plugin.py"))
+        ):
             _error(context, "kernel.layer.toplevel", f"kernel/{child.name}", "not a contracted kernel layer")
     allowed_leaves: set[str] = set()
     for layer, children in layers.items():
@@ -87,7 +114,12 @@ def _check_tree(
             continue
         allow = set(children)
         for child in root.iterdir():
-            if child.is_dir() and not _skip(child.name) and child.name not in allow:
+            if (
+                child.is_dir()
+                and not _skip(child.name)
+                and child.name not in allow
+                and any(child.rglob("*_plugin.py"))
+            ):
                 _error(context, "kernel.layer.children", f"kernel/{layer}/{child.name}", f"not in `{layer}` allow list")
         allowed_leaves.update(f"kernel/{layer}/{name}" for name in children)
     for path in kernel.rglob("*_plugin.py"):
@@ -97,16 +129,6 @@ def _check_tree(
         parent = path.parent.relative_to(repo).as_posix()
         if parent not in allowed_leaves:
             _error(context, "kernel.layer.leaf_plugin", rel, "plugin must live in a contracted leaf directory")
-    for name, rel in loops.items():
-        if not (repo / rel).is_file():
-            _error(context, "kernel.loop.placement", rel, f"`{name}` loop file is missing")
-    event_rel = loops.get("event", "kernel/async/event/event_loop_plugin.py")
-    for path in kernel.rglob("*event_loop*.py"):
-        rel = path.relative_to(repo).as_posix()
-        if rel != event_rel or rel.startswith("kernel/async/execution/"):
-            _error(context, "kernel.loop.placement", rel, "Event Loop is the Runtime pump, not an Execution")
-
-
 def _string_lists(raw: Any) -> dict[str, list[str]]:
     if not isinstance(raw, dict):
         return {}
@@ -147,29 +169,10 @@ def _check_imports(context: dict[str, Any], rel: str, tree: ast.AST) -> None:
         os_hit = roots & OS_MODULES
         if os_hit:
             rule = "kernel.role.os_process" if os_hit & {"multiprocessing", "subprocess"} else "kernel.role.os_thread"
-            _error(context, rule, rel, "OS workers belong in kernel/services/entry, not " + ", ".join(sorted(os_hit)))
+            _error(context, rule, rel, "OS workers belong in kernel/services/worker, not " + ", ".join(sorted(os_hit)))
         deploy = roots & DEPLOY_MODULES
         if deploy:
             _error(context, "kernel.role.deploy_api", rel, "deploy APIs belong in kernel/services, not " + ", ".join(sorted(deploy)))
-
-
-def _check_envelope(context: dict[str, Any], rel: str, tree: ast.AST) -> None:
-    constants = _string_constants(tree)
-    values = set(constants.values())
-    if "user_message" not in values:
-        _error(context, "kernel.vocab.task_envelope", rel, "task envelope must define `user_message`")
-    hit = values & ENVELOPE_FORBIDDEN
-    if hit:
-        _error(context, "kernel.vocab.task_envelope", rel, "Execution fields do not belong on Task: " + ", ".join(sorted(hit)))
-
-
-def _check_no_queue(context: dict[str, Any], rel: str, tree: ast.AST) -> None:
-    for node in ast.walk(tree):
-        for module_name in _imported(node):
-            tail = module_name.rsplit(".", 1)[-1]
-            if module_name.startswith("kernel.services.broker") or tail in QUEUE_TAILS:
-                _error(context, "kernel.vocab.no_queue_per_turn", rel, "turns stay in-process; do not import broker")
-                return
 
 
 def _require_fns(context: dict[str, Any], rel: str, tree: ast.AST, names: tuple[str, ...], rule: str) -> None:
@@ -257,6 +260,14 @@ def _imported(node: ast.AST) -> list[str]:
     if isinstance(node, ast.ImportFrom) and node.module:
         return [node.module]
     return []
+
+
+def _call_tail(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
 
 
 def _under(rel: str, prefixes: tuple[str, ...]) -> bool:

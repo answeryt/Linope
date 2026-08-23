@@ -46,7 +46,7 @@ plugin/
 | `host_sibling/surface_check.py` | `plugin_surface` | 按文件形态推断入口合同 |
 | `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | `call_api` 家族必须是薄、懒加载的 SDK 封装 |
 | `host_sibling/provider_config_check.py` | `plugin_provider_config` | provider 模板多格式等价、禁止当代码用 |
-| `host_sibling/kernel_check.py` | `plugin_kernel` | kernel 代码分层、Loop 位置、OS/部署边界、Task≠Execution。架构词汇和结构树在 `generate/services`、`generate/process`、`generate/async`、`generate/thred` |
+| `host_sibling/kernel_check.py` | `plugin_kernel` | kernel 分层、ProcessRun/Activation、OS/部署边界。架构词汇和结构树在各层生成器 |
 
 ## 审查规则
 
@@ -63,7 +63,7 @@ plugin/
 - `paths`：这些路径不进入生成的 deny list
 - `.gates/isolation-allowlist.json` 的 edges：在 deny 跑完后赦免对应隔离违规
 - `inject`：指定 stem 必须接收的参数（例如 `message_tokens` 必须注入 `text_estimator`），避免插件去 import 兄弟估算器
-- `kernel_layers` / `kernel_loops`：kernel 结构图库存，由 `kernel_check` 读取
+- `kernel_layers`：kernel 结构图库存，由 `kernel_check` 读取
 - `injection.estimator_param`：缺少必注入参数时报错
 
 ### host_sibling：合同由磁盘推断，不写死 Host kind 表
@@ -83,7 +83,7 @@ plugin/
 
 对看起来像 provider 根目录的 family：每个 provider 子目录必须同时有 YAML、JSON、TOML，顶层键 `provider` / `interface` / `model` / `api_key_env` / `parameters` 一致；`interface` 必须对应 `model/model_API/model_interface/<interface>.py`。
 
-`kernel_check.py` 约束 `kernel/`：顶层只允许 `services` / `process` / `async` / `thred`；插件落在叶目录；Event Loop 在 `async/event`；Process/Execution 层不得使用 OS process/thread 或部署 API；Task envelope 不得带 Execution 字段。
+`kernel_check.py` 约束 `kernel/`：顶层只允许 allow card 声明的层；插件落在叶目录；ProcessRun 必须包含 process/run ID、定义版本、状态、Activation 与资源 lease；Activation 必须可序列化；Process/Task/Resource 层不得使用 OS process/thread 或部署 API。
 
 ## 生成清单
 
@@ -91,7 +91,7 @@ allow list 是唯一手写库存，字段：
 
 - `paths`：豁免路径
 - `inject`：stem → 必注入参数名（含 kernel 插件）
-- `kernel_layers` / `kernel_loops`：手写库存，由 `kernel_check` 经 `load()` 读取
+- `kernel_layers`：手写库存，由 `kernel_check` 经 `load()` 读取
 
 deny list 由 Host 发现结果减去 allow 路径生成，字段：
 
