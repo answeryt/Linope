@@ -9,80 +9,79 @@
       "text_estimator"
     ],
     "process_lifecycle": [
-      "table",
+      "store",
       "transition",
-      "build_pcb"
+      "build_process_run"
     ],
-    "thred_lifecycle": [
-      "table",
-      "transition",
-      "build_thread"
+    "process_runtime": [
+      "processes",
+      "store",
+      "journal",
+      "lifecycle"
     ],
-    "runtime": [
-      "create_process",
-      "create_task",
-      "gather",
-      "emit",
-      "loop",
-      "scheduler"
-    ],
-    "event_loop": [
-      "bus"
-    ],
-    "dispatch": [
-      "call_model",
-      "call_tool",
-      "emit"
+    "process_worker": [
+      "queue",
+      "runtime"
     ],
     "usecase": [
-      "agent_loop"
+      "runtime"
     ],
     "app": [
       "application"
     ],
     "stream_subscriber": [
       "consume"
+    ],
+    "sandbox_policy": [
+      "canonical_path",
+      "effective_mode"
+    ],
+    "sandbox_policy_plugin": [
+      "canonical_path",
+      "effective_mode"
+    ],
+    "sandbox_local": [
+      "bwrap_profile_args",
+      "landlock_profile_args",
+      "seatbelt_profile_args"
+    ],
+    "sandbox_local_plugin": [
+      "bwrap_profile_args",
+      "landlock_profile_args",
+      "seatbelt_profile_args"
+    ],
+    "sandbox_profiles": [
+      "writable_roots"
+    ],
+    "profiles_plugin": [
+      "writable_roots"
     ]
   },
   "kernel_layers": {
     "services": [
       "app",
-      "broker",
-      "entry",
-      "middleware",
-      "task"
+      "ingress",
+      "worker",
+      "queue",
+      "store"
     ],
     "process": [
-      "pcb",
+      "activation",
+      "definition",
+      "runtime",
+      "journal",
       "lifecycle",
       "state",
-      "resource",
-      "table"
-    ],
-    "async": [
-      "runtime",
-      "scheduler",
-      "execution",
-      "event",
-      "dispatch"
+      "handle"
     ],
     "thred": [
-      "context",
-      "lifecycle",
-      "state",
-      "table",
-      "wait"
-    ]
-  },
-  "kernel_loops": {
-    "agent": [
-      "kernel/services/task/loop_plugin.py"
+      "binding",
+      "definition",
+      "executor"
     ],
-    "dispatch": [
-      "kernel/async/dispatch/dispatch_plugin.py"
-    ],
-    "event": [
-      "kernel/async/event/event_loop_plugin.py"
+    "resource": [
+      "definition",
+      "pool"
     ]
   }
 }

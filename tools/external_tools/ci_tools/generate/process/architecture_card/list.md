@@ -1,49 +1,41 @@
-# process：Process 是带目标的 Agent Work Unit
+# process：持久 Process Runtime 与 Replay
 
 ## 词汇
 
-- **Microservice**：部署边界。微服务指 Agent 本体。
-- **Process**：一个具有独立目标、状态、资源和生命周期的 Agent Work Unit。
-- **Execution**：Process 内部可被 Scheduler 独立调度的最小执行单元。
-- **Task**：用户/Agent 想要完成的目标。
-- **Loop**：Execution 使用的控制机制。
-- **Event**：Runtime 中发生的状态变化。
+- **Process**：可从 journal 重放的 durable function，不是 OS 进程。
+- **ProcessDefinition**：稳定名称、版本与 Python Process Function 的定义。
+- **ProcessActivation**：创建或恢复 Process 的输入。
+- **Journal**：按 run ID 与 command index 保存命令结果和错误。
+- **ProcessHandle**：跨重启查询或等待子 Process 的稳定引用。
 
 ## 结构
 
 ```
-Microservice
-                      │
-                   Process
-                      │
-          ┌───────────┼───────────┐
-          │           │           │
-        State      Resources    Memory
-                      │
-                  Scheduler
-                      │
-            ┌─────────┼─────────┐
-            ↓         ↓         ↓
-        Execution  Execution  Execution
-            │         │         │
-          Agent      Tool      Event
-           Loop       Loop      Loop
+Process
+├── Definition / Activation
+├── Process Runtime
+│   ├── Command Interpreter
+│   └── Replay
+├── Journal
+├── Lifecycle / State
+└── Durable Handle
 ```
 
 ## 本层拥有
 
-- `Process`
+- `ProcessDefinition`
+- `ProcessActivation`
+- `ProcessRuntime`
+- `Journal`
+- `Lifecycle`
 - `State`
-- `Resources`
-- `Memory`
+- `ProcessHandle`
 
 ## 架构要求
 
-1. Process 是 Agent Work Unit：必须有独立目标、状态、资源和生命周期。
-2. 目标来自 Task。Process 是该目标的运行时实体，不是第二条用户目标。
-3. Process 持有 State、Resources、Memory。这三者属于 Process，不属于单个 Execution。
-4. Scheduler 从 Resources 长出：先有 Process 的资源，再把可调度权切给 Execution。
-5. Process 不执行。执行只发生在 Scheduler 选出的 Execution 上。
-6. 一个 Process 下可以同时存在多个 Execution，分别使用 Agent Loop、Tool Loop、Event Loop。
-7. Process 结束时，其下全部 Execution 一并结束。
-8. State 描述这个 Work Unit 是否还活着；它不是 Execution 的 run/wait，也不是部署进程的起停。
+1. Process Function 从固定初始输入开始重放，不恢复 live coroutine。
+2. 每个 Task、child 或 wait 使用稳定 command index 写入 Journal。
+3. Journal 命中时返回旧结果，未命中时才执行副作用。
+4. 同一 command index 的名称、版本或输入变化必须拒绝为非确定性。
+5. Process 只通过 caused_by 表达因果关系，不形成主从 Agent 树。
+6. Process Runtime 只依赖 Host 注入的 Store、Queue、Journal 和 Executor。

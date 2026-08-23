@@ -51,6 +51,14 @@ def _payload(allow_list: dict[str, Any]) -> dict[str, Any]:
             for stem, names in inject.items()
             if isinstance(names, (list, tuple))
         }
+    for key in ("kernel_layers",):
+        inventory = allow_list.get(key)
+        if isinstance(inventory, dict):
+            result[key] = {
+                str(name): [str(item) for item in items]
+                for name, items in inventory.items()
+                if isinstance(items, (list, tuple))
+            }
     return result
 
 
@@ -156,19 +164,23 @@ def _parse_md(text: str) -> dict[str, Any]:
         line = raw.strip()
         if line.startswith("## "):
             section = line[3:].strip()
-            result[section] = {} if section == "inject" else []
+            result[section] = (
+                {}
+                if section in {"inject", "kernel_layers"}
+                else []
+            )
             continue
         if section is None or not line.startswith("- "):
             continue
         item = line[2:].strip()
-        if section == "inject":
+        if isinstance(result[section], dict):
             key, _, rest = item.partition(":")
             names = [
                 part.strip().strip("`")
                 for part in rest.split(",")
                 if part.strip()
             ]
-            result["inject"][key.strip().strip("`")] = names
+            result[section][key.strip().strip("`")] = names
             continue
         if isinstance(result[section], list):
             result[section].append(item.strip("`"))

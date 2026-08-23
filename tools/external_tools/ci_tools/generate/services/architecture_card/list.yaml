@@ -1,38 +1,34 @@
 layer: "services"
-role: "microservice"
-title: "services：Microservice 是 Agent 本体，也是部署边界"
+role: "service"
+title: "services：Agent = Service + Resources"
 vocabulary:
-  Microservice: "部署边界。微服务指 Agent 本体。"
-  Process: "一个具有独立目标、状态、资源和生命周期的 Agent Work Unit。"
-  Execution: "Process 内部可被 Scheduler 独立调度的最小执行单元。"
-  Task: "用户/Agent 想要完成的目标。"
-  Loop: "Execution 使用的控制机制。"
-  Event: "Runtime 中发生的状态变化。"
+  Agent: "Service 与 Resources 的最终装配结果。"
+  Service: "唯一部署边界；接收 ProcessActivation 并运行 Process。"
+  Ingress: "把外部输入规范化为可序列化 Activation。"
+  RunQueue: "使用 lease 与 fencing token 调度 Process/Task 工作。"
+  ProcessStore: "Host 注入的 Process Run 持久化接口。"
+  Resources: "容器资源与模型资源组成的统一容量池。"
 tree: |
-  Microservice
-                        │
-                     Process
-                        │
-            ┌───────────┼───────────┐
-            │           │           │
-          State      Resources    Memory
-                        │
-                    Scheduler
-                        │
-              ┌─────────┼─────────┐
-              ↓         ↓         ↓
-          Execution  Execution  Execution
-              │         │         │
-            Agent      Tool      Event
-             Loop       Loop      Loop
+  Agent
+  ├── Service
+  │   ├── Ingress
+  │   ├── Worker
+  │   ├── Run Queue
+  │   ├── Process Store
+  │   └── Agent Assembly
+  └── Resources
+      ├── Container Resources
+      └── Model Resources
 owns:
-  - "Microservice"
-  - "Task"
+  - "App"
+  - "Ingress"
+  - "Worker"
+  - "RunQueue"
+  - "ProcessStore"
 requirements:
-  - "Microservice 是 Agent 本体，也是唯一部署边界。一个可部署的 worker 就是一个 Agent。"
-  - "Process、Execution、Thread 都不是可独立部署的单元；它们活在同一个 Agent 本体内。"
-  - "Microservice 收下 Task（用户/Agent 的目标），并为该目标创建 Process。"
-  - "Microservice 不调度。调度权属于 Process 资源上的 Scheduler。"
-  - "Task 是目标，不是 Work Unit，也不是可调度单元。一条 Task 不能当成一个 Execution。"
-  - "一次 Task 的多轮 Loop 发生在同一个 Process 内，不在部署边界上为每一轮再开一个 Agent。"
-  - "Event 不会在部署边界上变成新的 Agent 会话。"
+  - "Agent 严格等于 Service + Resources，不是人格或进程层级。"
+  - "Service 是唯一部署边界，一个 Service 可以运行多个 Process。"
+  - "Ingress 只传可序列化 ProcessActivation，不传 live Process。"
+  - "Worker 使用 queue lease 和 fencing token 驱动 Process Runtime。"
+  - "Store、Queue 和 Ingress 是 Host adapter，不进入 Process 定义。"
+  - "OS process、worker、队列和部署框架只能出现在 services。"
