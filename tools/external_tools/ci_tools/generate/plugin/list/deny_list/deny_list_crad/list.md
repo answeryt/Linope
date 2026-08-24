@@ -18,6 +18,7 @@
 - `dbos-transact-py/tests`
 - `dbos-transact-py/version`
 - `kernel/process/activation`
+- `kernel/process/continuation`
 - `kernel/process/definition`
 - `kernel/process/handle`
 - `kernel/process/journal`
@@ -29,6 +30,7 @@
 - `kernel/services/app`
 - `kernel/services/ingress`
 - `kernel/services/queue`
+- `kernel/services/scheduler`
 - `kernel/services/store`
 - `kernel/services/worker`
 - `kernel/thred/binding`
@@ -230,6 +232,7 @@
 - `temporal-sdk-python/tests/worker/workflow_sandbox/testmodules`
 - `temporal-sdk-python/tests/worker/workflow_sandbox/testmodules/proto`
 - `tests/kernel`
+- `tests/ui`
 - `tools/agent_tools/file_tools`
 - `tools/agent_tools/goal_tools`
 - `tools/agent_tools/interaction_tools`
@@ -253,3 +256,8 @@
 - `tools/external_tools/ci_tools/generate/thred`
 - `tools/external_tools/mcp`
 - `tools/external_tools/mcp/mcp_transport`
+- `ui/cli`
+- `ui/open`
+- `ui/server`
+- `ui/startup`
+- `ui/static`

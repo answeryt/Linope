@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Linope",
+  "short_name": "Linope",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

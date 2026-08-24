@@ -1,0 +1,31 @@
+name: Run Chaos Tests
+
+on:
+    schedule:
+        # Runs every hour on the hour
+        - cron: '0 * * * *'
+    workflow_dispatch:
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Setup PDM
+      uses: pdm-project/setup-pdm@v4
+      with:
+        python-version: '3.13'
+        architecture: 'x64'
+
+    - name: Install Dependencies
+      run: pdm install
+      working-directory: ./
+
+    - name: Run Chaos Tests
+      run: pdm run pytest --timeout 1200 chaos-tests
+      working-directory: ./

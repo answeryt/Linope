@@ -1,0 +1,64 @@
+[project]
+name = "restate-sdk"
+description = "A Python SDK for Restate"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dynamic = ["version"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Restate Developers", email = "dev@restate.dev" }]
+readme = "README.md"
+dependencies = []
+
+[project.urls]
+Homepage = "https://restate.dev"
+Documentation = "https://docs.restate.dev"
+Source = "https://github.com/restatedev/sdk-python"
+"Bug Tracker" = "https://github.com/restatedev/sdk-python/issues"
+
+[project.optional-dependencies]
+test = ["pytest", "hypercorn", "anyio"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+harness = ["testcontainers", "hypercorn", "httpx"]
+serde = ["dacite", "pydantic", "msgspec"]
+client = ["httpx[http2]"]
+adk = ["google-adk>=1.20.0"]
+openai = ["openai-agents>=0.6.1"]
+pydantic_ai = ["pydantic-ai-slim>=2.0,<3"]
+langchain = ["langchain>=1.0.0", "langgraph>=1.0.0", "langchain-core>=1.0.0"]
+tracing = ["opentelemetry-api>=1.36.0"]
+zstd = [
+    "backports.zstd ; python_version < '3.14'",
+]
+
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "restate._internal"
+python-source = "python"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = [
+    "python/**/*.py",
+    "examples/**/*.py",
+    "tests/**/*.py",
+    "test-services//**/*.py",
+]
+
+[tool.ruff.lint]
+ignore = ["E741"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+   "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning",
+]
+anyio_mode = "auto"

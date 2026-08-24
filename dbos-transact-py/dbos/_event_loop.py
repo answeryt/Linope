@@ -1,0 +1,146 @@
+import asyncio
+import threading
+from typing import Any, Coroutine, Optional, TypeVar
+
+from ._logger import dbos_logger
+
+
+def retrieve_future_exception(future: "asyncio.Future[Any]") -> None:
+    """Mark a future's exception as retrieved so asyncio does not report it at GC."""
+    if not future.cancelled():
+        future.exception()
+
+
+class BackgroundEventLoop:
+    """
+    This is the event loop to which DBOS submits any coroutines that are not started from within an event loop.
+    In particular, coroutines submitted to queues (such as from scheduled workflows) run on this event loop.
+
+    If a main event loop is known (whether because an event loop existed in the thread that called DBOS.launch
+    or because a FastAPI event loop was detected) then coroutines are submitted there instead.
+    """
+
+    def __init__(self) -> None:
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._ready = threading.Event()
+
+    def start(self) -> None:
+        if self._running:
+            return
+
+        self.set_main_loop()
+        self._thread = threading.Thread(target=self._run_event_loop, daemon=True)
+        self._thread.start()
+        self._ready.wait()  # Wait until the loop is running
+
+    def stop(self, timeout: Optional[float] = 10.0) -> None:
+        if not self._running or self._loop is None or self._thread is None:
+            return
+
+        asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            dbos_logger.warning(
+                "BackgroundEventLoop thread did not exit within timeout"
+            )
+        self._running = False
+
+    def _run_event_loop(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        self._running = True
+        self._ready.set()  # Signal that the loop is ready
+
+        try:
+            self._loop.run_forever()
+        finally:
+            self._loop.close()
+
+    async def _shutdown(self) -> None:
+        if self._loop is None:
+            raise RuntimeError("Event loop not started")
+        tasks = [
+            task
+            for task in asyncio.all_tasks(self._loop)
+            if task is not asyncio.current_task(self._loop)
+        ]
+
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._loop.stop()
+
+    def set_main_loop(self) -> None:
+        """
+        Set the main loop to the currently running event loop.
+        Should be called from the main thread.
+        """
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except:
+            # There's no running event loop to set
+            pass
+
+    T = TypeVar("T")
+
+    def target_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The loop coroutines are submitted to: the adopted main loop if one is
+        running, otherwise the background loop."""
+        if self._main_loop is not None and self._main_loop.is_running():
+            return self._main_loop
+        return self._loop
+
+    def submit_coroutine(self, coro: Coroutine[Any, Any, T]) -> T:
+        """Submit a coroutine to the background event loop and block until it completes."""
+        loop = self.target_loop()
+        if loop is None:
+            coro.close()
+            raise RuntimeError("Event loop not started")
+        try:
+            running_loop: Optional[asyncio.AbstractEventLoop] = (
+                asyncio.get_running_loop()
+            )
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            # We are on the target loop's own thread. Blocking on .result() here
+            # would deadlock: the loop can never run the coroutine while it is
+            # blocked waiting for it. Fail loudly instead of hanging.
+            coro.close()
+            raise RuntimeError(
+                "submit_coroutine was called from within its own event loop "
+                "thread, which would deadlock. Schedule the coroutine without "
+                "blocking (e.g. submit_coroutine_nowait) instead."
+            )
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+    def submit_coroutine_nowait(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        task_set: Optional[set["asyncio.Task[Any]"]] = None,
+    ) -> None:
+        """Submit a coroutine to the background event loop without waiting.
+
+        Nothing can await the result, so the task's exception is marked retrieved to
+        keep asyncio from reporting it at GC. Callers that care must log it themselves.
+        If task_set is provided, the created task is added to it and
+        automatically removed when the task completes.
+        """
+        loop = self.target_loop()
+        if loop is None:
+            coro.close()
+            raise RuntimeError("Event loop not started")
+
+        def _create_task() -> None:
+            task = loop.create_task(coro)
+            task.add_done_callback(retrieve_future_exception)
+            if task_set is not None:
+                task_set.add(task)
+                task.add_done_callback(task_set.discard)
+
+        loop.call_soon_threadsafe(_create_task)

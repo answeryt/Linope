@@ -47,8 +47,16 @@ class ProcessHandle:
         self.engine = engine
 
     def status(self) -> dict[str, Any]:
-        require = getattr(self.store, "require", None)
-        record = require(self.process_id) if callable(require) else self.store.get(self.process_id)
+        require_run = getattr(self.store, "require_run", None)
+        if callable(require_run):
+            record = require_run(self.process_id, self.run_id)
+        else:
+            require = getattr(self.store, "require", None)
+            record = (
+                require(self.process_id)
+                if callable(require)
+                else self.store.get(self.process_id)
+            )
         if record is None:
             raise KeyError(self.process_id)
         snapshot = dict(record)
