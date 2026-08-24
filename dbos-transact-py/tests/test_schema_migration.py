@@ -1,0 +1,1690 @@
+import os
+import pathlib
+import shutil
+import subprocess
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import click
+import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+
+# Public API
+from dbos import DBOS, DBOSConfig, run_dbos_database_migrations
+
+# Private API because this is a unit test
+from dbos._error import DBOSInitializationError
+from dbos._migration import get_dbos_migrations, should_migrate, sqlite_migrations
+from dbos._schemas.system_database import SystemSchema
+from dbos._serialization import DefaultSerializer
+from dbos._sys_db import SystemDatabase
+from dbos.cli.migration import print_dbos_migrations, print_dbos_user_role_sql
+
+
+def test_systemdb_migration(
+    dbos_dropped_databases: DBOS, skip_with_sqlite: None
+) -> None:
+    # Needs a dropped database so this exercises a from-scratch migration.
+    dbos = dbos_dropped_databases
+    # Make sure all tables exist
+    with dbos._sys_db.engine.connect() as connection:
+        sql = SystemSchema.workflow_status.select()
+        result = connection.execute(sql)
+        assert result.fetchall() == []
+
+        sql = SystemSchema.operation_outputs.select()
+        result = connection.execute(sql)
+        assert result.fetchall() == []
+
+        sql = SystemSchema.workflow_events.select()
+        result = connection.execute(sql)
+        assert result.fetchall() == []
+
+        sql = SystemSchema.notifications.select()
+        result = connection.execute(sql)
+        assert result.fetchall() == []
+
+        # Check dbos_migrations table exists, has one row, and has the right version
+        migrations_result = connection.execute(
+            sa.text("SELECT version FROM dbos.dbos_migrations")
+        )
+        migrations_rows = migrations_result.fetchall()
+        assert len(migrations_rows) == 1
+        assert migrations_rows[0][0] == len(get_dbos_migrations("dbos", True))
+
+
+def test_systemdb_migration_custom_schema(
+    config: DBOSConfig,
+    skip_with_sqlite: None,
+    drop_test_databases: None,
+) -> None:
+    # Needs a dropped database: asserts the "dbos" schema is absent, leaves its own.
+    config["application_database_url"] = None
+    schema = "F8nny_sCHem@-n@m3"
+    config["dbos_system_schema"] = schema
+    DBOS.destroy(destroy_registry=True)
+    dbos = DBOS(config=config)
+    DBOS.launch()
+    # Make sure all tables exist
+    with dbos._sys_db.engine.connect() as connection:
+        result = connection.execute(
+            sa.text(f'SELECT * FROM "{schema}".workflow_status')
+        )
+        rows = result.fetchall()
+        assert len(rows) == 0
+        # Check dbos_migrations table exists, has one row, and has the right version
+        result = connection.execute(
+            sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+        )
+        rows = result.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == len(get_dbos_migrations(schema, True))
+
+        # Check that the 'dbos' schema does not exist
+        result = connection.execute(
+            sa.text(
+                "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'dbos'"
+            )
+        )
+        rows = result.fetchall()
+        assert len(rows) == 0
+
+    DBOS.destroy()
+
+
+def test_systemdb_migration_schema_with_quote(
+    config: DBOSConfig,
+    skip_with_sqlite: None,
+    drop_test_databases: None,
+) -> None:
+    """A double quote in a schema name is escaped, not left to close the identifier
+    early and turn the rest of the name into SQL of its own (#819). The percent guards
+    the other direction: it must reach the server intact, not doubled."""
+    config["application_database_url"] = None
+    schema = 'we"ird%1'
+    config["dbos_system_schema"] = schema
+    DBOS.destroy(destroy_registry=True)
+    dbos = DBOS(config=config)
+    DBOS.launch()
+
+    @DBOS.workflow()
+    def workflow() -> str:
+        return "done"
+
+    assert workflow() == "done"
+    with dbos._sys_db.engine.connect() as connection:
+        # Doubled inside the identifier: the name is one schema, not a truncated one.
+        rows = connection.execute(
+            sa.text('SELECT version FROM "we""ird%1".dbos_migrations')
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == len(get_dbos_migrations(schema, True))
+
+    DBOS.destroy()
+
+
+def test_two_schemas_isolated_in_one_process(
+    config: DBOSConfig,
+    skip_with_sqlite: None,
+    drop_test_databases: None,
+) -> None:
+    """Two system databases with different schemas must stay isolated within one process.
+
+    Needs a dropped database: truncation spares the schemas this creates itself."""
+    sys_db_url = config["system_database_url"]
+    assert sys_db_url is not None
+
+    db_a = SystemDatabase.create(
+        system_database_url=sys_db_url,
+        engine_kwargs={},
+        engine=None,
+        schema="schema_alpha",
+        executor_id=None,
+        serializer=DefaultSerializer(),
+        use_listen_notify=False,
+    )
+    db_b = SystemDatabase.create(
+        system_database_url=sys_db_url,
+        engine_kwargs={},
+        engine=None,
+        schema="schema_beta",
+        executor_id=None,
+        serializer=DefaultSerializer(),
+        use_listen_notify=False,
+    )
+    try:
+        db_a.run_migrations()
+        db_b.run_migrations()
+
+        # Write a row through each instance; it should land in that instance's schema.
+        ins = SystemSchema.application_versions.insert()
+        with db_a.engine.begin() as conn:
+            conn.execute(
+                ins.values(
+                    version_id="alpha-row",
+                    version_name="alpha-row",
+                    version_timestamp=1,
+                    created_at=1,
+                )
+            )
+        with db_b.engine.begin() as conn:
+            conn.execute(
+                ins.values(
+                    version_id="beta-row",
+                    version_name="beta-row",
+                    version_timestamp=1,
+                    created_at=1,
+                )
+            )
+
+        # Each instance's Core queries see only its own schema's row.
+        sel = sa.select(SystemSchema.application_versions.c.version_id)
+        with db_a.engine.begin() as conn:
+            assert [r[0] for r in conn.execute(sel)] == ["alpha-row"]
+        with db_b.engine.begin() as conn:
+            assert [r[0] for r in conn.execute(sel)] == ["beta-row"]
+
+        # And the rows physically live in the correct schemas.
+        with db_a.engine.begin() as conn:
+            assert (
+                conn.execute(
+                    sa.text("SELECT version_id FROM schema_alpha.application_versions")
+                ).scalar_one()
+                == "alpha-row"
+            )
+            assert (
+                conn.execute(
+                    sa.text("SELECT version_id FROM schema_beta.application_versions")
+                ).scalar_one()
+                == "beta-row"
+            )
+    finally:
+        db_a.destroy()
+        db_b.destroy()
+
+
+def test_reset(
+    config: DBOSConfig,
+    db_engine: sa.Engine,
+    cleanup_test_databases: None,
+    skip_with_sqlite: None,
+) -> None:
+    # Asserts workflow_status is empty at launch, so it needs the databases emptied
+    # rather than whatever the preceding test happened to leave behind.
+    DBOS.destroy()
+    dbos = DBOS(config=config)
+    DBOS.launch()
+
+    # Make sure the system database exists
+    with dbos._sys_db.engine.connect() as c:
+        sql = SystemSchema.workflow_status.select()
+        result = c.execute(sql)
+        assert result.fetchall() == []
+    sysdb_name = dbos._sys_db.engine.url.database
+
+    DBOS.destroy()
+    dbos = DBOS(config=config)
+    DBOS.reset_system_database()
+
+    with db_engine.connect() as c:
+        c.execution_options(isolation_level="AUTOCOMMIT")
+        count: int = c.execute(
+            sa.text(f"SELECT COUNT(*) FROM pg_database WHERE datname = '{sysdb_name}'")
+        ).scalar_one()
+        assert count == 0
+
+    DBOS.launch()
+
+    # Make sure the system database is recreated
+    with dbos._sys_db.engine.connect() as c:
+        sql = SystemSchema.workflow_status.select()
+        result = c.execute(sql)
+        assert result.fetchall() == []
+
+    # Verify that resetting after launch throws
+    with pytest.raises(AssertionError):
+        DBOS.reset_system_database()
+
+
+def test_reset_truncate(
+    config: DBOSConfig,
+    db_engine: sa.Engine,
+    cleanup_test_databases: None,
+    skip_with_sqlite: None,
+) -> None:
+    """Truncating empties the tables but leaves the database and its migrated schema."""
+    DBOS.destroy(destroy_registry=True)
+    dbos = DBOS(config=config)
+
+    @DBOS.workflow()
+    def workflow() -> str:
+        assert DBOS.workflow_id
+        DBOS.set_event(DBOS.workflow_id, DBOS.workflow_id)
+        return DBOS.workflow_id
+
+    DBOS.launch()
+    workflow_id = workflow()
+    assert DBOS.get_event(workflow_id, workflow_id) == workflow_id
+    assert len(DBOS.list_workflows()) == 1
+    sysdb_name = dbos._sys_db.engine.url.database
+    latest_version = len(get_dbos_migrations("dbos", True))
+
+    DBOS.destroy()
+    dbos = DBOS(config=config)
+    DBOS.reset_system_database(truncate=True)
+
+    # Unlike a reset, the database itself survives
+    with db_engine.connect() as c:
+        count: int = c.execute(
+            sa.text(f"SELECT COUNT(*) FROM pg_database WHERE datname = '{sysdb_name}'")
+        ).scalar_one()
+        assert count == 1
+
+    DBOS.launch()
+    assert DBOS.list_workflows() == []
+    with dbos._sys_db.engine.connect() as c:
+        assert (
+            c.execute(
+                sa.select(sa.func.count()).select_from(SystemSchema.workflow_events)
+            ).scalar_one()
+            == 0
+        )
+        # The schema survives fully migrated, so the launch above ran no migrations
+        assert (
+            c.execute(sa.text('SELECT version FROM "dbos".dbos_migrations')).scalar()
+            == latest_version
+        )
+    assert should_migrate(dbos._sys_db.engine, "dbos", True) is False
+
+    # Truncating after launch is refused, same as resetting
+    with pytest.raises(AssertionError):
+        DBOS.reset_system_database(truncate=True)
+    DBOS.destroy()
+
+
+def test_reset_truncate_evicts_connections(
+    config: DBOSConfig, cleanup_test_databases: None, skip_with_sqlite: None
+) -> None:
+    """Truncating evicts other connections, as DROP DATABASE ... WITH (FORCE) did.
+
+    A leaked transaction holding a lock would otherwise block TRUNCATE forever."""
+    sys_db_url = config["system_database_url"]
+    assert sys_db_url is not None
+    DBOS.destroy(destroy_registry=True)
+    DBOS(config=config)
+    DBOS.launch()
+    DBOS.destroy()
+
+    # Stand in for a thread an earlier test failed to stop: an open transaction
+    # holding a lock TRUNCATE needs.
+    squatter = sa.create_engine(sys_db_url)
+    connection = squatter.connect()
+    read_status = sa.text('SELECT count(*) FROM "dbos".workflow_status')
+    connection.execute(read_status)
+
+    try:
+        DBOS(config=config)
+        DBOS.reset_system_database(truncate=True)
+        # The squatter's connection is gone, so its next statement fails
+        with pytest.raises(DBAPIError):
+            connection.execute(read_status)
+    finally:
+        connection.invalidate()
+        squatter.dispose()
+        DBOS.destroy()
+
+
+def test_reset_explicit_url(
+    config: DBOSConfig,
+    db_engine: sa.Engine,
+    cleanup_test_databases: None,
+    skip_with_sqlite: None,
+) -> None:
+    """An explicit system database URL and schema are reset in place of the
+    configured ones, with or without a global DBOS object."""
+    sys_db_url = config["system_database_url"]
+    assert sys_db_url is not None
+    other_db_url = (
+        sa.make_url(sys_db_url)
+        .set(database="reset_explicit_url_test")
+        .render_as_string(hide_password=False)
+    )
+    other_db_name = sa.make_url(other_db_url).database
+    other_schema = "F8nny_sCHem@-n@m3"
+
+    def other_db_exists() -> bool:
+        with db_engine.connect() as c:
+            return bool(
+                c.execute(
+                    sa.text(
+                        f"SELECT 1 FROM pg_database WHERE datname = '{other_db_name}'"
+                    )
+                ).scalar()
+            )
+
+    try:
+        # No global DBOS object: the URL and schema alone are enough to reset
+        DBOS.destroy(destroy_registry=True)
+        other_db = SystemDatabase.create(
+            system_database_url=other_db_url,
+            engine_kwargs={},
+            engine=None,
+            schema=other_schema,
+            serializer=DefaultSerializer(),
+            executor_id=None,
+        )
+        other_db.run_migrations()
+        version_row = SystemSchema.application_versions.insert().values(
+            version_id="v1", version_name="v1", version_timestamp=1, created_at=1
+        )
+        count = sa.select(sa.func.count()).select_from(
+            SystemSchema.application_versions
+        )
+        with other_db.engine.begin() as c:
+            c.execute(version_row)
+            assert c.execute(count).scalar_one() == 1
+
+        # Without the schema, truncation would find no tables and only warn
+        DBOS.reset_system_database(
+            system_database_url=other_db_url, schema=other_schema, truncate=True
+        )
+        # Truncation evicts every other connection, this test's pool included
+        other_db.engine.dispose()
+        with other_db.engine.begin() as c:
+            assert c.execute(count).scalar_one() == 0
+        other_db.destroy()
+        assert other_db_exists()
+
+        # Dropping needs no schema, and takes the database with it
+        DBOS.reset_system_database(system_database_url=other_db_url)
+        assert not other_db_exists()
+
+        # With a global DBOS object, the explicit URL wins over its configuration
+        DBOS(config=config)
+
+        @DBOS.workflow()
+        def workflow() -> str:
+            assert DBOS.workflow_id
+            return DBOS.workflow_id
+
+        DBOS.launch()
+        workflow_id = workflow()
+        DBOS.destroy()
+        DBOS(config=config)
+        # Truncating the now-absent database warns, rather than raising
+        DBOS.reset_system_database(system_database_url=other_db_url, truncate=True)
+
+        # The configured system database is untouched
+        DBOS.launch()
+        assert [w.workflow_id for w in DBOS.list_workflows()] == [workflow_id]
+        DBOS.destroy()
+    finally:
+        # No fixture knows about this database, and a leaked one keeps its
+        # application_versions row, failing every later run on the insert above.
+        with db_engine.connect() as c:
+            c.execution_options(isolation_level="AUTOCOMMIT")
+            c.execute(sa.text(f"DROP DATABASE IF EXISTS {other_db_name} WITH (FORCE)"))
+
+
+_APPLICATION_NAME_TABLES = (
+    "workflow_status",
+    "queues",
+    "workflow_schedules",
+    "application_versions",
+    # Denormalized from the parent so step observability filters without a join.
+    "operation_outputs",
+)
+
+
+def test_application_name_schema(dbos: DBOS, skip_with_sqlite: None) -> None:
+    """application_name is nullable everywhere it appears — NULL is what SDKs
+    predating it write — and every name that addresses a row stays globally unique."""
+    with dbos._sys_db.engine.connect() as connection:
+        for table in _APPLICATION_NAME_TABLES:
+            row = connection.execute(
+                sa.text(
+                    "SELECT data_type, is_nullable FROM information_schema.columns "
+                    "WHERE table_schema='dbos' AND table_name=:t "
+                    "AND column_name='application_name'"
+                ),
+                {"t": table},
+            ).fetchone()
+            assert row == ("text", "YES"), f"{table}.application_name"
+
+        # Names stay global addresses; version_name only until the contract migration, whose replacement key migration 106 already carries.
+        uniques = {
+            "uq_workflow_status_dedup_id",
+            "queues_name_key",
+            "workflow_schedules_schedule_name_key",
+            "application_versions_version_name_key",
+            "uq_application_versions_owner_version",
+            "uq_application_versions_unclaimed_version",
+        }
+        found = {
+            row[0]
+            for row in connection.execute(
+                sa.text(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname='dbos' "
+                    "AND indexname = ANY(:names)"
+                ),
+                {"names": list(uniques)},
+            )
+        }
+    assert found == uniques
+
+
+def test_application_version_expand_indexes(dbos: DBOS, skip_with_sqlite: None) -> None:
+    """The expand half of retiring version_name's global uniqueness: the ownership-scoped
+    key exists and is enforced, and the constraint it will replace is still in place."""
+    av = "dbos.application_versions (version_id, version_name, application_name)"
+
+    def insert(connection: sa.Connection, version_id: str, owner: str) -> None:
+        connection.execute(
+            sa.text(
+                f"INSERT INTO {av} VALUES ('{version_id}', 'shared-version', {owner})"
+            )
+        )
+
+    with dbos._sys_db.engine.begin() as connection:
+        insert(connection, "v1", "'app-a'")
+        # One row per owner, unclaimed included; the last case is the not-yet-dropped constraint still refusing a peer.
+        for version_id, owner in (("v2", "'app-a'"), ("v3", "NULL"), ("v4", "'app-b'")):
+            with pytest.raises(IntegrityError):
+                with connection.begin_nested():
+                    insert(connection, version_id, owner)
+        connection.execute(
+            sa.text("DELETE FROM dbos.application_versions WHERE version_id = 'v1'")
+        )
+
+
+def test_enqueue_workflow_function_application_name(
+    dbos: DBOS, skip_with_sqlite: None
+) -> None:
+    """The SQL enqueue entry point takes application_name as a trailing optional
+    argument, so callers that predate it still enqueue (as unclaimed)."""
+    with dbos._sys_db.engine.begin() as connection:
+        overloads = connection.execute(
+            sa.text(
+                "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname='dbos' AND p.proname='enqueue_workflow'"
+            )
+        ).scalar()
+        # The migration must drop the previous signature, else calls are ambiguous.
+        assert overloads == 1
+
+        connection.execute(
+            sa.text(
+                "INSERT INTO dbos.queues (name, created_at, updated_at) "
+                "VALUES ('sql-fn-queue', 1, 1)"
+            )
+        )
+        old_style = connection.execute(
+            sa.text("SELECT dbos.enqueue_workflow('wf', 'sql-fn-queue')")
+        ).scalar()
+        new_style = connection.execute(
+            sa.text(
+                "SELECT dbos.enqueue_workflow(workflow_name => 'wf', "
+                "queue_name => 'sql-fn-queue', application_name => 'other-app')"
+            )
+        ).scalar()
+        owners = {
+            row[0]: row[1]
+            for row in connection.execute(
+                sa.text(
+                    "SELECT workflow_uuid, application_name FROM dbos.workflow_status "
+                    "WHERE workflow_uuid IN (:a, :b)"
+                ),
+                {"a": old_style, "b": new_style},
+            )
+        }
+    assert owners[old_style] is None
+    assert owners[new_style] == "other-app"
+
+
+def test_sqlite_systemdb_migration() -> None:
+    """Test SQLite system database migration."""
+    # Create a temporary SQLite database file
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as temp_db:
+        temp_db_path = temp_db.name
+
+        # Create SQLite system database URL
+        sqlite_url = f"sqlite:///{temp_db_path}"
+
+        # Create and run migrations
+        sys_db = SystemDatabase.create(
+            system_database_url=sqlite_url,
+            engine_kwargs={},
+            engine=None,
+            schema=None,
+            executor_id=None,
+            serializer=DefaultSerializer(),
+        )
+
+        # Run migrations
+        sys_db.run_migrations()
+
+        # Verify all tables exist and are empty
+        with sys_db.engine.connect() as connection:
+            # Note: SQLite schema doesn't use "dbos." prefix
+
+            # Test workflow_status table
+            sql = sa.text("SELECT * FROM workflow_status")
+            result = connection.execute(sql)
+            assert result.fetchall() == []
+
+            # Test operation_outputs table
+            sql = sa.text("SELECT * FROM operation_outputs")
+            result = connection.execute(sql)
+            assert result.fetchall() == []
+
+            # Test workflow_events table
+            sql = sa.text("SELECT * FROM workflow_events")
+            result = connection.execute(sql)
+            assert result.fetchall() == []
+
+            # Test notifications table
+            sql = sa.text("SELECT * FROM notifications")
+            result = connection.execute(sql)
+            assert result.fetchall() == []
+
+            # Test streams table
+            sql = sa.text("SELECT * FROM streams")
+            result = connection.execute(sql)
+            assert result.fetchall() == []
+
+            # Check dbos_migrations table exists, has one row, and has the right version
+            migrations_result = connection.execute(
+                sa.text("SELECT version FROM dbos_migrations")
+            )
+            migrations_rows = migrations_result.fetchall()
+            assert len(migrations_rows) == 1
+            assert migrations_rows[0][0] == len(sqlite_migrations)
+
+            # Verify foreign keys are enabled
+            fk_result = connection.execute(sa.text("PRAGMA foreign_keys"))
+            fk_enabled = fk_result.fetchone()
+            assert fk_enabled and fk_enabled[0] == 1  # 1 means enabled
+
+            # application_name must be nullable everywhere it appears
+            for table in _APPLICATION_NAME_TABLES:
+                columns = {
+                    row[1]: row[3]  # name -> notnull
+                    for row in connection.execute(
+                        sa.text(f"PRAGMA table_info({table})")
+                    )
+                }
+                assert "application_name" in columns, table
+                assert columns["application_name"] == 0, table
+
+        # Test truncating the system database: the rows go, the schema stays
+        with sys_db.engine.begin() as connection:
+            connection.execute(
+                SystemSchema.application_versions.insert().values(
+                    version_id="v1",
+                    version_name="v1",
+                    version_timestamp=1,
+                    created_at=1,
+                )
+            )
+        SystemDatabase.reset_system_database(sqlite_url, truncate=True)
+        assert os.path.exists(temp_db_path)
+        with sys_db.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    sa.select(sa.func.count()).select_from(
+                        SystemSchema.application_versions
+                    )
+                ).scalar_one()
+                == 0
+            )
+            assert connection.execute(
+                sa.text("SELECT version FROM dbos_migrations")
+            ).scalar() == len(sqlite_migrations)
+
+        # Clean up
+        sys_db.destroy()
+
+    # Test resetting the system database
+    assert os.path.exists(temp_db_path)
+    DBOS.destroy()
+    DBOS(config={"name": "sqlite_test", "database_url": sqlite_url})
+    DBOS.reset_system_database()
+    assert not os.path.exists(temp_db_path)
+    DBOS.destroy()
+
+
+def test_migrate(db_engine: sa.Engine, skip_with_sqlite: None) -> None:
+    """Test that you can migrate with a privileged role and run DBOS with a less-privileged role"""
+    database_name = "migrate_test"
+    role_name = "migrate-test-role"
+    role_password = "migrate_test_password"
+
+    # Verify migration is agnostic to driver name (under the hood it uses postgresql+psycopg)
+    db_url = db_engine.url.set(database=database_name).set(drivername="postgresql")
+    db_url_string = db_url.render_as_string(hide_password=False)
+
+    # Test with different system schema names
+    for schema in ["dbos", "public", "F8nny_sCHem@-n@m3"]:
+        for use_app_db in [True, False]:
+            # Drop the DBOS database if it exists. Create a test role with no permissions.
+            with db_engine.connect() as connection:
+                connection.execution_options(isolation_level="AUTOCOMMIT")
+                connection.execute(
+                    sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+                )
+                connection.execute(sa.text(f'DROP ROLE IF EXISTS "{role_name}"'))
+                connection.execute(
+                    sa.text(
+                        f"CREATE ROLE \"{role_name}\" WITH LOGIN PASSWORD '{role_password}'"
+                    )
+                )
+
+            # Using the admin role, create the DBOS database and verify it exists.
+            # Set permissions for the test role.
+            if use_app_db:
+                subprocess.check_call(
+                    [
+                        "dbos",
+                        "migrate",
+                        "-D",
+                        db_url_string,
+                        "-s",
+                        db_url_string,
+                        "-r",
+                        role_name,
+                        "--schema",
+                        schema,
+                    ]
+                )
+            else:
+                subprocess.check_call(
+                    [
+                        "dbos",
+                        "migrate",
+                        "-s",
+                        db_url_string,
+                        "-r",
+                        role_name,
+                        "--schema",
+                        schema,
+                    ]
+                )
+            with db_engine.connect() as c:
+                c.execution_options(isolation_level="AUTOCOMMIT")
+                result = c.execute(
+                    sa.text(
+                        f"SELECT COUNT(*) FROM pg_database WHERE datname = '{database_name}'"
+                    )
+                ).scalar()
+                assert result == 1
+
+            # Initialize DBOS with the test role. Verify various operations work.
+            test_db_url = (
+                db_url.set(username=role_name).set(password=role_password)
+            ).render_as_string(hide_password=False)
+            DBOS.destroy(destroy_registry=True)
+            config: DBOSConfig = {
+                "name": "test_migrate",
+                "database_url": test_db_url if use_app_db else None,
+                "system_database_url": test_db_url,
+                "dbos_system_schema": schema,
+            }
+            dbos = DBOS(config=config)
+            if not use_app_db:
+                assert dbos._app_db is None
+
+            @DBOS.transaction()
+            def test_transaction() -> str:
+                rows = DBOS.sql_session.execute(sa.text("SELECT 1")).fetchall()
+                return str(rows[0][0])
+
+            @DBOS.step()
+            def test_step() -> str:
+                return "1"
+
+            @DBOS.workflow()
+            def test_workflow() -> str:
+                if use_app_db:
+                    assert test_transaction() == "1"
+                else:
+                    assert test_step() == "1"
+                id = DBOS.workflow_id
+                assert id
+                DBOS.set_event(id, id)
+                return id
+
+            DBOS.launch()
+
+            workflow_id = test_workflow()
+            assert workflow_id
+            assert DBOS.get_event(workflow_id, workflow_id) == workflow_id
+
+            steps = DBOS.list_workflow_steps(workflow_id)
+            assert len(steps) == 2
+            assert (
+                steps[0]["function_name"] == test_transaction.__qualname__
+                if use_app_db
+                else test_step.__qualname__
+            )
+            assert steps[1]["function_name"] == "DBOS.setEvent"
+            DBOS.destroy()
+
+
+def test_programmatic_migration(db_engine: sa.Engine, skip_with_sqlite: None) -> None:
+    database_name = "migrate_test"
+    migrate_role = "migrate-test-role"
+    app_role = "app-test-role"
+    role_password = "migrate_test_password"
+
+    # Verify migration is agnostic to driver name (under the hood it uses postgresql+psycopg)
+    db_url = db_engine.url.set(database=database_name).set(drivername="postgresql")
+
+    # Drop the DBOS database if it exists. Create a test role with no permissions.
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+        for role in [migrate_role, app_role]:
+            connection.execute(sa.text(f'DROP ROLE IF EXISTS "{role}"'))
+            connection.execute(
+                sa.text(f"CREATE ROLE \"{role}\" WITH LOGIN PASSWORD '{role_password}'")
+            )
+            connection.execute(
+                sa.text(f'REVOKE CONNECT ON DATABASE postgres FROM "{role}"')
+            )
+        connection.execute(
+            sa.text(f'CREATE DATABASE {database_name} OWNER "{migrate_role}"')
+        )
+
+    # Using the admin role, create the DBOS database and verify it exists.
+    # Set permissions for the test role.
+    schema = "F8nny_sCHem@-n@m3"
+    migrate_url = (
+        db_url.set(username=migrate_role)
+        .set(password=role_password)
+        .render_as_string(hide_password=False)
+    )
+    run_dbos_database_migrations(
+        migrate_url,
+        app_database_url=migrate_url,
+        schema=schema,
+        application_role=app_role,
+    )
+    with db_engine.connect() as c:
+        c.execution_options(isolation_level="AUTOCOMMIT")
+        result = c.execute(
+            sa.text(
+                f"SELECT COUNT(*) FROM pg_database WHERE datname = '{database_name}'"
+            )
+        ).scalar()
+        assert result == 1
+
+    # Initialize DBOS with the test role. Verify various operations work.
+    test_db_url = (
+        db_url.set(username=app_role).set(password=role_password)
+    ).render_as_string(hide_password=False)
+    DBOS.destroy(destroy_registry=True)
+    config: DBOSConfig = {
+        "name": "test_migrate",
+        "database_url": test_db_url,
+        "system_database_url": test_db_url,
+        "dbos_system_schema": schema,
+    }
+    DBOS(config=config)
+
+    @DBOS.transaction()
+    def test_transaction() -> str:
+        rows = DBOS.sql_session.execute(sa.text("SELECT 1")).fetchall()
+        return str(rows[0][0])
+
+    @DBOS.step()
+    def test_step() -> str:
+        return "1"
+
+    @DBOS.workflow()
+    def test_workflow() -> str:
+        assert test_transaction() == "1"
+        assert test_step() == "1"
+        id = DBOS.workflow_id
+        assert id
+        DBOS.set_event(id, id)
+        return id
+
+    DBOS.launch()
+
+    workflow_id = test_workflow()
+    assert workflow_id
+    assert DBOS.get_event(workflow_id, workflow_id) == workflow_id
+    DBOS.destroy()
+
+
+def test_concurrent_migrations(db_engine: sa.Engine, skip_with_sqlite: None) -> None:
+    """Test that 10 system databases can be created and migrated concurrently on the same database."""
+    num_instances = 10
+    db_name = "concurrent_migration_test"
+
+    # Clean up any leftover database from previous runs
+    with db_engine.connect() as conn:
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(sa.text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
+
+    sys_url = db_engine.url.set(
+        drivername="postgresql+psycopg", database=db_name
+    ).render_as_string(hide_password=False)
+
+    def create_and_migrate(index: int) -> None:
+        sys_db = SystemDatabase.create(
+            system_database_url=sys_url,
+            engine_kwargs={},
+            engine=None,
+            schema="dbos",
+            serializer=DefaultSerializer(),
+            executor_id=None,
+        )
+        try:
+            sys_db.run_migrations()
+            # Verify migration succeeded
+            with sys_db.engine.connect() as conn:
+                rows = conn.execute(
+                    sa.text("SELECT version FROM dbos.dbos_migrations")
+                ).fetchall()
+                assert len(rows) == 1
+                assert rows[0][0] == len(get_dbos_migrations("dbos", True))
+        finally:
+            sys_db.destroy()
+
+    # Run all migrations concurrently on the same database
+    errors = []
+    with ThreadPoolExecutor(max_workers=num_instances) as executor:
+        futures = {
+            executor.submit(create_and_migrate, i): i for i in range(num_instances)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                errors.append((index, e))
+
+    # Assert no errors
+    if errors:
+        error_details = "\n".join(
+            f"  Instance {idx}: {type(e).__name__}: {e}" for idx, e in errors
+        )
+        pytest.fail(
+            f"{len(errors)}/{num_instances} concurrent migrations failed:\n{error_details}"
+        )
+
+
+def test_online_migrations_are_idempotent(
+    dbos_dropped_databases: DBOS, skip_with_sqlite: None
+) -> None:
+    """Re-running every migration from the first online one onward against an
+    already-migrated schema must succeed without error. Guards against
+    missing IF [NOT] EXISTS clauses in any drop/create migration.
+
+    Needs a dropped database: it rewinds dbos_migrations, which truncation spares."""
+    from dbos._migration import _ONLINE_MIGRATIONS, run_dbos_migrations
+
+    engine = dbos_dropped_databases._sys_db.engine
+    schema = "dbos"
+    rewind_to = min(_ONLINE_MIGRATIONS) - 1
+    final_version = len(get_dbos_migrations(schema, True))
+
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(f'UPDATE "{schema}".dbos_migrations SET version = :v'),
+            {"v": rewind_to},
+        )
+
+    run_dbos_migrations(engine, schema, use_listen_notify=True)
+
+    with engine.connect() as conn:
+        version = conn.execute(
+            sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+        ).scalar()
+        assert version == final_version
+
+
+def test_version_not_bumped_on_migration_failure(
+    dbos_dropped_databases: DBOS, skip_with_sqlite: None
+) -> None:
+    """If a migration raises mid-flight, the version counter must stay at the
+    prior value so the runner re-attempts it on the next start.
+
+    Needs a dropped database: it rewinds dbos_migrations, which truncation spares."""
+    from unittest.mock import patch
+
+    from dbos._migration import run_dbos_migrations
+
+    engine = dbos_dropped_databases._sys_db.engine
+    schema = "dbos"
+    rewind_to_version = 31  # one before migration 32
+    final_version = len(get_dbos_migrations(schema, True))
+
+    # Rewind so migration 32 is pending again
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(f'UPDATE "{schema}".dbos_migrations SET version = :v'),
+            {"v": rewind_to_version},
+        )
+
+    # Replace migration 32 with invalid SQL. Its execution must raise, and
+    # the runner must not advance the version past 31.
+    with patch(
+        "dbos._migration.get_dbos_migration_thirtytwo",
+        return_value="THIS IS NOT VALID SQL",
+    ):
+        with pytest.raises(Exception):
+            run_dbos_migrations(engine, schema, use_listen_notify=True)
+
+    with engine.connect() as conn:
+        version = conn.execute(
+            sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+        ).scalar()
+        assert version == rewind_to_version
+
+    # Re-run with the real migrations: IF NOT EXISTS guards make 32+ idempotent
+    # given the index still exists from the original fixture migration.
+    run_dbos_migrations(engine, schema, use_listen_notify=True)
+
+    with engine.connect() as conn:
+        version = conn.execute(
+            sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+        ).scalar()
+        assert version == final_version
+
+
+def test_should_migrate(dbos_dropped_databases: DBOS, skip_with_sqlite: None) -> None:
+    """should_migrate must return True when the schema is missing, the
+    dbos_migrations table is missing, or the recorded version is behind the
+    latest; and False once the schema is fully migrated.
+
+    Needs a dropped database: it ends with dbos_migrations gone."""
+    from dbos._migration import should_migrate
+
+    engine = dbos_dropped_databases._sys_db.engine
+    schema = "dbos"
+    latest_version = len(get_dbos_migrations(schema, True))
+
+    # A freshly-migrated dbos fixture should be up to date
+    assert should_migrate(engine, schema, use_listen_notify=True) is False
+
+    # Rewinding the version makes migrations pending again
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(f'UPDATE "{schema}".dbos_migrations SET version = :v'),
+            {"v": latest_version - 1},
+        )
+    assert should_migrate(engine, schema, use_listen_notify=True) is True
+
+    # Restore version, then drop the migrations table to simulate a partially
+    # initialized schema. should_migrate must report True.
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(f'UPDATE "{schema}".dbos_migrations SET version = :v'),
+            {"v": latest_version},
+        )
+    assert should_migrate(engine, schema, use_listen_notify=True) is False
+
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'DROP TABLE "{schema}".dbos_migrations'))
+    assert should_migrate(engine, schema, use_listen_notify=True) is True
+
+    # A schema name that does not exist at all must also report True
+    assert (
+        should_migrate(engine, "nonexistent_schema_xyz", use_listen_notify=True) is True
+    )
+
+
+def test_runner_resumes_after_invalid_index(
+    dbos_dropped_databases: DBOS, skip_with_sqlite: None
+) -> None:
+    """Simulate a CREATE INDEX CONCURRENTLY that crashed mid-build (leaving an
+    INVALID index) and verify the runner cleans it up and re-runs the
+    migration on the next start.
+
+    Needs a dropped database: it plants an invalid index and rewinds
+    dbos_migrations, which truncation spares."""
+    from dbos._migration import run_dbos_migrations
+
+    engine = dbos_dropped_databases._sys_db.engine
+    schema = "dbos"
+    target_index = "idx_workflow_status_in_flight"
+    rewind_to_version = 31  # one before migration 32 which builds target_index
+    final_version = len(get_dbos_migrations(schema, True))
+
+    # Drop the existing valid index, then plant an INVALID index of the same
+    # name. Flipping pg_index.indisvalid mimics what Postgres leaves behind
+    # when CREATE INDEX CONCURRENTLY aborts mid-build.
+    with engine.connect() as raw_conn:
+        conn = raw_conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(sa.text(f'DROP INDEX IF EXISTS "{schema}"."{target_index}"'))
+        conn.execute(
+            sa.text(
+                f'CREATE INDEX "{target_index}" ON "{schema}"."workflow_status" '
+                "(queue_name, status, priority, created_at) "
+                "WHERE status IN ('ENQUEUED', 'PENDING')"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "UPDATE pg_index SET indisvalid = false "
+                f"WHERE indexrelid = '{schema}.{target_index}'::regclass"
+            )
+        )
+
+    # Confirm the planted index is INVALID
+    with engine.connect() as conn:
+        valid = conn.execute(
+            sa.text(
+                "SELECT indisvalid FROM pg_index "
+                f"WHERE indexrelid = '{schema}.{target_index}'::regclass"
+            )
+        ).scalar()
+        assert valid is False
+
+    # Rewind the version counter so the runner re-executes migration 32
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(f'UPDATE "{schema}".dbos_migrations SET version = :v'),
+            {"v": rewind_to_version},
+        )
+
+    # Re-run migrations: cleanup should drop the invalid index, then 32+ rebuild
+    run_dbos_migrations(engine, schema, use_listen_notify=True)
+
+    # The index now exists and is valid, and the version is back at the latest
+    with engine.connect() as conn:
+        valid = conn.execute(
+            sa.text(
+                "SELECT indisvalid FROM pg_index "
+                f"WHERE indexrelid = '{schema}.{target_index}'::regclass"
+            )
+        ).scalar()
+        assert valid is True
+
+        version = conn.execute(
+            sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+        ).scalar()
+        assert version == final_version
+
+
+def test_migrate_print_migrations_all(
+    db_engine: sa.Engine,
+    skip_with_sqlite: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--print-migrations all emits a complete fresh-database script that psql can apply."""
+    database_name = "print_migrations_test"
+    db_url = db_engine.url.set(database=database_name).set(drivername="postgresql")
+    db_url_string = db_url.render_as_string(hide_password=False)
+    latest_version = len(get_dbos_migrations("dbos", True))
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+
+    # Printing needs no reachable database; stdout is pure SQL and comments
+    print_dbos_migrations(db_url_string, schema="dbos", migration="all")
+    sql = capsys.readouterr().out
+    # The header names no database: a newline in one would end the comment (#819).
+    assert sql.startswith("-- DBOS system database migrations\n")
+    assert 'CREATE SCHEMA IF NOT EXISTS "dbos";' in sql
+    assert "DO $$" not in sql
+    assert "-- Migration 10 skipped: not applicable on fresh databases" in sql
+    assert "ADD PRIMARY KEY (message_uuid)" not in sql
+    assert 'INSERT INTO "dbos".dbos_migrations (version) VALUES (1);' in sql
+    assert f'UPDATE "dbos".dbos_migrations SET version = {latest_version};' in sql
+    # Role grants are only printed by --print-user-role
+    assert "GRANT" not in sql
+    for line in sql.splitlines():
+        assert line.startswith("--") or not line.startswith(
+            ("Starting", "Granting", "System database")
+        )
+
+    # The CLI path prints the same script and exits cleanly, even though the
+    # database is unreachable
+    result = subprocess.run(
+        ["dbos", "migrate", "-s", db_url_string, "--print-migrations", "all"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == sql
+
+    if shutil.which("psql") is None:
+        pytest.skip("psql not available")
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(sa.text(f"CREATE DATABASE {database_name}"))
+
+    with tempfile.NamedTemporaryFile("w", suffix=".sql") as f:
+        f.write(sql)
+        f.flush()
+        subprocess.check_call(
+            ["psql", db_url_string, "-v", "ON_ERROR_STOP=1", "-q", "-f", f.name]
+        )
+
+    # A real migration now considers the database up to date
+    engine = sa.create_engine(db_url.set(drivername="postgresql+psycopg"))
+    try:
+        assert should_migrate(engine, "dbos", True) is False
+        with engine.connect() as conn:
+            version = conn.execute(
+                sa.text('SELECT version FROM "dbos".dbos_migrations')
+            ).scalar()
+            assert version == latest_version
+    finally:
+        engine.dispose()
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+
+
+def test_migrate_print_custom_schema(
+    db_engine: sa.Engine,
+    skip_with_sqlite: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--print-migrations and --print-user-role handle unusual schema names."""
+    database_name = "print_migrations_schema_test"
+    schema = "F8nny_sCHem@-n@m3"
+    db_url = db_engine.url.set(database=database_name).set(drivername="postgresql")
+    db_url_string = db_url.render_as_string(hide_password=False)
+    latest_version = len(get_dbos_migrations(schema, True))
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+
+    print_dbos_migrations(db_url_string, schema=schema, migration="all")
+    sql = capsys.readouterr().out
+    assert f'CREATE SCHEMA IF NOT EXISTS "{schema}";' in sql
+    # The unquoted schema name must never appear outside quotes or literals
+    assert f"CREATE TABLE {schema}." not in sql
+
+    # A quote inside a schema name is escaped, not left to close the identifier early
+    print_dbos_migrations(db_url_string, schema='bad"schema', migration="all")
+    quoted_sql = capsys.readouterr().out
+    assert 'CREATE SCHEMA IF NOT EXISTS "bad""schema";' in quoted_sql
+
+    # A percent is passed through, not doubled by the identifier preparer.
+    print_dbos_migrations(db_url_string, schema="ten%1", migration="all")
+    assert 'CREATE SCHEMA IF NOT EXISTS "ten%1";' in capsys.readouterr().out
+
+    # --print-user-role requires --app-role
+    result = subprocess.run(
+        ["dbos", "migrate", "-s", db_url_string, "--print-user-role"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "--app-role" in result.stderr
+
+    # --print-user-role emits only grant statements, quoting schema and role
+    result = subprocess.run(
+        [
+            "dbos",
+            "migrate",
+            "-s",
+            db_url_string,
+            "--schema",
+            schema,
+            "--print-user-role",
+            "-r",
+            "my-app-role",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert f'GRANT USAGE ON SCHEMA "{schema}" TO "my-app-role";' in result.stdout
+    for line in result.stdout.splitlines():
+        assert line.startswith(("--", "GRANT", "ALTER"))
+    role_sql = result.stdout
+
+    # A quote inside a role name is escaped the same way
+    print_dbos_user_role_sql(schema=schema, role_name='bad"role')
+    assert (
+        f'GRANT USAGE ON SCHEMA "{schema}" TO "bad""role";' in capsys.readouterr().out
+    )
+
+    # Quoting cannot escape a newline, so the header names neither: otherwise the
+    # comment would end there and the rest of the name would run as SQL (#819).
+    print_dbos_user_role_sql(schema="ev\nDROP DATABASE prod; --", role_name="ap\np")
+    role_out = capsys.readouterr().out
+    assert role_out.splitlines()[0] == "-- Permissions on the DBOS system schema"
+    assert not role_out.startswith("-- Permissions on DBOS schema")
+
+    # --print-user-role cannot be combined with --print-migrations
+    result = subprocess.run(
+        [
+            "dbos",
+            "migrate",
+            "-s",
+            db_url_string,
+            "--print-migrations",
+            "all",
+            "--print-user-role",
+            "-r",
+            "my-app-role",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "cannot be combined" in result.stderr
+    assert result.stdout == ""
+
+    if shutil.which("psql") is None:
+        pytest.skip("psql not available")
+
+    # The printed scripts work on a fresh database
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(sa.text(f"CREATE DATABASE {database_name}"))
+        connection.execute(sa.text('DROP ROLE IF EXISTS "my-app-role"'))
+        connection.execute(
+            sa.text("CREATE ROLE \"my-app-role\" LOGIN PASSWORD 'app_role_pwd'")
+        )
+
+    for script in [sql, role_sql]:
+        with tempfile.NamedTemporaryFile("w", suffix=".sql") as f:
+            f.write(script)
+            f.flush()
+            subprocess.check_call(
+                ["psql", db_url_string, "-v", "ON_ERROR_STOP=1", "-q", "-f", f.name]
+            )
+
+    engine = sa.create_engine(db_url.set(drivername="postgresql+psycopg"))
+    try:
+        assert should_migrate(engine, schema, True) is False
+    finally:
+        engine.dispose()
+
+    # The app role can query the DBOS schema
+    app_engine = sa.create_engine(
+        db_url.set(drivername="postgresql+psycopg")
+        .set(username="my-app-role")
+        .set(password="app_role_pwd")
+    )
+    try:
+        with app_engine.connect() as conn:
+            version = conn.execute(
+                sa.text(f'SELECT version FROM "{schema}".dbos_migrations')
+            ).scalar()
+            assert version == latest_version
+    finally:
+        app_engine.dispose()
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+        connection.execute(sa.text('DROP ROLE IF EXISTS "my-app-role"'))
+
+
+def test_migrate_print_from_migration(
+    db_engine: sa.Engine,
+    skip_with_sqlite: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--print-migrations N emits migrations N through latest."""
+    database_name = "print_from_migration_test"
+    db_url = db_engine.url.set(database=database_name).set(drivername="postgresql")
+    db_url_string = db_url.render_as_string(hide_password=False)
+    migrations = get_dbos_migrations("dbos", True)
+    latest_version = len(migrations)
+
+    # Invalid selections are rejected
+    for bad in ["0", str(latest_version + 1), "-1", "foo"]:
+        with pytest.raises(click.exceptions.Exit):
+            print_dbos_migrations(db_url_string, schema="dbos", migration=bad)
+    capsys.readouterr()
+    result = subprocess.run(
+        ["dbos", "migrate", "-s", db_url_string, "--print-migrations", "nope"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "expected 'all' or a migration number" in result.stderr
+
+    # Starting from 1 is identical to "all"
+    print_dbos_migrations(db_url_string, schema="dbos", migration="1")
+    from_one = capsys.readouterr().out
+    print_dbos_migrations(db_url_string, schema="dbos", migration="all")
+    assert capsys.readouterr().out == from_one
+
+    # Starting mid-way omits the prelude and earlier migrations
+    print_dbos_migrations(db_url_string, schema="dbos", migration="10")
+    out = capsys.readouterr().out
+    assert "CREATE SCHEMA" not in out
+    assert "-- Migration 9" not in out
+    assert "-- Migration 10 skipped: not applicable on fresh databases" in out
+    assert 'UPDATE "dbos".dbos_migrations SET version = 10;' in out
+    assert "-- Migration 11" in out.splitlines()
+    assert f'UPDATE "dbos".dbos_migrations SET version = {latest_version};' in out
+    assert "DO $$" not in out
+
+    if shutil.which("psql") is None:
+        pytest.skip("psql not available")
+
+    # Bring a fresh database to version latest-1 by truncating the full script
+    print_dbos_migrations(db_url_string, schema="dbos", migration="all")
+    full = capsys.readouterr().out
+    marker = f'UPDATE "dbos".dbos_migrations SET version = {latest_version - 1};'
+    partial = full[: full.index(marker) + len(marker)] + "\n"
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+        connection.execute(sa.text(f"CREATE DATABASE {database_name}"))
+    with tempfile.NamedTemporaryFile("w", suffix=".sql") as f:
+        f.write(partial)
+        f.flush()
+        subprocess.check_call(
+            ["psql", db_url_string, "-v", "ON_ERROR_STOP=1", "-q", "-f", f.name]
+        )
+
+    # The last migration printed alone applies on top of version latest-1
+    single = subprocess.check_output(
+        [
+            "dbos",
+            "migrate",
+            "-s",
+            db_url_string,
+            "--print-migrations",
+            str(latest_version),
+        ],
+        text=True,
+    )
+    assert "CREATE SCHEMA" not in single
+    assert "DO $$" not in single
+    with tempfile.NamedTemporaryFile("w", suffix=".sql") as f:
+        f.write(single)
+        f.flush()
+        subprocess.check_call(
+            ["psql", db_url_string, "-v", "ON_ERROR_STOP=1", "-q", "-f", f.name]
+        )
+
+    engine = sa.create_engine(db_url.set(drivername="postgresql+psycopg"))
+    try:
+        assert should_migrate(engine, "dbos", True) is False
+        with engine.connect() as conn:
+            version = conn.execute(
+                sa.text('SELECT version FROM "dbos".dbos_migrations')
+            ).scalar()
+            assert version == latest_version
+    finally:
+        engine.dispose()
+
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+
+
+def test_migrate_print_migrations_without_database_url(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--print-migrations never connects, so a missing database URL is not an error."""
+    print_dbos_migrations(None, schema="dbos", migration="all")
+    out = capsys.readouterr().out
+    assert out.startswith("-- DBOS system database migrations\n")
+    assert 'CREATE SCHEMA IF NOT EXISTS "dbos";' in out
+
+    # An empty directory has no dbos-config.yaml, so the CLI resolves no URL
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DBOS")}
+    result = subprocess.run(
+        ["dbos", "migrate", "--print-migrations", "all"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == out
+
+    # Actually running migrations still requires a URL
+    result = subprocess.run(
+        ["dbos", "migrate"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "Missing database URL" in result.stderr
+
+
+def _create_unmigrated_database(db_engine: sa.Engine, database_name: str) -> str:
+    """An empty database with no DBOS schema, and the URL to reach it."""
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+        connection.execute(sa.text(f"CREATE DATABASE {database_name}"))
+    return (
+        db_engine.url.set(database=database_name)
+        .set(drivername="postgresql+psycopg")
+        .render_as_string(hide_password=False)
+    )
+
+
+def _drop_database(db_engine: sa.Engine, database_name: str) -> None:
+    with db_engine.connect() as connection:
+        connection.execution_options(isolation_level="AUTOCOMMIT")
+        connection.execute(
+            sa.text(f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE)")
+        )
+
+
+def _launch_expecting_failure(
+    config: DBOSConfig, error: type[Exception] = DBOSInitializationError
+) -> str:
+    """Launch DBOS, returning the error it must raise."""
+    DBOS.destroy(destroy_registry=True)
+    DBOS(config=config)
+    try:
+        with pytest.raises(error) as exc_info:
+            DBOS.launch()
+        return str(exc_info.value)
+    finally:
+        DBOS.destroy(destroy_registry=True)
+
+
+def test_run_migrations_false_launches_migrated_database(
+    dbos: DBOS, config: DBOSConfig
+) -> None:
+    """A system database the fixture already migrated launches with migrations off."""
+    DBOS.destroy(destroy_registry=True)
+    DBOS(config={**config, "run_migrations": False})
+
+    @DBOS.workflow()
+    def workflow() -> str:
+        return "migrated"
+
+    DBOS.launch()
+    assert workflow() == "migrated"
+
+
+def test_run_migrations_false_rejects_unmigrated_database(
+    dbos: DBOS, config: DBOSConfig, db_engine: sa.Engine, skip_with_sqlite: None
+) -> None:
+    """A database with no DBOS schema is at version 0, so launch must fail."""
+    database_name = "dbostestpy_unmigrated_sys"
+    system_database_url = _create_unmigrated_database(db_engine, database_name)
+    try:
+        latest_version = len(get_dbos_migrations("dbos", True))
+        message = _launch_expecting_failure(
+            {
+                **config,
+                "system_database_url": system_database_url,
+                "run_migrations": False,
+            }
+        )
+        assert (
+            f"is at schema version 0, but this version of DBOS requires {latest_version}"
+            in message
+        )
+
+        # Verifying must not have migrated it on the way past.
+        engine = sa.create_engine(system_database_url)
+        try:
+            with engine.connect() as connection:
+                assert (
+                    connection.execute(
+                        sa.text(
+                            "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'dbos'"
+                        )
+                    ).fetchone()
+                    is None
+                )
+        finally:
+            engine.dispose()
+    finally:
+        _drop_database(db_engine, database_name)
+
+
+def test_run_migrations_false_does_not_create_database(
+    dbos: DBOS, config: DBOSConfig, db_engine: sa.Engine, skip_with_sqlite: None
+) -> None:
+    """A missing system database must fail launch rather than be created."""
+    database_name = "dbostestpy_missing_sys"
+    _drop_database(db_engine, database_name)
+    system_database_url = (
+        db_engine.url.set(database=database_name)
+        .set(drivername="postgresql+psycopg")
+        .render_as_string(hide_password=False)
+    )
+    try:
+        # Verification does not relabel driver errors, so the missing database
+        # surfaces as the connection failure itself.
+        message = _launch_expecting_failure(
+            {
+                **config,
+                "system_database_url": system_database_url,
+                "run_migrations": False,
+            },
+            error=OperationalError,
+        )
+        assert f'database "{database_name}" does not exist' in message
+
+        with db_engine.connect() as connection:
+            assert (
+                connection.execute(
+                    sa.text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                    {"name": database_name},
+                ).fetchone()
+                is None
+            )
+    finally:
+        _drop_database(db_engine, database_name)
+
+
+def test_run_migrations_false_version_comparison(
+    dbos: DBOS, config: DBOSConfig, db_engine: sa.Engine, skip_with_sqlite: None
+) -> None:
+    """A database behind this build fails launch; one ahead of it is tolerated."""
+    database_name = "dbostestpy_versioned_sys"
+    system_database_url = _create_unmigrated_database(db_engine, database_name)
+    disabled_config: DBOSConfig = {
+        **config,
+        "system_database_url": system_database_url,
+        "run_migrations": False,
+    }
+    try:
+        run_dbos_database_migrations(system_database_url)
+        latest_version = len(get_dbos_migrations("dbos", True))
+        engine = sa.create_engine(system_database_url)
+
+        def set_version(version: int) -> None:
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text('UPDATE "dbos".dbos_migrations SET version = :v'),
+                    {"v": version},
+                )
+
+        try:
+            set_version(latest_version - 1)
+            message = _launch_expecting_failure(disabled_config)
+            assert (
+                f"is at schema version {latest_version - 1}, but this version of DBOS "
+                f"requires {latest_version}" in message
+            )
+
+            # A database ahead of this build belongs to a newer peer, which is tolerated.
+            set_version(latest_version + 1)
+            DBOS.destroy(destroy_registry=True)
+            DBOS(config=disabled_config)
+            DBOS.launch()
+        finally:
+            engine.dispose()
+    finally:
+        DBOS.destroy(destroy_registry=True)
+        _drop_database(db_engine, database_name)
+
+
+def test_sqlite_verify_migrations(tmp_path: pathlib.Path) -> None:
+    """SQLite verification reports a missing file, an unmigrated one, and a migrated one."""
+    missing_path = tmp_path / "missing.sqlite"
+    missing_db = SystemDatabase.create(
+        system_database_url=f"sqlite:///{missing_path}",
+        engine_kwargs={},
+        engine=None,
+        schema=None,
+        executor_id=None,
+        serializer=DefaultSerializer(),
+    )
+    try:
+        with pytest.raises(DBOSInitializationError) as exc_info:
+            missing_db.verify_migrations()
+        assert "does not exist" in str(exc_info.value)
+        # Verifying must not have created the file.
+        assert not missing_path.exists()
+    finally:
+        missing_db.destroy()
+
+    empty_path = tmp_path / "empty.sqlite"
+    empty_path.touch()
+    sys_db = SystemDatabase.create(
+        system_database_url=f"sqlite:///{empty_path}",
+        engine_kwargs={},
+        engine=None,
+        schema=None,
+        executor_id=None,
+        serializer=DefaultSerializer(),
+    )
+    try:
+        with pytest.raises(DBOSInitializationError) as exc_info:
+            sys_db.verify_migrations()
+        assert (
+            f"is at schema version 0, but this version of DBOS requires "
+            f"{len(sqlite_migrations)}" in str(exc_info.value)
+        )
+
+        # Once migrated, verification passes.
+        sys_db.run_migrations()
+        sys_db.verify_migrations()
+    finally:
+        sys_db.destroy()

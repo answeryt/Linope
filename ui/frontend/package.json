@@ -1,0 +1,18 @@
+{
+  "name": "open-linux-ui",
+  "description": "Linope browser UI; dist/ is served by the ui CLI plugins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.2",
+    "vite": "^6.0.0"
+  }
+}

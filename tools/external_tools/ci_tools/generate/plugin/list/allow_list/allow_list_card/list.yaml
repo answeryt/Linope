@@ -14,6 +14,12 @@ inject:
     - store
     - journal
     - lifecycle
+    - continuation_builder
+    - scheduler
+  continuation_scheduler:
+    - continuations
+    - processes
+    - dispatch
   process_worker:
     - queue
     - runtime
@@ -41,6 +47,16 @@ inject:
     - writable_roots
   profiles_plugin:
     - writable_roots
+  ui_cli_plugin:
+    - parse_startup
+    - create_server
+    - mount_shell
+    - mount_static
+    - announce
+    - resolve_dist_index
+  ui_static_plugin:
+    - register_fallback
+    - apply_index_taps
 kernel_layers:
   services:
     - app
@@ -48,6 +64,7 @@ kernel_layers:
     - worker
     - queue
     - store
+    - scheduler
   process:
     - activation
     - definition
@@ -56,6 +73,7 @@ kernel_layers:
     - lifecycle
     - state
     - handle
+    - continuation
   thred:
     - binding
     - definition

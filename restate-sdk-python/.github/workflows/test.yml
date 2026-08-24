@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main, release-**]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  lint-and-test:
+    name: "Lint and Test (Python ${{ matrix.python }})"
+    runs-on: warp-ubuntu-latest-x64-4x
+    strategy:
+      matrix:
+        python: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v2
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: just sync 
+      - name: Build
+        run: just build
+      - name: Verify
+        run: just verify

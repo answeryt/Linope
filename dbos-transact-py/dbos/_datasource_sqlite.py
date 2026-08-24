@@ -1,0 +1,104 @@
+from typing import Any, Dict
+
+import sqlalchemy as sa
+from sqlalchemy import event
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from dbos._datasource import AsyncSQLAlchemyDatasource, SQLAlchemyDatasource
+from dbos._migration import get_sqlite_timestamp_expr
+
+from ._logger import dbos_logger
+
+
+def _is_sqlite_serialization_error(error: Exception) -> bool:
+    """Check if the error is a retryable SQLite busy/locked error."""
+    if not isinstance(error, DBAPIError):
+        return False
+    msg = str(error.orig).lower()
+    return "database is locked" in msg or "database table is locked" in msg
+
+
+_PG_ONLY_CONNECT_ARGS = frozenset(("application_name", "connect_timeout"))
+
+_CHECK_TABLE_SQL = sa.text(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='datasource_outputs'"
+)
+
+_CREATE_TABLE_SQL = sa.text(
+    f"""
+    CREATE TABLE datasource_outputs (
+        workflow_id TEXT NOT NULL,
+        step_id INTEGER NOT NULL,
+        output TEXT,
+        error TEXT,
+        serialization TEXT,
+        created_at INTEGER NOT NULL DEFAULT {get_sqlite_timestamp_expr()},
+        PRIMARY KEY (workflow_id, step_id)
+    )"""
+)
+
+
+def _set_sqlite_pragmas(dbapi_conn: Any, connection_record: Any) -> None:
+    # Match the system database: serialize writers and ride out lock contention
+    # rather than failing fast with "database is locked" (the sqlite3 default is
+    # only 5 seconds, which slow disks can exceed under load).
+    dbapi_conn.isolation_level = "IMMEDIATE"
+    dbapi_conn.execute("PRAGMA busy_timeout=30000")
+    dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _filter_sqlite_kwargs(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    kwargs = engine_kwargs.copy()
+    connect_args = kwargs.get("connect_args", {})
+    if connect_args:
+        filtered_keys = [k for k in connect_args if k in _PG_ONLY_CONNECT_ARGS]
+        if filtered_keys:
+            dbos_logger.debug(
+                f"Ignoring PostgreSQL-specific connect_args for SQLite: {filtered_keys}"
+            )
+        kwargs["connect_args"] = {
+            k: v for k, v in connect_args.items() if k not in _PG_ONLY_CONNECT_ARGS
+        }
+    return kwargs
+
+
+class SqliteAsyncDatasource(AsyncSQLAlchemyDatasource):
+    def _create_engine(
+        self, database_url: str, engine_kwargs: Dict[str, Any]
+    ) -> AsyncEngine:
+        engine = create_async_engine(
+            database_url, **_filter_sqlite_kwargs(engine_kwargs)
+        )
+        # AsyncEngine events must be attached to the underlying sync engine
+        event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
+        return engine
+
+    async def run_migrations(self) -> None:
+        async with self.engine.begin() as conn:
+            await conn.execute(sa.text("PRAGMA foreign_keys = ON"))
+            result = await conn.execute(_CHECK_TABLE_SQL)
+            if result.fetchone() is None:
+                await conn.execute(_CREATE_TABLE_SQL)
+
+    def _is_serialization_error(self, error: Exception) -> bool:
+        return _is_sqlite_serialization_error(error)
+
+
+class SqliteSyncDatasource(SQLAlchemyDatasource):
+    def _create_engine(
+        self, database_url: str, engine_kwargs: Dict[str, Any]
+    ) -> sa.Engine:
+        engine = sa.create_engine(database_url, **_filter_sqlite_kwargs(engine_kwargs))
+        event.listens_for(engine, "connect")(_set_sqlite_pragmas)
+        return engine
+
+    def run_migrations(self) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(sa.text("PRAGMA foreign_keys = ON"))
+            result = conn.execute(_CHECK_TABLE_SQL)
+            if result.fetchone() is None:
+                conn.execute(_CREATE_TABLE_SQL)
+
+    def _is_serialization_error(self, error: Exception) -> bool:
+        return _is_sqlite_serialization_error(error)

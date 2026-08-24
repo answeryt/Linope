@@ -71,6 +71,16 @@ def _require(store: Any, process_id: str) -> dict[str, Any]:
     return dict(record)
 
 
+def _require_run(store: Any, process_id: str, run_id: str) -> dict[str, Any]:
+    require_run = getattr(store, "require_run", None)
+    if not callable(require_run):
+        record = _require(store, process_id)
+        if str(record.get("run_id")) != str(run_id):
+            raise KeyError((process_id, run_id))
+        return record
+    return dict(require_run(process_id, run_id))
+
+
 class ProcessLifecycle:
     """State changes and activation de-duplication over an injected store."""
 
@@ -97,6 +107,7 @@ class ProcessLifecycle:
         self.new_run_id = new_run_id or _new_id
 
     def create(self, process_type: str, **fields: Any) -> dict[str, Any]:
+        """Create the first run of a new logical Process."""
         fields.setdefault("process_id", self.new_process_id())
         fields.setdefault("run_id", self.new_run_id())
         record = dict(self.build_process_run(process_type, **fields))
@@ -104,6 +115,23 @@ class ProcessLifecycle:
         if callable(creator):
             return dict(creator(record))
         return _put(self.store, record)
+
+    def start_run(self, process_id: str, **fields: Any) -> dict[str, Any]:
+        """Start a fresh run while retaining a Process' stable identity."""
+        previous = _require(self.store, process_id)
+        if previous.get("state") != "terminated":
+            raise RuntimeError("a new run requires the current run to be terminated")
+        process_type = str(previous["process_type"])
+        fields.setdefault("process_id", str(process_id))
+        fields.setdefault("run_id", self.new_run_id())
+        fields.setdefault(
+            "definition_version", str(previous.get("definition_version") or "1")
+        )
+        record = dict(self.build_process_run(process_type, **fields))
+        creator = getattr(self.store, "create_run", None)
+        if not callable(creator):
+            raise TypeError("store must provide create_run for multiple Process runs")
+        return dict(creator(record))
 
     def activate(
         self,
@@ -195,8 +223,54 @@ class ProcessLifecycle:
         _put(self.store, record)
         return self._move(process_id, "waiting", reason=reason)
 
-    def resume(self, process_id: str) -> dict[str, Any]:
+    def continuation(
+        self,
+        process_id: str,
+        continuation: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a request for another Scheduler-approved execution."""
         record = _require(self.store, process_id)
+        if record.get("state") == "terminated":
+            raise RuntimeError("terminated process cannot request a continuation")
+        continuation_copy = deepcopy(dict(continuation))
+        if str(continuation_copy.get("process_id")) != str(process_id):
+            raise ValueError("continuation process_id does not match Process")
+        if str(continuation_copy.get("run_id")) != str(record.get("run_id")):
+            raise ValueError("continuation run_id does not match Process run")
+        continuation_ids = [
+            str(item) for item in (record.get("continuation_ids") or ())
+        ]
+        continuation_id = str(continuation_copy.get("continuation_id") or "")
+        if not continuation_id:
+            raise ValueError("continuation_id is required")
+        if continuation_id not in continuation_ids:
+            continuation_ids.append(continuation_id)
+        record["continuation_ids"] = continuation_ids
+        record["continuation"] = continuation_copy
+        record["wait_condition"] = {
+            "type": "continuation",
+            "continuation_id": continuation_id,
+            "when": deepcopy(continuation_copy.get("when")),
+        }
+        _put(self.store, record)
+        return self._move(
+            process_id,
+            "waiting",
+            reason=str(continuation_copy.get("reason") or "continuation"),
+        )
+
+    def resume(self, process_id: str, run_id: str | None = None) -> dict[str, Any]:
+        """Resume the current run, or explicitly select and resume an older run."""
+        if run_id is not None:
+            record = _require_run(self.store, process_id, run_id)
+            if record.get("state") == "terminated":
+                raise RuntimeError("terminated run cannot be resumed")
+            selector = getattr(self.store, "select_run", None)
+            if not callable(selector):
+                raise TypeError("store must provide select_run to resume a specific run")
+            record = dict(selector(process_id, run_id))
+        else:
+            record = _require(self.store, process_id)
         record["wait_condition"] = None
         _put(self.store, record)
         return self._move(process_id, "ready")

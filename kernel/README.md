@@ -279,6 +279,11 @@ state snapshot
 resource ownership metadata
 ```
 
+`process_id` 表示长期稳定的逻辑 Process 身份，`run_id` 表示它的一次执行。
+首次创建会同时生成两者；已终止的 Process 可以保留 `process_id` 并用新的
+`run_id` 启动下一次执行。Store 必须保留 `(process_id, run_id)` 对应的历史
+Run，并另外记录当前 `run_id`，不能用新 Run 覆盖旧 Run。
+
 原因：Python coroutine 不能可靠序列化。Process 在等待时必须允许 worker
 退出；恢复时重跑 Process Function，并按命令序号复用 journal 中的结果。
 
@@ -348,6 +353,32 @@ coroutine、CPU、模型并发或 Sandbox。
 
 Signal 可以多次投递；Promise/Event 默认一次完成；Timer 由 Scheduler 或 Host
 持久化唤醒。
+
+### 5.1 Continuation 与自主执行
+
+`wait()` 表示当前 Execution 无法继续，`continuation()` 表示 Process 明确请求
+下一次 Execution。Process 只能持久化这个意图，最终执行权属于 Scheduler：
+
+```python
+when = (
+    after(600)
+    & once(event("market.updated"))
+    & ~event("user.cancelled")
+)
+return ctx.continuation(
+    {"previous_result": result},
+    when=when,
+    reason="continue_monitoring",
+)
+```
+
+`continuation()` 只登记“当这个表达式成立时再次激活我”。`when` 是可组合的
+Expression Tree：`&` / `|` / `~` 做逻辑组合，`once` 锁存第一次成立，
+`within` 限制时间窗口，`then` 按事件游标要求先后顺序。新的主动事实通过
+Primitive Registry 注册，不必修改 Continuation 或 Scheduler 主流程。
+
+一个 Run 可以包含多个 Execution。每个 Execution 消费一个 Activation，并使用
+该 Activation 的 input；`initial_input` 仍可通过 Process Context 单独读取。
 
 ### 6. 并行、join 与结构化取消
 
@@ -681,7 +712,8 @@ kernel/
 │   ├── ingress/             Activation 输入
 │   ├── worker/              Worker 生命周期
 │   ├── queue/               持久 Queue Adapter
-│   └── store/               Process Store Adapter
+│   ├── store/               Process Store Adapter
+│   └── scheduler/           Continuation 表达式裁决
 ├── process/
 │   ├── definition/          @process 与注册表
 │   ├── activation/          Activation schema
@@ -689,7 +721,8 @@ kernel/
 │   ├── journal/             Command/Event 与 Replay
 │   ├── lifecycle/           Process 状态转换
 │   ├── state/               ProcessRun schema
-│   └── handle/              durable child handle
+│   ├── handle/              durable child handle
+│   └── continuation/        Continuation Record 与 Expression
 ├── thred/
 │   ├── definition/          @task、重试与资源需求
 │   ├── executor/            Task 执行和结果提交

@@ -1,0 +1,444 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--tui-bg, #101014);
+  color: var(--tui-text, #fff8dc);
+}
+
+.tui {
+  --tui-font: "Cascadia Mono", "JetBrains Mono", "Sarasa Mono SC", "Noto Sans Mono CJK SC", ui-monospace, monospace;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--tui-bg, #101014);
+  color: var(--tui-text, #fff8dc);
+  font-family: var(--tui-font);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+.tui-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.tui-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 0.75rem 0.75rem 0.25rem 1rem;
+}
+
+.tui-gutter {
+  width: 10px;
+  flex-shrink: 0;
+  background: linear-gradient(var(--tui-border), transparent 12%, transparent 88%, var(--tui-border));
+  opacity: 0.35;
+}
+
+.tui-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tui-art {
+  white-space: pre;
+  font-size: 11px;
+  line-height: 1.1;
+  letter-spacing: 0;
+  overflow: hidden;
+  margin: 0;
+  font-family: inherit;
+}
+
+.tui-logo {
+  width: max-content;
+  background-image: linear-gradient(180deg, #ffffff 0%, #9ec4ff 48%, #3b78ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.tui-logo .tui-art-line {
+  color: inherit;
+  -webkit-text-fill-color: inherit;
+}
+
+.tui-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.tui-session {
+  padding: 0.1rem 0;
+}
+
+.tui-le-prompt {
+  display: none;
+}
+
+.tui-welcome {
+  margin-top: 0.15rem;
+  color: #3b78ff;
+}
+
+.tui-panel {
+  border: 1px solid var(--tui-border);
+  background: var(--tui-surface);
+  padding: 0.6rem 0.75rem;
+  max-width: 72rem;
+}
+
+.tui-panel-title,
+.tui-panel-h {
+  color: var(--tui-primary);
+  margin-bottom: 0.35rem;
+}
+
+.tui-panel-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.tui-panel-table th {
+  text-align: left;
+  color: var(--tui-label);
+  font-weight: 500;
+  padding: 0.1rem 1rem 0.1rem 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.tui-panel-table td,
+.tui-panel-text,
+.tui-panel-list {
+  color: var(--tui-text);
+}
+
+.tui-panel-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.tui-turn-rule {
+  color: var(--tui-border);
+  margin: 0.55rem 0 0.15rem;
+  letter-spacing: 0.08em;
+}
+
+.tui-msg {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: start;
+}
+
+.tui-msg.compact {
+  gap: 0.3rem;
+}
+
+.tui-glyph {
+  text-align: right;
+  user-select: none;
+}
+
+.tui-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.tui-dock {
+  flex-shrink: 0;
+  padding: 0.15rem 0 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: var(--tui-bg);
+}
+
+.tui-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 12px;
+  min-height: 1.25rem;
+}
+
+.tui-status-left {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tui-status-right {
+  flex-shrink: 0;
+  color: var(--tui-label);
+}
+
+.tui-sessions-chip {
+  cursor: pointer;
+}
+
+.tui-queue-row {
+  color: var(--tui-muted);
+  font-size: 12px;
+}
+
+.tui-queue-row span {
+  color: var(--tui-warn);
+}
+
+.tui-queue-row.active {
+  color: var(--tui-text);
+}
+
+.tui-complete {
+  display: flex;
+  flex-direction: column;
+  max-height: 12rem;
+  overflow: auto;
+  background: var(--tui-surface);
+  border: 1px solid var(--tui-border);
+  margin-bottom: 0.2rem;
+}
+
+.tui-complete-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--tui-text);
+  font: inherit;
+  text-align: left;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.tui-complete-row em {
+  color: var(--tui-muted);
+  font-style: normal;
+}
+
+.tui-complete-row.current,
+.tui-complete-row:hover {
+  background: var(--tui-chip);
+}
+
+.tui-composer {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.2ch;
+}
+
+.tui-prompt {
+  flex-shrink: 0;
+  color: #cccccc;
+  font-weight: 400;
+  white-space: pre;
+  user-select: none;
+  line-height: 1.45;
+}
+
+.tui-prompt.shell {
+  color: var(--tui-prompt);
+}
+
+.tui-composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #cccccc;
+  font: inherit;
+  line-height: 1.45;
+  min-height: 1.45rem;
+  max-height: 8rem;
+  padding-left: 0.2ch;
+  caret-color: #cccccc;
+}
+
+.tui-composer textarea::placeholder {
+  color: var(--tui-muted);
+  opacity: 0.8;
+}
+
+.tui-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--tui-bg) 55%, transparent);
+  display: flex;
+  align-items: flex-end;
+  padding: 1rem;
+  z-index: 4;
+}
+
+.tui,
+.tui-overlay-slot {
+  position: relative;
+}
+
+.tui-float {
+  min-width: min(28rem, 100%);
+  max-width: 40rem;
+  background: var(--tui-surface);
+  border: 2px double var(--tui-accent);
+  padding: 0.7rem 0.8rem;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+}
+
+.tui-float-title {
+  color: var(--tui-primary);
+  margin-bottom: 0.4rem;
+}
+
+.tui-float-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--tui-text);
+  font: inherit;
+  text-align: left;
+  padding: 0.28rem 0.4rem;
+  cursor: pointer;
+}
+
+.tui-float-row.current,
+.tui-float-row:hover {
+  background: var(--tui-chip);
+}
+
+.tui-float-row em {
+  color: var(--tui-muted);
+  font-style: normal;
+}
+
+.tui-float-hint {
+  margin: 0.5rem 0 0;
+  color: var(--tui-muted);
+}
+
+.tui-confirm p {
+  color: var(--tui-text);
+  margin: 0 0 0.7rem;
+}
+
+.tui-confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tui-btn {
+  border: 1px solid var(--tui-border);
+  background: transparent;
+  color: var(--tui-text);
+  font: inherit;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.tui-btn.danger {
+  border-color: var(--tui-error);
+  color: var(--tui-error);
+}
+
+.tui-btn:hover {
+  background: var(--tui-chip);
+}
+
+.boot {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  max-width: 420px;
+  margin: 0 auto;
+  font-family: "Cascadia Mono", "JetBrains Mono", ui-monospace, monospace;
+  background: #101014;
+  color: #fff8dc;
+}
+
+.boot.error {
+  color: #ef5350;
+}
+
+.skeleton {
+  height: 2.5rem;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #1a1a2e, #333355, #1a1a2e);
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    animation: shimmer 1.2s linear infinite;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+:focus-visible {
+  outline: 1px solid var(--tui-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 800px) {
+  .tui {
+    font-size: 12px;
+  }
+
+  .tui-art {
+    font-size: 8px;
+  }
+
+  .tui-scroll {
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+  }
+}

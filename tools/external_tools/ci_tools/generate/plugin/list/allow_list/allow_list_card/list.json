@@ -17,7 +17,14 @@
       "processes",
       "store",
       "journal",
-      "lifecycle"
+      "lifecycle",
+      "continuation_builder",
+      "scheduler"
+    ],
+    "continuation_scheduler": [
+      "continuations",
+      "processes",
+      "dispatch"
     ],
     "process_worker": [
       "queue",
@@ -55,6 +62,18 @@
     ],
     "profiles_plugin": [
       "writable_roots"
+    ],
+    "ui_cli_plugin": [
+      "parse_startup",
+      "create_server",
+      "mount_shell",
+      "mount_static",
+      "announce",
+      "resolve_dist_index"
+    ],
+    "ui_static_plugin": [
+      "register_fallback",
+      "apply_index_taps"
     ]
   },
   "kernel_layers": {
@@ -63,7 +82,8 @@
       "ingress",
       "worker",
       "queue",
-      "store"
+      "store",
+      "scheduler"
     ],
     "process": [
       "activation",
@@ -72,7 +92,8 @@
       "journal",
       "lifecycle",
       "state",
-      "handle"
+      "handle",
+      "continuation"
     ],
     "thred": [
       "binding",
