@@ -1,7 +1,0 @@
-# .dockerignore
-.venv
-venv
-venv*
-.venv*
-venv/
-.venv/

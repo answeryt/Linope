@@ -1,1 +1,0 @@
-"""MQTT publishing documentation examples."""

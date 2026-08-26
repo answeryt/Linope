@@ -1,1 +1,0 @@
-"""MQTT acknowledgement documentation examples."""

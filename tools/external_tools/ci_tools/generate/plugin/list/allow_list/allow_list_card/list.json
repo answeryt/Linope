@@ -2,7 +2,11 @@
   "paths": [
     "tools/external_tools/ci_tools/generate/serve_generate",
     "tools/external_tools/ci_tools/generate/session_generate",
-    "tools/external_tools/ci_tools/generate/third_party_generate.py"
+    "tools/external_tools/ci_tools/generate/third_party_generate.py",
+    "kernel/thred/plugin/src",
+    "kernel/thred/plugin/testing",
+    "kernel/thred/plugin/scripts",
+    "kernel/thred/plugin/manager/stevedore"
   ],
   "inject": {
     "message_tokens": [
@@ -104,5 +108,12 @@
       "definition",
       "pool"
     ]
+  },
+  "sockets": {
+    "exec_command": {
+      "bash": "tools/agent_tools/shell_tools/bash_plugin.py",
+      "pwsh": "tools/agent_tools/shell_tools/pwsh_plugin.py",
+      "bash_persistent": "tools/agent_tools/shell_tools/bash_persistent_plugin.py"
+    }
   }
 }
