@@ -56,7 +56,7 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
             name = _const(tree, "PLUGIN_NAME")
             if name and not name.startswith("kernel_"):
                 _error(context, "kernel.vocab.plugin_prefix", rel, "PLUGIN_NAME must start with `kernel_`")
-        if _under(rel, CORE_PREFIXES):
+        if _under(rel, CORE_PREFIXES) and not _under(rel, ("kernel/thred/plugin/",)):
             _check_imports(context, rel, tree)
         if rel.endswith("process_state_plugin.py"):
             _require_keys(

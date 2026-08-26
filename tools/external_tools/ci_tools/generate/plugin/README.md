@@ -27,11 +27,12 @@ plugin/
       allow_check.py
       allow_list_generate.py
       allow_list_card/list.*
-  host_sibling/               按磁盘上的家族形态推断合同
+    host_sibling/               按磁盘上的家族形态推断合同
     surface_check.py
     sdk_boundary_check.py
     provider_config_check.py
     kernel_check.py
+    lip_check.py
 ```
 
 ## 文件说明
@@ -47,6 +48,7 @@ plugin/
 | `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | `call_api` 家族必须是薄、懒加载的 SDK 封装 |
 | `host_sibling/provider_config_check.py` | `plugin_provider_config` | provider 模板多格式等价、禁止当代码用 |
 | `host_sibling/kernel_check.py` | `plugin_kernel` | kernel 分层、ProcessRun/Activation、OS/部署边界。架构词汇和结构树在各层生成器 |
+| `host_sibling/lip_check.py` | `plugin_lip` | 禁止叶插件 import pluggy/stevedore/lip；校验 allow list `sockets` 路径与 `PLUGIN_NAME` |
 
 ## 审查规则
 
@@ -60,10 +62,11 @@ plugin/
 
 ### allow：豁免与注入
 
-- `paths`：这些路径不进入生成的 deny list
+- `paths`：这些路径不进入生成的 deny list（含 `kernel/thred/plugin/src`、`testing`、`scripts`、`manager/stevedore` 引擎树）
 - `.gates/isolation-allowlist.json` 的 edges：在 deny 跑完后赦免对应隔离违规
 - `inject`：指定 stem 必须接收的参数（例如 `message_tokens` 必须注入 `text_estimator`），避免插件去 import 兄弟估算器
 - `kernel_layers`：kernel 结构图库存，由 `kernel_check` 读取
+- `sockets`：插座名 → 插头名 → 叶插件路径，由 `lip_check` 读取；Host 按名加载，叶插件不得 import 实现
 - `injection.estimator_param`：缺少必注入参数时报错
 
 ### host_sibling：合同由磁盘推断，不写死 Host kind 表
@@ -83,7 +86,9 @@ plugin/
 
 对看起来像 provider 根目录的 family：每个 provider 子目录必须同时有 YAML、JSON、TOML，顶层键 `provider` / `interface` / `model` / `api_key_env` / `parameters` 一致；`interface` 必须对应 `model/model_API/model_interface/<interface>.py`。
 
-`kernel_check.py` 约束 `kernel/`：顶层只允许 allow card 声明的层；插件落在叶目录；ProcessRun 必须包含 process/run ID、定义版本、状态、Activation 与资源 lease；Activation 必须可序列化；Process/Task/Resource 层不得使用 OS process/thread 或部署 API。
+`kernel_check.py` 约束 `kernel/`：顶层只允许 allow card 声明的层；插件落在叶目录；ProcessRun 必须包含 process/run ID、定义版本、状态、Activation 与资源 lease；Activation 必须可序列化；Process/Task/Resource 层不得使用 OS process/thread 或部署 API。`kernel/thred/plugin/` 是插座引擎（pluggy / stevedore / lip），不做 OS/部署 import 检查。
+
+`lip_check.py` 约束能力查找：allow card 的 `sockets` 登记必须指向存在的插头文件，且文件内 `PLUGIN_NAME` 与插头名一致。`*_plugin.py`、Host `manager/lip/board.py` 与其它非引擎族文件不得 import `pluggy` / `stevedore` / `lip`。插座板是对 `manager/stevedore` 的二开（包内相对导入）；Host 只按文件路径加载。跨插件文件 import 仍由 deny_check 负责。
 
 ## 生成清单
 
@@ -92,6 +97,7 @@ allow list 是唯一手写库存，字段：
 - `paths`：豁免路径
 - `inject`：stem → 必注入参数名（含 kernel 插件）
 - `kernel_layers`：手写库存，由 `kernel_check` 经 `load()` 读取
+- `sockets`：手写库存，由 `lip_check` 读取；Host 按插座名/插头名加载叶插件
 
 deny list 由 Host 发现结果减去 allow 路径生成，字段：
 
@@ -106,7 +112,7 @@ python plugin_generate.py [--check] [--format json|yaml|toml|md] [--root ...]
 
 plugin_generate.py (Host)
   → 从磁盘发现 family，用 allow list 划分 denied / allowed
-  → 审查：deny_check → allow_check → surface / sdk_boundary / provider_config / kernel_check
+  → 审查：deny_check → allow_check → surface / sdk_boundary / provider_config / kernel_check / lip_check
   → 生成：allow_list_generate → deny_list_generate
   → --check：stale 或 error 违规 → exit 1
   → 默认：写出 list card；仍有 error 违规 → exit 1

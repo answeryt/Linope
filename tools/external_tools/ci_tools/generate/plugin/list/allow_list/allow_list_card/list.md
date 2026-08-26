@@ -5,6 +5,10 @@
 - `tools/external_tools/ci_tools/generate/serve_generate`
 - `tools/external_tools/ci_tools/generate/session_generate`
 - `tools/external_tools/ci_tools/generate/third_party_generate.py`
+- `kernel/thred/plugin/src`
+- `kernel/thred/plugin/testing`
+- `kernel/thred/plugin/scripts`
+- `kernel/thred/plugin/manager/stevedore`
 
 ## inject
 
@@ -31,3 +35,9 @@
 - `process`: `activation`, `definition`, `runtime`, `journal`, `lifecycle`, `state`, `handle`, `continuation`
 - `thred`: `binding`, `definition`, `executor`
 - `resource`: `definition`, `pool`
+
+## sockets
+
+- `exec_command.bash`: `tools/agent_tools/shell_tools/bash_plugin.py`
+- `exec_command.pwsh`: `tools/agent_tools/shell_tools/pwsh_plugin.py`
+- `exec_command.bash_persistent`: `tools/agent_tools/shell_tools/bash_persistent_plugin.py`

@@ -59,6 +59,21 @@ def _payload(allow_list: dict[str, Any]) -> dict[str, Any]:
                 for name, items in inventory.items()
                 if isinstance(items, (list, tuple))
             }
+    sockets = allow_list.get("sockets")
+    if isinstance(sockets, dict):
+        result["sockets"] = _sockets_map(sockets)
+    return result
+
+
+def _sockets_map(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for socket, plugs in raw.items():
+        if not isinstance(plugs, dict):
+            continue
+        result[str(socket)] = {
+            str(name): str(path).replace("\\", "/")
+            for name, path in plugs.items()
+        }
     return result
 
 
@@ -141,7 +156,23 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         if current_key is None:
             continue
         if line.startswith("    - ") and nested is not None and nested_key:
-            nested[nested_key].append(_unquote(line[6:].strip()))
+            bucket = nested[nested_key]
+            if isinstance(bucket, list):
+                bucket.append(_unquote(line[6:].strip()))
+            continue
+        if (
+            line.startswith("    ")
+            and not line.startswith("    - ")
+            and nested is not None
+            and nested_key
+            and ":" in line
+        ):
+            plug, _, rest = line.strip().partition(":")
+            mapping = nested[nested_key]
+            if not isinstance(mapping, dict):
+                mapping = {}
+                nested[nested_key] = mapping
+            mapping[plug.strip()] = _unquote(rest.strip())
             continue
         if line.startswith("  - ") and nested is None:
             if not isinstance(result[current_key], list):
@@ -166,7 +197,7 @@ def _parse_md(text: str) -> dict[str, Any]:
             section = line[3:].strip()
             result[section] = (
                 {}
-                if section in {"inject", "kernel_layers"}
+                if section in {"inject", "kernel_layers", "sockets"}
                 else []
             )
             continue
@@ -180,7 +211,15 @@ def _parse_md(text: str) -> dict[str, Any]:
                 for part in rest.split(",")
                 if part.strip()
             ]
-            result[section][key.strip().strip("`")] = names
+            label = key.strip().strip("`")
+            if section == "sockets" and "." in label:
+                socket, _, plug = label.partition(".")
+                path = names[0] if names else ""
+                bucket = result[section].setdefault(socket, {})
+                if isinstance(bucket, dict):
+                    bucket[plug] = path
+                continue
+            result[section][label] = names
             continue
         if isinstance(result[section], list):
             result[section].append(item.strip("`"))
@@ -213,6 +252,13 @@ def _render_yaml(payload: dict[str, Any]) -> str:
                 continue
             for inner_key, inner_value in value.items():
                 lines.append(f"  {inner_key}:")
+                if isinstance(inner_value, dict):
+                    if not inner_value:
+                        lines.append("    {}")
+                        continue
+                    for plug, path in inner_value.items():
+                        lines.append(f"    {plug}: {path}")
+                    continue
                 items = inner_value if isinstance(inner_value, list) else [inner_value]
                 if not items:
                     lines.append("    []")
@@ -240,6 +286,18 @@ def _render_toml(payload: dict[str, Any]) -> str:
         lines.extend(_toml_array(key, value if isinstance(value, list) else [value]))
         lines.append("")
     for key, table in tables:
+        nested_tables = [
+            (inner_key, inner_value)
+            for inner_key, inner_value in table.items()
+            if isinstance(inner_value, dict)
+        ]
+        if nested_tables and len(nested_tables) == len(table):
+            for inner_key, inner_value in nested_tables:
+                lines.append(f"[{key}.{inner_key}]")
+                for plug, path in inner_value.items():
+                    lines.append(f"{plug} = {_toml_str(path)}")
+                lines.append("")
+            continue
         lines.append(f"[{key}]")
         for inner_key, inner_value in table.items():
             items = inner_value if isinstance(inner_value, list) else [inner_value]
@@ -271,6 +329,10 @@ def _render_md(payload: dict[str, Any]) -> str:
                 lines.append("None.")
             else:
                 for inner_key, inner_value in value.items():
+                    if isinstance(inner_value, dict):
+                        for plug, path in inner_value.items():
+                            lines.append(f"- `{inner_key}.{plug}`: `{path}`")
+                        continue
                     items = inner_value if isinstance(inner_value, list) else [inner_value]
                     names = ", ".join(f"`{item}`" for item in items)
                     lines.append(f"- `{inner_key}`: {names}")

@@ -6,4 +6,4 @@
 python tools/external_tools/ci_tools/generate/plugin/plugin_generate.py --check
 ```
 
-手写库存是 `generate/plugin/list/allow_list/allow_list_card`（`paths` / `inject` / `kernel_layers` / `kernel_loops`）。deny list 由扫描结果减去豁免路径生成。代码规则在各 `*_check.py`。kernel 架构（Microservice / Process / Execution / Task / Loop / Event）写在 `generate/services`、`generate/process`、`generate/async`、`generate/thred`，不进代码检查。
+手写库存是 `generate/plugin/list/allow_list/allow_list_card`（`paths` / `inject` / `kernel_layers` / `sockets`）。deny list 由扫描结果减去豁免路径生成。代码规则在各 `*_check.py`。kernel 架构（Microservice / Process / Execution / Task / Loop / Event）写在 `generate/services`、`generate/process`、`generate/async`、`generate/thred`，不进代码检查。

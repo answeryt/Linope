@@ -5,7 +5,7 @@ Generate 的 CI：审查仓库插件约定，并生成 allow / deny 清单；分
 ## 定位
 
 - 介于仓库源码与 CI 门禁之间
-- 审查（`plugin/*_check.py`）：检查 facade、隔离、入口表面、SDK 边界、provider 配置、kernel 代码分层
+- 审查（`plugin/*_check.py`）：检查 facade、隔离、入口表面、SDK 边界、provider 配置、kernel 代码分层、lip 插座登记与引擎 import
 - 生成（`plugin/*_generate.py`）：写出 allow / deny list card（json / yaml / toml / md）
 - 架构（`services` / `process` / `thred`）：写出 Host Adapter、持久 Process Runtime、Task Function 与资源需求；代码形状仍由 `plugin` 审查
 - Host 只负责发现插件并共享 context，不静态导入各检查项
@@ -17,7 +17,7 @@ Generate 的 CI：审查仓库插件约定，并生成 allow / deny 清单；分
 | `plugin/plugin_generate.py` | Host：发现 `*_check.py` / `*_generate.py`，组装 context，执行审查与生成 |
 | `plugin/list/deny_list/` | 审查 plugin family 的原子性与隔离，生成 deny list card |
 | `plugin/list/allow_list/` | 手写豁免清单；审查注入参数，生成 allow list card |
-| `plugin/host_sibling/` | Host 旁路审查：入口表面、SDK 薄封装、provider 配置等价性、kernel 代码分层 |
+| `plugin/host_sibling/` | Host 旁路审查：入口表面、SDK 薄封装、provider 配置等价性、kernel 代码分层、lip 插座与引擎 import |
 | `services/` | App、Ingress、Worker、Queue 与 Store 架构卡 |
 | `process/` | Definition、Runtime、Journal、Lifecycle、State 与 Handle 架构卡 |
 | `thred/` | Task Definition、Executor 与 Resource Binding 架构卡 |
