@@ -1,0 +1,226 @@
+
+from collections.abc import Callable
+import importlib.metadata
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any, Concatenate, ParamSpec, Self, TypeVar
+
+from .exception import NoMatches
+from .extension import ConflictResolverT
+from .extension import error_on_conflict
+from .extension import Extension
+from .extension import ExtensionManager
+from .extension import OnLoadFailureCallbackT
+from .named import NamedExtensionManager
+from .named import OnMissingEntrypointsCallbackT
+from .named import warning_on_missing_entrypoint
+
+
+T = TypeVar('T')
+U = TypeVar('U')
+P = ParamSpec('P')
+
+
+class DriverManager(NamedExtensionManager[T]):
+    """Load a single plugin with a given name from the namespace.
+
+    :param namespace: The namespace for the entry points.
+    :param name: The name of the driver to load.
+    :param invoke_on_load: Boolean controlling whether to invoke the
+        object returned by the entry point after the driver is loaded.
+    :param invoke_args: Positional arguments to pass when invoking
+        the object returned by the entry point. Only used if invoke_on_load
+        is True.
+    :param invoke_kwds: Named arguments to pass when invoking
+        the object returned by the entry point. Only used if invoke_on_load
+        is True.
+    :param on_load_failure_callback: Callback function that will be called when
+        an entrypoint can not be loaded. The arguments that will be provided
+        when this is called (when an entrypoint fails to load) are
+        (manager, entrypoint, exception)
+    :param on_missing_entrypoints_callback: Callback function that will be
+        called when one or more names cannot be found. The provided argument
+        will be a subset of the 'names' parameter.
+    :param verify_requirements: **DEPRECATED** This is a no-op and will be
+        removed in a future version.
+    :param warn_on_missing_entrypoint: **DEPRECATED** Flag to control whether
+        failing to load a plugin is reported via a log mess. Only applies if
+        on_missing_entrypoints_callback is None. Users should instead set
+        ``on_missing_entrypoints_callback`` to ``None`` if they wish to disable
+        logging.
+    :param conflict_resolver: A callable that determines what to do in the
+        event that there are multiple entrypoints in the same group with the
+        same name. Defaults to :func:`~stevedore.extension.error_on_conflict`,
+        which raises :class:`~stevedore.exception.MultipleMatches`. Pass
+        :func:`~stevedore.extension.ignore_conflicts` (or a custom callable)
+        to select a single driver instead of raising.
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        name: str,
+        invoke_on_load: bool = False,
+        invoke_args: tuple[Any, ...] | None = None,
+        invoke_kwds: dict[str, Any] | None = None,
+        on_load_failure_callback: 'OnLoadFailureCallbackT[T] | None' = None,
+        on_missing_entrypoints_callback: (
+            OnMissingEntrypointsCallbackT | None
+        ) = warning_on_missing_entrypoint,
+        verify_requirements: bool | None = None,
+        warn_on_missing_entrypoint: bool | None = None,
+        *,
+        conflict_resolver: 'ConflictResolverT[T]' = error_on_conflict,
+    ) -> None:
+        invoke_args = () if invoke_args is None else invoke_args
+        invoke_kwds = {} if invoke_kwds is None else invoke_kwds
+        on_load_failure_callback = (
+            on_load_failure_callback or self._default_on_load_failure
+        )
+
+        super().__init__(
+            namespace=namespace,
+            names=[name],
+            invoke_on_load=invoke_on_load,
+            invoke_args=invoke_args,
+            invoke_kwds=invoke_kwds,
+            on_load_failure_callback=on_load_failure_callback,
+            verify_requirements=verify_requirements,
+            warn_on_missing_entrypoint=warn_on_missing_entrypoint,
+            conflict_resolver=conflict_resolver,
+        )
+
+    @staticmethod
+    def _default_on_load_failure(
+        manager: 'ExtensionManager[T]',
+        ep: importlib.metadata.EntryPoint,
+        err: BaseException,
+    ) -> None:
+        raise
+
+    @classmethod
+    def make_test_instance(  # type: ignore[override]
+        cls,
+        extension: Extension[T],
+        namespace: str = 'TESTING',
+        propagate_map_exceptions: bool = False,
+        on_load_failure_callback: 'OnLoadFailureCallbackT[T] | None' = None,
+        verify_requirements: bool | None = None,
+        *,
+        conflict_resolver: 'ConflictResolverT[T]' = error_on_conflict,
+    ) -> Self:
+        """Construct a test DriverManager
+
+        Test instances are passed a list of extensions to work from rather
+        than loading them from entry points.
+
+        :param extension: Pre-configured Extension instance
+        :param namespace: The namespace for the manager; used only for
+            identification since the extensions are passed in.
+        :param propagate_map_exceptions: Boolean controlling whether exceptions
+            are propagated up through the map call or whether they are logged
+            and then ignored
+        :param on_load_failure_callback: Callback function that will
+            be called when an entrypoint can not be loaded. The
+            arguments that will be provided when this is called (when
+            an entrypoint fails to load) are (manager, entrypoint,
+            exception)
+        :param verify_requirements: **DEPRECATED** This is a no-op and will be
+            removed in a future version.
+        :param conflict_resolver: A callable that determines what to do in the
+            event that there are multiple entrypoints in the same group with
+            the same name. Defaults to
+            :func:`~stevedore.extension.error_on_conflict`.
+        :return: The manager instance, initialized for testing
+        """
+        o = super().make_test_instance(
+            [extension],
+            namespace=namespace,
+            propagate_map_exceptions=propagate_map_exceptions,
+            on_load_failure_callback=on_load_failure_callback,
+            verify_requirements=verify_requirements,
+            conflict_resolver=conflict_resolver,
+        )
+        return o
+
+    @classmethod
+    def from_file(
+        cls,
+        namespace: str,
+        name: str,
+        path: str | Path,
+        *,
+        module_name: str | None = None,
+    ) -> Self:
+        """Load one on-disk plug file as this named driver.
+
+        Plugs in this repo are ``*_plugin.py`` files, not installed
+        entry points. This is the file-backed counterpart of constructing
+        a :class:`DriverManager` from a setuptools group.
+        """
+        file_path = Path(path)
+        spec_name = module_name or f'{namespace}_{name}'.replace('.', '_')
+        spec = importlib.util.spec_from_file_location(spec_name, file_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(file_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec_name] = module
+        spec.loader.exec_module(module)
+        entry_point = importlib.metadata.EntryPoint(
+            name, f'{spec_name}:dispatch', namespace
+        )
+        extension = Extension(name, entry_point, module, module)
+        return cls.make_test_instance(extension, namespace=namespace)
+
+    def _init_plugins(self, extensions: list[Extension[T]]) -> None:
+        super()._init_plugins(extensions)
+
+        name = self._names[0]
+        if not self.extensions:
+            raise NoMatches(
+                f'No {self.namespace!r} driver found, looking for {name!r}'
+            )
+        if len(self.extensions) > 1:
+            # More than one entrypoint was found for the requested name. Since
+            # a DriverManager only ever loads a single name, this can only
+            # happen when multiple entrypoints in the namespace share that
+            # name. Defer to the configured conflict resolver to decide which
+            # one to use (or whether to raise).
+            self.extensions = [
+                self._conflict_resolver(self.namespace, name, self.extensions)
+            ]
+
+    def __call__(
+        self,
+        func: Callable[Concatenate[Extension[T], P], U],
+        *args: Any,
+        **kwds: Any,
+    ) -> U | None:
+        """Invokes func() for the single loaded extension.
+
+        The signature for func() should be::
+
+            def func(ext, *args, **kwds):
+                pass
+
+        The first argument to func(), 'ext', is the
+        :class:`~stevedore.extension.Extension` instance.
+
+        Exceptions raised from within func() are logged and ignored.
+
+        :param func: Callable to invoke for each extension.
+        :param args: Variable arguments to pass to func()
+        :param kwds: Keyword arguments to pass to func()
+        :returns: List of values returned from func()
+        """
+        results = self.map(func, *args, **kwds)
+        if results:
+            return results[0]
+        return None
+
+    @property
+    def driver(self) -> T | Callable[..., T]:
+        """Returns the driver being used by this manager."""
+        ext = self.extensions[0]
+        return ext.obj if ext.obj else ext.plugin

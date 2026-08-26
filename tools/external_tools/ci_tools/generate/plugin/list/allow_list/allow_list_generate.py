@@ -59,21 +59,6 @@ def _payload(allow_list: dict[str, Any]) -> dict[str, Any]:
                 for name, items in inventory.items()
                 if isinstance(items, (list, tuple))
             }
-    sockets = allow_list.get("sockets")
-    if isinstance(sockets, dict):
-        result["sockets"] = _sockets_map(sockets)
-    return result
-
-
-def _sockets_map(raw: dict[str, Any]) -> dict[str, dict[str, str]]:
-    result: dict[str, dict[str, str]] = {}
-    for socket, plugs in raw.items():
-        if not isinstance(plugs, dict):
-            continue
-        result[str(socket)] = {
-            str(name): str(path).replace("\\", "/")
-            for name, path in plugs.items()
-        }
     return result
 
 

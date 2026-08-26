@@ -35,9 +35,3 @@
 - `process`: `activation`, `definition`, `runtime`, `journal`, `lifecycle`, `state`, `handle`, `continuation`
 - `thred`: `binding`, `definition`, `executor`
 - `resource`: `definition`, `pool`
-
-## sockets
-
-- `exec_command.bash`: `tools/agent_tools/shell_tools/bash_plugin.py`
-- `exec_command.pwsh`: `tools/agent_tools/shell_tools/pwsh_plugin.py`
-- `exec_command.bash_persistent`: `tools/agent_tools/shell_tools/bash_persistent_plugin.py`

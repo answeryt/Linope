@@ -39,7 +39,7 @@ class MCPContentPlugin:
         self.cache_dir = Path(
             cache_dir
             if cache_dir is not None
-            else Path(tempfile.gettempdir()) / "open-linux-mcp-content",
+            else Path(tempfile.gettempdir()) / "linope-mcp-content",
         )
         self.max_bytes = max_bytes
         self.max_base64_chars = max_bytes * 4 // 3 + 4

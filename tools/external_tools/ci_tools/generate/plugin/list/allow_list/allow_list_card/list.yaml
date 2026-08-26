@@ -85,8 +85,3 @@ kernel_layers:
   resource:
     - definition
     - pool
-sockets:
-  exec_command:
-    bash: tools/agent_tools/shell_tools/bash_plugin.py
-    pwsh: tools/agent_tools/shell_tools/pwsh_plugin.py
-    bash_persistent: tools/agent_tools/shell_tools/bash_persistent_plugin.py

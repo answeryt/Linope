@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Open-Linux same-world process-sandbox vocabulary plugins. They own the three file-effect modes and the `confine` contract. They do not implement a platform runner and do not depend on Cordis.
+Linope same-world process-sandbox vocabulary plugins. They own the three file-effect modes and the `confine` contract. They do not implement a platform runner and do not depend on Cordis.
 
 | Plugin | File | Role |
 |---|---|---|
