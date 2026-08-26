@@ -1,20 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Host-sibling check: named sockets and engine isolation.
+"""Host-sibling check: named socket declarations and engine isolation.
 
-Socket inventory lives on the allow-list card. Leaf plugins must not import
+Socket inventory comes from the Host composition. Leaf plugins must not import
 pluggy, stevedore, or lip; Host looks up plugs by name and injects them.
-Cross-plugin file imports stay in deny_check.
+This check validates source declarations only; runtime callable contracts stay
+in stevedore.lip. Socket identities must be static strings so CI never imports
+leaf plugins. Cross-plugin file imports stay in deny_check.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
 from typing import Any, Iterable
 
 
 PLUGIN_NAME = "plugin_lip"
 PLUGIN_VERSION = "1.0"
+COMPOSITION_PATH = "kernel/thred/plugin/composition.yaml"
 
 SKIP_DIR_NAMES = {
     "__pycache__",
@@ -24,9 +28,10 @@ SKIP_DIR_NAMES = {
     "faststream-main",
 }
 ENGINE_PREFIXES = (
-    "kernel/thred/plugin/src",
-    "kernel/thred/plugin/testing",
-    "kernel/thred/plugin/manager/stevedore",
+    "kernel/thred/plugin/host",
+    "kernel/thred/plugin/tests",
+    "kernel/thred/plugin/vendor/pluggy",
+    "kernel/thred/plugin/vendor/stevedore",
 )
 ENGINE_MODULES = frozenset({"pluggy", "stevedore", "lip"})
 
@@ -39,16 +44,52 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
 
 def _check_sockets(context: dict[str, Any]) -> None:
     repo = Path(context["repo_root"])
-    sockets = (context.get("allow_list") or {}).get("sockets")
-    if not isinstance(sockets, dict) or not sockets:
-        _error(context, "lip.socket.path", "allow_list", "allow list is missing sockets")
+    composition_path = repo / COMPOSITION_PATH
+    try:
+        yaml = importlib.import_module("yaml")
+    except ImportError:
+        _error(
+            context,
+            "lip.socket.composition",
+            COMPOSITION_PATH,
+            "PyYAML is required to read the Host composition",
+        )
+        return
+    try:
+        text = composition_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        _error(
+            context,
+            "lip.socket.composition",
+            COMPOSITION_PATH,
+            f"cannot read composition: {exc}",
+        )
+        return
+    try:
+        composition = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        _error(
+            context,
+            "lip.socket.composition",
+            COMPOSITION_PATH,
+            f"cannot parse composition: {exc}",
+        )
+        return
+    sockets = composition.get("sockets", {}) if isinstance(composition, dict) else None
+    if not isinstance(sockets, dict):
+        _error(
+            context,
+            "lip.socket.composition",
+            COMPOSITION_PATH,
+            "composition sockets must be a mapping",
+        )
         return
     for socket, plugs in sockets.items():
-        if not isinstance(plugs, dict) or not plugs:
+        if not isinstance(plugs, dict):
             _error(
                 context,
                 "lip.socket.path",
-                "allow_list",
+                COMPOSITION_PATH,
                 f"socket `{socket}` must map plug names to file paths",
             )
             continue
@@ -74,7 +115,7 @@ def _check_sockets(context: dict[str, Any]) -> None:
                     context,
                     "lip.socket.plugin_name",
                     rel,
-                    f"PLUGIN_NAME must be `{name}`",
+                    f"PLUGIN_NAME must be the static string `{name}`",
                 )
 
 

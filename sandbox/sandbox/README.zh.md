@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-Open-Linux 同机进程沙箱的词汇插件。只定义三种文件写入模式和 `confine` 合同，不实现平台 runner，也不依赖 Cordis。
+Linope 同机进程沙箱的词汇插件。只定义三种文件写入模式和 `confine` 合同，不实现平台 runner，也不依赖 Cordis。
 
 | 插件 | 文件 | 职责 |
 |---|---|---|

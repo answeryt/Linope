@@ -1,5 +1,5 @@
 {
-  "name": "open-linux-ui",
+  "name": "linope-ui",
   "description": "Linope browser UI; dist/ is served by the ui CLI plugins",
   "version": "0.1.0",
   "private": true,

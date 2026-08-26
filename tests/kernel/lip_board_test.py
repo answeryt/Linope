@@ -4,24 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
 
+import yaml
+
+from kernel.thred.plugin.host.board import create_board
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ALLOW_CARD = (
-    ROOT
-    / "tools"
-    / "external_tools"
-    / "ci_tools"
-    / "generate"
-    / "plugin"
-    / "list"
-    / "allow_list"
-    / "allow_list_card"
-    / "list.json"
-)
+COMPOSITION = ROOT / "kernel" / "thred" / "plugin" / "composition.yaml"
 
 
 def load(relative: str, module_name: str) -> ModuleType:
@@ -34,7 +28,6 @@ def load(relative: str, module_name: str) -> ModuleType:
     return module
 
 
-board = load("kernel/thred/plugin/manager/lip/board.py", "lip_board_test_module")
 lip_check = load(
     "tools/external_tools/ci_tools/generate/plugin/host_sibling/lip_check.py",
     "lip_check_test_module",
@@ -43,8 +36,8 @@ lip_check = load(
 
 class LipBoardTest(unittest.TestCase):
     def setUp(self) -> None:
-        sockets = json.loads(ALLOW_CARD.read_text(encoding="utf-8"))["sockets"]
-        self.lip = board.Lip(sockets, repo=ROOT)
+        composition = yaml.safe_load(COMPOSITION.read_text(encoding="utf-8"))
+        self.lip = create_board(composition["sockets"], repo=ROOT)
 
     def test_get_bash_by_name_without_importing_the_plug(self) -> None:
         plug = self.lip.get("exec_command", "bash")
@@ -71,16 +64,21 @@ class LipBoardTest(unittest.TestCase):
         self.assertEqual(plug.PLUGIN_NAME, "pwsh")
         self.assertTrue(callable(plug.dispatch))
 
-    def test_lip_check_accepts_the_allow_list_sockets(self) -> None:
+    def test_lip_check_accepts_the_host_composition_sockets(self) -> None:
         context = {
             "repo_root": str(ROOT),
-            "allow_list": json.loads(ALLOW_CARD.read_text(encoding="utf-8")),
+            "allow_list": {},
             "families": [
                 {
-                    "id": "lip",
-                    "root": "kernel/thred/plugin/manager/lip",
-                    "files": ["board.py"],
-                }
+                    "id": "host",
+                    "root": "kernel/thred/plugin/host",
+                    "files": ["board.py", "loader.py"],
+                },
+                {
+                    "id": "tests",
+                    "root": "kernel/thred/plugin/tests",
+                    "files": ["test_context.py"],
+                },
             ],
             "allowed_families": [],
             "violations": [],
@@ -88,11 +86,52 @@ class LipBoardTest(unittest.TestCase):
         lip_check.run(context)
         self.assertEqual(context["violations"], [])
 
+    def test_lip_check_accepts_composition_without_sockets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            composition = repo / lip_check.COMPOSITION_PATH
+            composition.parent.mkdir(parents=True)
+            composition.write_text("plugins: []\n", encoding="utf-8")
+            context = {
+                "repo_root": str(repo),
+                "families": [],
+                "allowed_families": [],
+                "violations": [],
+            }
+
+            lip_check.run(context)
+
+        self.assertEqual(context["violations"], [])
+
+    def test_lip_check_reports_composition_for_invalid_socket_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            composition = repo / lip_check.COMPOSITION_PATH
+            composition.parent.mkdir(parents=True)
+            composition.write_text(
+                "sockets:\n  exec_command: []\nplugins: []\n",
+                encoding="utf-8",
+            )
+            context = {
+                "repo_root": str(repo),
+                "families": [],
+                "allowed_families": [],
+                "violations": [],
+            }
+
+            lip_check.run(context)
+
+        self.assertEqual(len(context["violations"]), 1)
+        self.assertEqual(
+            context["violations"][0]["path"],
+            lip_check.COMPOSITION_PATH,
+        )
+
     def test_host_board_source_does_not_import_stevedore(self) -> None:
         import ast
 
         tree = ast.parse(
-            (ROOT / "kernel/thred/plugin/manager/lip/board.py").read_text(
+            (ROOT / "kernel/thred/plugin/host/board.py").read_text(
                 encoding="utf-8"
             )
         )

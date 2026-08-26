@@ -12,6 +12,22 @@ Host 是组合层，不是检查项。它用 importlib 按文件名加载 `*_che
 - 唯一手写清单是 allow list；deny list = 发现到的 family 减去 allow 路径
 - `--check`：已提交的 list card 过期，或存在 `severity=error` 的违规时失败
 
+## 需要下载的包 / 依赖
+
+这些是 PyPI 第三方包，不是仓库内模块互导。CI 只静态解析源码，不 import 它们；要跑审查、或加载 vendored `sphinxext`，才需要装。
+
+| 包 | 用途 | 谁用 |
+| --- | --- | --- |
+| `PyYAML` | 读 Host `composition.yaml` 与 list card | `host_sibling/lip_check.py`、allow/deny 生成器 |
+| `sphinx` | Sphinx 文档引擎（会一并装 `sphinxcontrib-*`、`alabaster`、`babel` 等） | `kernel/thred/plugin/vendor/stevedore/src/stevedore/sphinxext.py` |
+| `docutils` | reStructuredText 解析（`sphinx` 的依赖） | 同上：`nodes` / `rst` / `directives` / `StringList` |
+
+```text
+python -m pip install PyYAML sphinx docutils
+```
+
+`sphinxext.py` 顶部的 `from sphinx ...` / `from docutils ...` 是文档扩展的第三方依赖；`from stevedore import extension` 才是 vendored 包内引用。叶插件仍不得 import `stevedore`。不写 Sphinx 插件清单时，不必装 `sphinx`。
+
 ## 目录结构
 
 ```text

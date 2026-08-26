@@ -6,9 +6,9 @@
 
 | 目录 | 职责 | 状态 |
 |---|---|---|
-| [`sandbox/`](sandbox/README.md) | 三种模式、confine 合同、升权词汇 | 已改为 Open-Linux 插件 |
-| [`sandbox-local/`](sandbox-local/README.md) | 本机平台限制后端 | 已改为 Open-Linux 插件 |
-| [`sandbox-policy/`](sandbox-policy/README.md) | 逐会话策略解析 | 已改为 Open-Linux 插件 |
-| [`sandbox-windows-acl/`](sandbox-windows-acl/README.md) | Windows ACL 后端 | 已改为 Open-Linux 插件 |
+| [`sandbox/`](sandbox/README.md) | 三种模式、confine 合同、升权词汇 | 已改为 Linope 插件 |
+| [`sandbox-local/`](sandbox-local/README.md) | 本机平台限制后端 | 已改为 Linope 插件 |
+| [`sandbox-policy/`](sandbox-policy/README.md) | 逐会话策略解析 | 已改为 Linope 插件 |
+| [`sandbox-windows-acl/`](sandbox-windows-acl/README.md) | Windows ACL 后端 | 已改为 Linope 插件 |
 
 三种模式：`read-only` / `workspace-write` / `danger-full-access`。

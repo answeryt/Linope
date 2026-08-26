@@ -37,8 +37,8 @@ def render_policy_context(policy: Mapping[str, Any]) -> str:
     mode = str(policy.get("mode") or "")
     if mode == READ_ONLY:
         return (
-            "Current Open-Linux file policy: read-only. Any available operation "
-            "enforced by the Open-Linux file sandbox cannot modify files in the "
+            "Current Linope file policy: read-only. Any available operation "
+            "enforced by the Linope file sandbox cannot modify files in the "
             "standing mode. Do not refuse a required modification from this "
             "policy alone: try an available tool normally and follow any denial "
             "and escalation guidance it returns."
@@ -46,14 +46,14 @@ def render_policy_context(policy: Mapping[str, Any]) -> str:
     if mode == WORKSPACE_WRITE:
         root = policy.get("workspace_root", policy.get("workspaceRoot"))
         return (
-            "Current Open-Linux file policy: workspace-write. Any available "
-            "operation enforced by the Open-Linux file sandbox may modify files "
+            "Current Linope file policy: workspace-write. Any available "
+            "operation enforced by the Linope file sandbox may modify files "
             f"under the session workspace: {root!r}. Some platform temporary "
             "areas may also be writable."
         )
     if mode == DANGER_FULL_ACCESS:
         return (
-            "Current Open-Linux file policy: danger-full-access. The Open-Linux "
+            "Current Linope file policy: danger-full-access. The Linope "
             "file sandbox does not restrict file modifications by available "
             "operations."
         )

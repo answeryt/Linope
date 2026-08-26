@@ -54,7 +54,7 @@ def web_fetch(
         return _error("url must be an HTTP(S) URL")
     request = Request(
         url,
-        headers={"User-Agent": "Open-Linux-web_fetch/1.0"},
+        headers={"User-Agent": "Linope-web_fetch/1.0"},
         method="GET",
     )
     context = ssl.create_default_context()
