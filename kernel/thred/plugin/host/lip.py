@@ -9,6 +9,7 @@ from typing import Any
 
 from .board import create_board
 from .events import create_event_manager
+from .recipe_loader import RecipeLoader
 
 Cleanup = Callable[[], Any]
 _MISSING = object()
@@ -22,9 +23,11 @@ class _Runtime:
     def __init__(
         self,
         sockets: Mapping[str, Mapping[str, str]],
+        modules: Mapping[str, str],
         repo: Path,
     ) -> None:
-        self.board = create_board(sockets, repo=repo)
+        self.board = create_board(sockets, modules=modules, repo=repo)
+        self.recipes = RecipeLoader(repo)
         self.events = create_event_manager()
         self.services: dict[str, Any] = {}
         self.effects: dict[str, list[Cleanup]] = defaultdict(list)
@@ -38,12 +41,13 @@ class Context:
         self,
         sockets: Mapping[str, Mapping[str, str]] | None = None,
         *,
+        modules: Mapping[str, str] | None = None,
         repo: str | Path | None = None,
         _runtime: _Runtime | None = None,
         _owner: str | None = None,
     ) -> None:
         root = Path(repo) if repo is not None else Path.cwd()
-        self._runtime = _runtime or _Runtime(sockets or {}, root)
+        self._runtime = _runtime or _Runtime(sockets or {}, modules or {}, root)
         self._owner = _owner
 
     def bind(self, plugin: str) -> "Context":
@@ -70,6 +74,18 @@ class Context:
             raise NoService(socket)
         return self._runtime.services[socket]
 
+    def module(self, name: str) -> Any:
+        """Load a raw leaf capability by its configured plugin name."""
+        return self._runtime.board.module(name)
+
+    def load_recipe(self, name: str, path: str) -> Any:
+        """Load a lifecycle Recipe through the Host-owned loader."""
+        return self._runtime.recipes.load(name, path)
+
+    def has_service(self, name: str) -> bool:
+        """Return whether a service is currently available."""
+        return name in self._runtime.services
+
     def on(self, event: str, handler: Callable[..., Any]) -> Cleanup:
         unsubscribe = self._runtime.events.on(event, handler)
         self.effect(unsubscribe)
@@ -87,8 +103,12 @@ class Context:
 
     def unload(self, plugin: str | None = None) -> None:
         if plugin is None:
-            for name in reversed(tuple(self._runtime.order)):
-                self.unload(name)
+            try:
+                for name in reversed(tuple(self._runtime.order)):
+                    self.unload(name)
+            finally:
+                self._runtime.board.close()
+                self._runtime.recipes.close()
             return
         cleanups = self._runtime.effects.pop(plugin, [])
         if plugin in self._runtime.order:

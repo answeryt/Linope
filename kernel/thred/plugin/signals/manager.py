@@ -13,25 +13,25 @@ from typing import TYPE_CHECKING
 from typing import TypeAlias
 import warnings
 
-from . import _tracing
-from ._callers import _multicall
-from ._hooks import _HookImplFunction
-from ._hooks import _Namespace
-from ._hooks import _Plugin
-from ._hooks import _SubsetHookCaller
-from ._hooks import HookCaller
-from ._hooks import HookImpl
-from ._hooks import HookimplOpts
-from ._hooks import HookRelay
-from ._hooks import HookspecOpts
-from ._hooks import normalize_hookimpl_opts
-from ._result import Result
+from . import tracing as _tracing
+from .callers import _multicall
+from .hooks import _HookImplFunction
+from .hooks import _Namespace
+from .hooks import _Plugin
+from .hooks import _SubsetHookCaller
+from .hooks import HookCaller
+from .hooks import HookImpl
+from .hooks import HookimplOpts
+from .hooks import HookRelay
+from .hooks import HookspecOpts
+from .hooks import normalize_hookimpl_opts
+from .result import Result
 
 
 if TYPE_CHECKING:
     import importlib.metadata
 
-    from ._compat import DistFacade
+    from .compat import DistFacade
 
 
 _BeforeTrace: TypeAlias = Callable[[str, Sequence[HookImpl], Mapping[str, Any]], None]
@@ -456,7 +456,7 @@ class PluginManager:
             Prefer :meth:`list_plugin_distributions` for raw
             :class:`importlib.metadata.Distribution` objects.
         """
-        from ._compat import DistFacade
+        from .compat import DistFacade
 
         return [(plugin, DistFacade(dist)) for plugin, dist in self._plugin_distinfo]
 

@@ -29,8 +29,8 @@ pool_module = load(
     "kernel/resource/pool/resource_pool_plugin.py",
     "resource_pool_plugin_test",
 )
-thread_module = load(
-    "kernel/thred/definition/task_definition_plugin.py",
+thred_module = load(
+    "kernel/thred/definition/thred_definition_plugin.py",
     "thred_plugin_test",
 )
 binding_module = load(
@@ -85,32 +85,64 @@ class ResourceThreadTest(unittest.IsolatedAsyncioTestCase):
             pool.snapshot()["resources"]["sandbox"]["available"], 1
         )
 
-    async def test_thread_functions_bind_and_release_resources(self) -> None:
+    async def test_thred_decorator_and_registry(self) -> None:
+        def stop() -> str:
+            return "stop"
+
+        @thred_module.thred(
+            name="worker",
+            handlers={"stop": stop},
+            interfaces={
+                "run": {"input_schema": "RunInput"},
+                "stop": {"output_schema": "StopResult"},
+            },
+            requires=["context"],
+            lifetime="thred",
+        )
+        def run() -> str:
+            return "run"
+
+        registry = thred_module.ThredRegistry([run])
+        stored = registry.require("worker")
+
+        self.assertFalse(hasattr(thred_module, "define_task"))
+        self.assertEqual(stored["kind"], "thred")
+        self.assertEqual(set(stored["interfaces"]), {"run", "stop"})
+        self.assertEqual(set(stored["handlers"]), {"run", "stop"})
+        self.assertEqual(
+            stored["interfaces"]["run"]["input_schema"], "RunInput"
+        )
+        self.assertEqual(stored["requires"], ["context"])
+
+    async def test_thred_functions_bind_and_release_resources(self) -> None:
         def run() -> str:
             return "run"
 
         def stop() -> str:
             return "stop"
 
-        thread = thread_module.define_thread(
+        thred = thred_module.define_thred(
             "worker",
             [run, stop],
+            interfaces={"run": {}, "stop": {}},
             requires=["context", {"name": "tool", "amount": 2}],
-            lifetime="task",
+            lifetime="thred",
             release_while_waiting=["tool"],
         )
-        self.assertEqual(set(thread["functions"]), {"run", "stop"})
-        self.assertEqual(thread["functions"]["run"](), "run")
+        self.assertEqual(set(thred["interfaces"]), {"run", "stop"})
+        self.assertEqual(thred["handlers"]["run"](), "run")
 
         pool = pool_module.ResourcePool()
         pool.register(definition.define_resource("context", capacity=1))
         pool.register(definition.define_resource("tool", capacity=2))
         binding = binding_module.build_binding(
-            thread, process_id="process-1", binding_id="binding-1"
+            thred, process_id="process-1", binding_id="binding-1"
         )
 
         bound = await binding_module.bind_resources(binding, pool)
         self.assertEqual(bound["state"], "bound")
+        self.assertEqual(bound["thred"]["name"], "worker")
+        self.assertNotIn("thread", bound)
         self.assertEqual(len(bound["resource_leases"]), 2)
         self.assertTrue(
             all(

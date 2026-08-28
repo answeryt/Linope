@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Execute portable task definitions with retries, timeouts, and resources."""
+"""Execute portable Thred definitions with retries, timeouts, and resources."""
 
 from __future__ import annotations
 
@@ -10,46 +10,96 @@ from typing import Any
 from uuid import uuid4
 
 
-PLUGIN_NAME = "kernel_task_executor"
+PLUGIN_NAME = "kernel_thred_executor"
 PLUGIN_VERSION = "1.0"
 
-TASK_DEFINITION_ATTRIBUTE = "__task_definition__"
+THRED_DEFINITION_ATTRIBUTE = "__thred_definition__"
 
 
-class TaskExecutionError(RuntimeError):
-    """Task infrastructure failure retaining its originating exception."""
+class ThredExecutionError(RuntimeError):
+    """Thred infrastructure failure retaining its originating exception."""
 
     def __init__(self, message: str, *, cause: BaseException | None = None):
         super().__init__(message)
         self.cause = cause
 
 
-def _task_definition(
-    task: Mapping[str, Any] | Callable[..., Any],
+def _thred_definition(
+    thred: Mapping[str, Any] | Callable[..., Any],
 ) -> dict[str, Any]:
-    if isinstance(task, Mapping):
-        definition = dict(task)
-    elif callable(task):
-        attached = getattr(task, TASK_DEFINITION_ATTRIBUTE, None)
-        definition = dict(attached) if isinstance(attached, Mapping) else {
-            "name": getattr(task, "__name__", task.__class__.__name__),
-            "version": "1",
-            "function": task,
-            "retry": None,
-            "timeout": None,
-            "resources": [],
-            "kind": "task",
-        }
+    if isinstance(thred, Mapping):
+        definition = dict(thred)
+    elif callable(thred):
+        attached = getattr(thred, THRED_DEFINITION_ATTRIBUTE, None)
+        definition = (
+            dict(attached)
+            if isinstance(attached, Mapping)
+            else {
+                "name": getattr(thred, "__name__", thred.__class__.__name__),
+                "version": "1",
+                "interfaces": {
+                    getattr(thred, "__name__", thred.__class__.__name__): {}
+                },
+                "handlers": {
+                    getattr(thred, "__name__", thred.__class__.__name__): thred
+                },
+                "retry": None,
+                "timeout": None,
+                "requires": [],
+                "kind": "thred",
+            }
+        )
     else:
-        error = TypeError("task must be a definition mapping or callable")
-        raise TaskExecutionError(str(error), cause=error) from error
+        error = TypeError("thred must be a definition mapping or callable")
+        raise ThredExecutionError(str(error), cause=error) from error
 
-    function = definition.get("function")
-    if not callable(function):
-        error = TypeError("task definition is missing a callable function")
-        raise TaskExecutionError(str(error), cause=error) from error
-    definition["function"] = function
+    interfaces = definition.get("interfaces")
+    handlers = definition.get("handlers")
+    if not isinstance(interfaces, Mapping) or not interfaces:
+        error = TypeError("thred definition is missing interfaces")
+        raise ThredExecutionError(str(error), cause=error) from error
+    if not isinstance(handlers, Mapping) or not handlers:
+        error = TypeError("thred definition is missing handlers")
+        raise ThredExecutionError(str(error), cause=error) from error
+    if set(interfaces) != set(handlers):
+        error = ValueError("thred interfaces and handlers must have matching names")
+        raise ThredExecutionError(str(error), cause=error) from error
+    if any(not isinstance(contract, Mapping) for contract in interfaces.values()):
+        error = TypeError("thred interface contracts must be mappings")
+        raise ThredExecutionError(str(error), cause=error) from error
+    if any(not callable(handler) for handler in handlers.values()):
+        error = TypeError("thred definition contains a non-callable handler")
+        raise ThredExecutionError(str(error), cause=error) from error
+    definition["interfaces"] = {
+        name: dict(contract) for name, contract in interfaces.items()
+    }
+    definition["handlers"] = dict(handlers)
     return definition
+
+
+def _select_handler(
+    definition: Mapping[str, Any],
+    interface_name: str | None,
+) -> Callable[..., Any]:
+    handlers = definition["handlers"]
+    selected = interface_name
+    if selected is None:
+        if "run" in handlers:
+            selected = "run"
+        elif len(handlers) == 1:
+            selected = next(iter(handlers))
+        else:
+            error = ValueError(
+                "interface is required when a thred exposes multiple interfaces"
+            )
+            raise ThredExecutionError(str(error), cause=error) from error
+    handler = handlers.get(selected)
+    if not callable(handler):
+        error = KeyError(selected)
+        raise ThredExecutionError(
+            f"thred interface {selected!r} is not defined", cause=error
+        ) from error
+    return handler
 
 
 def _retry_policy(value: Any) -> tuple[int, float, float]:
@@ -143,9 +193,9 @@ def _arguments(
         except TypeError:
             continue
     error = TypeError(
-        "task function must accept input, context and input, or no arguments"
+        "thred function must accept input, context and input, or no arguments"
     )
-    raise TaskExecutionError(str(error), cause=error) from error
+    raise ThredExecutionError(str(error), cause=error) from error
 
 
 async def _await_if_needed(value: Any, timeout: Any) -> Any:
@@ -154,15 +204,15 @@ async def _await_if_needed(value: Any, timeout: Any) -> Any:
     if timeout is None:
         return await value
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-        error = TypeError("task timeout must be an int, float, or None")
+        error = TypeError("thred timeout must be an int, float, or None")
         if inspect.iscoroutine(value):
             value.close()
-        raise TaskExecutionError(str(error), cause=error) from error
+        raise ThredExecutionError(str(error), cause=error) from error
     if timeout <= 0:
-        error = ValueError("task timeout must be greater than zero")
+        error = ValueError("thred timeout must be greater than zero")
         if inspect.iscoroutine(value):
             value.close()
-        raise TaskExecutionError(str(error), cause=error) from error
+        raise ThredExecutionError(str(error), cause=error) from error
     return await asyncio.wait_for(value, timeout=float(timeout))
 
 
@@ -181,23 +231,24 @@ async def _invoke(
     return await _await_if_needed(result, timeout)
 
 
-class TaskExecutor:
-    """Execute tasks using an optionally injected ResourcePool."""
+class ThredExecutor:
+    """Execute Threds using an optionally injected ResourcePool."""
 
     def __init__(self, resources: Any = None):
         self.resources = resources
 
     async def execute(
         self,
-        task: Mapping[str, Any] | Callable[..., Any],
+        thred: Mapping[str, Any] | Callable[..., Any],
         input: Any = None,
         context: Any = None,
         resources: Any = None,
+        interface: str | None = None,
     ) -> Any:
-        definition = _task_definition(task)
-        function = definition["function"]
+        definition = _thred_definition(thred)
+        selected_handler = _select_handler(definition, interface)
         timeout = definition.get("timeout")
-        requirements = definition.get("resources") or definition.get("requires") or ()
+        requirements = definition.get("requires") or ()
         pool = resources if resources is not None else self.resources
 
         try:
@@ -205,23 +256,23 @@ class TaskExecutor:
             normalized_requirements = [
                 _requirement(value) for value in requirements
             ]
-        except TaskExecutionError:
+        except ThredExecutionError:
             raise
         except (TypeError, ValueError) as error:
-            raise TaskExecutionError(str(error), cause=error) from error
+            raise ThredExecutionError(str(error), cause=error) from error
 
         if normalized_requirements and pool is None:
             error = RuntimeError(
-                "task requires resources but no resource pool is configured"
+                "thred requires resources but no resource pool is configured"
             )
-            raise TaskExecutionError(str(error), cause=error) from error
+            raise ThredExecutionError(str(error), cause=error) from error
         if pool is not None:
             if not callable(getattr(pool, "acquire", None)):
                 error = TypeError("resource pool must provide acquire")
-                raise TaskExecutionError(str(error), cause=error) from error
+                raise ThredExecutionError(str(error), cause=error) from error
             if not callable(getattr(pool, "release", None)):
                 error = TypeError("resource pool must provide release")
-                raise TaskExecutionError(str(error), cause=error) from error
+                raise ThredExecutionError(str(error), cause=error) from error
 
         leases: list[Any] = []
         owner = _owner_id(context)
@@ -241,11 +292,11 @@ class TaskExecutor:
 
         execution_error: BaseException | None = None
         try:
-            arguments = _arguments(function, context, input)
+            arguments = _arguments(selected_handler, context, input)
             delay = interval
             for attempt in range(1, attempts + 1):
                 try:
-                    return await _invoke(function, arguments, timeout)
+                    return await _invoke(selected_handler, arguments, timeout)
                 except Exception:
                     if attempt >= attempts:
                         raise
@@ -265,7 +316,7 @@ class TaskExecutor:
                     if release_error is None:
                         release_error = error
             if release_error is not None and execution_error is None:
-                raise TaskExecutionError(
-                    "failed to release task resources",
+                raise ThredExecutionError(
+                    "failed to release thred resources",
                     cause=release_error,
                 ) from release_error

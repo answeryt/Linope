@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 from typing import TypeAlias
 import warnings
 
-from ._hooks import HookImpl
-from ._result import HookCallError
-from ._result import Result
-from ._warnings import PluggyTeardownRaisedWarning
+from .hooks import HookImpl
+from .result import HookCallError
+from .result import Result
+from .warnings import PluggyTeardownRaisedWarning
 
 
 # Need to distinguish between old- and new-style hook wrappers.

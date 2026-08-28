@@ -1,4 +1,4 @@
-"""Validation for leaf plugins loaded by the Host."""
+"""Validation for lifecycle-aware composition plugins loaded by the Host."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 
 
 class ProtocolError(ValueError):
-    """A module does not satisfy the leaf-plugin contract."""
+    """A module does not satisfy the Host composition contract."""
 
 
 def plugin_name(module: ModuleType) -> str:

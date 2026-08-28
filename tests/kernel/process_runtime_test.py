@@ -41,8 +41,8 @@ scheduler_module = load(
 )
 worker_module = load("kernel/services/worker/process_worker_plugin.py")
 service_module = load("kernel/services/app/service_plugin.py")
-task_definition = load("kernel/thred/definition/task_definition_plugin.py")
-task_executor_module = load("kernel/thred/executor/task_executor_plugin.py")
+thred_definition = load("kernel/thred/definition/thred_definition_plugin.py")
+thred_executor_module = load("kernel/thred/executor/thred_executor_plugin.py")
 
 
 class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
@@ -58,6 +58,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with_scheduler: bool = False,
         clock: Any = None,
         policy: Any = None,
+        threads: Any = (),
     ) -> Any:
         process_store = (
             store if store is not None else store_module.MemoryProcessStore()
@@ -70,14 +71,16 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
             transition=state.transition,
             build_process_run=state.build_process_run,
         )
-        process = definition.define_process(process_name, handler)
+        process = definition.define_process(
+            process_name, handler, threads=threads
+        )
         runtime = runtime_module.ProcessEngine(
             processes=[process],
             store=process_store,
             lifecycle=lifecycle,
             journal=process_journal,
             queue=queue,
-            task_executor=task_executor_module.TaskExecutor(),
+            task_executor=thred_executor_module.ThredExecutor(),
             handle_factory=handle_module.ProcessHandle,
             continuation_builder=(
                 continuation_module.build_continuation
@@ -179,7 +182,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_completed_task_is_replayed_without_reexecution(self) -> None:
         calls: list[str] = []
 
-        @task_definition.task(name="model.call", version="1")
+        @thred_definition.thred(name="model.call", version="1")
         async def model_call(value: Any) -> str:
             calls.append(str(value))
             return f"result:{value}"
@@ -222,6 +225,32 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("terminated", replayed["state"])
         self.assertEqual("result:prompt", replayed["result"])
         self.assertEqual(["prompt"], calls)
+
+    async def test_process_invokes_thred_interface(self) -> None:
+        worker = thred_definition.define_thred(
+            "worker",
+            {"run": lambda value: f"worked:{value}"},
+            interfaces={
+                "run": {
+                    "input_schema": "WorkInput",
+                    "output_schema": "WorkResult",
+                }
+            },
+        )
+
+        async def handler(ctx: Any, input_value: Any) -> Any:
+            return await ctx.invoke("worker", "run", input_value)
+
+        runtime = self.make_runtime(handler, threads=[worker])
+        activated = await runtime.activate(
+            {
+                "activation_id": "thred-interface",
+                "process_type": "research",
+                "input": "value",
+            }
+        )
+
+        self.assertEqual(activated["result"], "worked:value")
 
     async def test_changed_command_is_rejected_as_nondeterministic(self) -> None:
         async def old_task(value: Any) -> str:
@@ -589,7 +618,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_continuation_executions_use_distinct_command_indexes(self) -> None:
-        @task_definition.task(name="round.task", version="1")
+        @thred_definition.thred(name="round.thred", version="1")
         async def run_round(value: Any) -> Any:
             return value
 
