@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Bind Thread resource requirements through an injected resource pool."""
+"""Bind Thred resource requirements through an injected resource pool."""
 
 from __future__ import annotations
 
@@ -13,20 +13,20 @@ PLUGIN_VERSION = "1.0"
 
 
 def build_binding(
-    thread: Mapping[str, Any],
+    thred: Mapping[str, Any],
     process_id: str,
     binding_id: str | None = None,
 ) -> dict[str, Any]:
-    if not isinstance(thread, Mapping):
-        raise TypeError("thread must be a mapping")
-    if not thread.get("name"):
-        raise ValueError("thread is missing name")
+    if not isinstance(thred, Mapping):
+        raise TypeError("thred must be a mapping")
+    if not thred.get("name"):
+        raise ValueError("thred is missing name")
     if not process_id:
         raise ValueError("process_id is required")
     return {
         "binding_id": binding_id or uuid4().hex,
         "process_id": str(process_id),
-        "thread": dict(thread),
+        "thred": dict(thred),
         "resource_leases": [],
         "state": "unbound",
     }
@@ -70,16 +70,16 @@ async def bind_resources(
         raise TypeError("pool must provide acquire")
     if binding.get("state") == "bound":
         return dict(binding)
-    thread = binding.get("thread")
-    if not isinstance(thread, Mapping):
-        raise ValueError("binding is missing its thread definition")
+    thred = binding.get("thred")
+    if not isinstance(thred, Mapping):
+        raise ValueError("binding is missing its thred definition")
 
     owner = owner_id or binding.get("binding_id")
     if not owner:
         raise ValueError("owner_id or binding_id is required")
     leases: list[dict[str, Any]] = []
     try:
-        for value in thread.get("requires") or ():
+        for value in thred.get("requires") or ():
             name, amount = _requirement(value)
             lease = await pool.acquire(name, str(owner), amount)
             leases.append(dict(lease))

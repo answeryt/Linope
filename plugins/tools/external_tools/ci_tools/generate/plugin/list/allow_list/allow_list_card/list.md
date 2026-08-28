@@ -5,10 +5,7 @@
 - `tools/external_tools/ci_tools/generate/serve_generate`
 - `tools/external_tools/ci_tools/generate/session_generate`
 - `tools/external_tools/ci_tools/generate/third_party_generate.py`
-- `kernel/thred/plugin/src`
-- `kernel/thred/plugin/testing`
-- `kernel/thred/plugin/scripts`
-- `kernel/thred/plugin/manager/stevedore`
+- `kernel/thred/plugin`
 
 ## inject
 

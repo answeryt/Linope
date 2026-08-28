@@ -29,9 +29,10 @@ SKIP_DIR_NAMES = {
 }
 ENGINE_PREFIXES = (
     "kernel/thred/plugin/host",
+    "kernel/thred/plugin/manager",
+    "kernel/thred/plugin/recipes",
+    "kernel/thred/plugin/signals",
     "kernel/thred/plugin/tests",
-    "kernel/thred/plugin/vendor/pluggy",
-    "kernel/thred/plugin/vendor/stevedore",
 )
 ENGINE_MODULES = frozenset({"pluggy", "stevedore", "lip"})
 
@@ -117,6 +118,131 @@ def _check_sockets(context: dict[str, Any]) -> None:
                     rel,
                     f"PLUGIN_NAME must be the static string `{name}`",
                 )
+    _check_modules(context, repo, composition)
+    _check_composers(context, repo, composition)
+
+
+def _check_modules(
+    context: dict[str, Any],
+    repo: Path,
+    composition: dict[str, Any],
+) -> None:
+    modules = composition.get("modules", {})
+    if not isinstance(modules, dict):
+        _error(
+            context,
+            "lip.module.composition",
+            COMPOSITION_PATH,
+            "composition modules must map plugin names to file paths",
+        )
+        return
+    for name, raw_path in modules.items():
+        _check_named_module(
+            context,
+            repo,
+            str(name),
+            raw_path,
+            rule="lip.module",
+            require_apply=False,
+        )
+
+
+def _check_composers(
+    context: dict[str, Any],
+    repo: Path,
+    composition: dict[str, Any],
+) -> None:
+    plugins = composition.get("plugins", [])
+    if not isinstance(plugins, list):
+        _error(
+            context,
+            "lip.composer.composition",
+            COMPOSITION_PATH,
+            "composition plugins must be a list",
+        )
+        return
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            _error(
+                context,
+                "lip.composer.composition",
+                COMPOSITION_PATH,
+                "each composition plugin must be a mapping",
+            )
+            continue
+        name = entry.get("name")
+        path = entry.get("path")
+        if not isinstance(name, str) or not name:
+            _error(
+                context,
+                "lip.composer.name",
+                COMPOSITION_PATH,
+                "each composition plugin needs a non-empty name",
+            )
+            continue
+        if "socket" in entry:
+            _error(
+                context,
+                "lip.composer.source",
+                COMPOSITION_PATH,
+                f"composer `{name}` cannot use socket; Recipes require path",
+            )
+            continue
+        _check_named_module(
+            context,
+            repo,
+            name,
+            path,
+            rule="lip.composer",
+            require_apply=True,
+        )
+
+
+def _check_named_module(
+    context: dict[str, Any],
+    repo: Path,
+    name: str,
+    raw_path: Any,
+    *,
+    rule: str,
+    require_apply: bool,
+) -> None:
+    if not isinstance(raw_path, str) or not raw_path:
+        _error(
+            context,
+            f"{rule}.path",
+            COMPOSITION_PATH,
+            f"`{name}` must map to a non-empty file path",
+        )
+        return
+    rel = raw_path.replace("\\", "/")
+    path = repo / rel
+    if not path.is_file():
+        _error(context, f"{rule}.path", rel, f"configured module `{name}` is missing")
+        return
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        _error(context, f"{rule}.source", rel, f"cannot parse module: {exc}")
+        return
+    if _const(tree, "PLUGIN_NAME") != name:
+        _error(
+            context,
+            f"{rule}.plugin_name",
+            rel,
+            f"PLUGIN_NAME must be the static string `{name}`",
+        )
+    if require_apply and not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "apply"
+        for node in tree.body
+    ):
+        _error(
+            context,
+            f"{rule}.apply",
+            rel,
+            f"composer `{name}` must define apply(lip, config)",
+        )
 
 
 def _check_engine_imports(context: dict[str, Any]) -> None:

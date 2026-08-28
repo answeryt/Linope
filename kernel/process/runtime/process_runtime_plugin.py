@@ -162,16 +162,16 @@ class ProcessContext:
         )
 
     async def invoke(
-        self, thread: str, function: str, input: Any = None
+        self, thread: str, interface: str, input: Any = None
     ) -> Any:
-        target = self.engine._resolve_thread_function(
-            self.definition, str(thread), str(function)
+        target = self.engine._resolve_thread_interface(
+            self.definition, str(thread), str(interface)
         )
         return await self._run_command(
             target,
             input,
             command_type="invoke",
-            command_name=f"{thread}.{function}",
+            command_name=f"{thread}.{interface}",
         )
 
     async def start_process(
@@ -787,17 +787,21 @@ class ProcessEngine:
         return normalized
 
     @staticmethod
-    def _resolve_thread_function(
-        definition: Mapping[str, Any], thread: str, function: str
-    ) -> Callable[..., Any]:
+    def _resolve_thread_interface(
+        definition: Mapping[str, Any], thread: str, interface: str
+    ) -> dict[str, Any]:
         for item in definition.get("threads") or ():
             if str(item.get("name")) != thread:
                 continue
-            target = (item.get("functions") or {}).get(function)
-            if callable(target):
-                return target
+            contract = (item.get("interfaces") or {}).get(interface)
+            handler = (item.get("handlers") or {}).get(interface)
+            if isinstance(contract, Mapping) and callable(handler):
+                selected = dict(item)
+                selected["interfaces"] = {interface: dict(contract)}
+                selected["handlers"] = {interface: handler}
+                return selected
             break
-        raise KeyError(f"unknown thread function: {thread}.{function}")
+        raise KeyError(f"unknown thread interface: {thread}.{interface}")
 
     @staticmethod
     def _task_name(task: Any) -> str:

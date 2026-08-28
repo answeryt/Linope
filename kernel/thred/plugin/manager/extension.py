@@ -17,9 +17,9 @@ from typing import (
 )
 import warnings
 
-from . import _cache
-from .exception import MultipleMatches
-from .exception import NoMatches
+from . import cache as _cache
+from ..exception import MultipleMatches
+from ..exception import NoMatches
 
 
 LOG = logging.getLogger(__name__)

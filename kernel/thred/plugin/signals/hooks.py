@@ -23,7 +23,7 @@ from typing import TypedDict
 from typing import TypeVar
 import warnings
 
-from ._result import Result
+from .result import Result
 
 
 _T = TypeVar("_T")

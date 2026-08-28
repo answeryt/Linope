@@ -1,4 +1,4 @@
-"""Assemble leaf plugins from ``composition.yaml``."""
+"""Apply path-selected composition Recipes from ``composition.yaml``."""
 
 from __future__ import annotations
 
@@ -32,14 +32,25 @@ def load_composition(
 ) -> Context:
     data = _read_yaml(Path(path) if path is not None else _DEFAULT_COMPOSITION)
     sockets = data.get("sockets", {})
+    modules = data.get("modules", {})
     entries = data.get("plugins", [])
     if not isinstance(sockets, dict):
         raise LoadError("composition sockets must be a mapping")
+    if not isinstance(modules, dict):
+        raise LoadError("composition modules must be a mapping")
+    if any(
+        not isinstance(name, str)
+        or not name
+        or not isinstance(module_path, str)
+        or not module_path
+        for name, module_path in modules.items()
+    ):
+        raise LoadError("composition modules must map names to non-empty paths")
     if not isinstance(entries, list):
         raise LoadError("composition plugins must be a list")
 
     root = Path(repo) if repo is not None else _DEFAULT_REPO
-    lip = Context(sockets, repo=root)
+    lip = Context(sockets, modules=modules, repo=root)
     loaded = _load_plugins(lip, entries)
     pending = list(loaded)
     applied: set[str] = set()
@@ -51,7 +62,7 @@ def load_composition(
                 for item in pending
                 if all(
                     dependency in applied
-                    or dependency in lip._runtime.services
+                    or lip.has_service(dependency)
                     for dependency in item[2]
                 )
             ]
@@ -79,17 +90,29 @@ def _load_plugins(
         if not isinstance(entry, dict):
             raise LoadError("each plugin entry must be a mapping")
         name = entry.get("name")
-        socket = entry.get("socket")
+        path = entry.get("path")
         if not isinstance(name, str) or not name:
             raise LoadError("each plugin needs a non-empty name")
         if name in names:
             raise LoadError(f"duplicate plugin name: {name!r}")
-        if not isinstance(socket, str) or not socket:
-            raise LoadError(f"plugin {name!r} needs a non-empty socket")
+        if "socket" in entry:
+            raise LoadError(
+                f"plugin {name!r} cannot use socket for composition; "
+                "select tools in sockets and load Recipes by path"
+            )
+        if not isinstance(path, str) or not path:
+            raise LoadError(f"plugin {name!r} needs a non-empty path")
         try:
-            module = lip.get(socket, name)
+            module = lip.load_recipe(name, path)
             validate(module, name)
-        except (LookupError, ImportError, ProtocolError) as error:
+        except (
+            LookupError,
+            ImportError,
+            OSError,
+            ProtocolError,
+            TypeError,
+            ValueError,
+        ) as error:
             raise LoadError(f"cannot load plugin {name!r}: {error}") from error
         declared = entry.get("config", _UNSET)
         config = plugin_config(module) if declared is _UNSET else declared
@@ -104,13 +127,12 @@ def _raise_unsatisfied(
     lip: Context,
 ) -> None:
     pending_names = {name for name, _module, _inject, _config in pending}
-    services = set(lip._runtime.services)
     for name, _module, inject, _config in pending:
         missing = [
             dependency
             for dependency in inject
             if dependency not in applied
-            and dependency not in services
+            and not lip.has_service(dependency)
             and dependency not in pending_names
         ]
         if missing:

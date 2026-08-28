@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Concatenate, ParamSpec, Self, TypeVar
 
-from .exception import NoMatches
+from ..exception import NoMatches
 from .extension import ConflictResolverT
 from .extension import error_on_conflict
 from .extension import Extension
@@ -20,6 +20,7 @@ from .named import warning_on_missing_entrypoint
 T = TypeVar('T')
 U = TypeVar('U')
 P = ParamSpec('P')
+_MISSING_MODULE = object()
 
 
 class DriverManager(NamedExtensionManager[T]):
@@ -152,23 +153,44 @@ class DriverManager(NamedExtensionManager[T]):
         path: str | Path,
         *,
         module_name: str | None = None,
+        required: str | None = 'dispatch',
     ) -> Self:
         """Load one on-disk plug file as this named driver.
 
         Plugs in this repo are ``*_plugin.py`` files, not installed
         entry points. This is the file-backed counterpart of constructing
-        a :class:`DriverManager` from a setuptools group.
+        a :class:`DriverManager` from a setuptools group. ``required=None``
+        loads a raw capability module without imposing a socket callable.
         """
-        file_path = Path(path)
+        file_path = Path(path).resolve()
+        if not file_path.is_file():
+            raise ImportError(file_path)
         spec_name = module_name or f'{namespace}_{name}'.replace('.', '_')
         spec = importlib.util.spec_from_file_location(spec_name, file_path)
         if spec is None or spec.loader is None:
             raise ImportError(file_path)
         module = importlib.util.module_from_spec(spec)
+        previous_module = sys.modules.get(spec_name, _MISSING_MODULE)
         sys.modules[spec_name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            _restore_module(spec_name, module, previous_module)
+            raise
+        actual_name = getattr(module, 'PLUGIN_NAME', None)
+        if actual_name != name:
+            _restore_module(spec_name, module, previous_module)
+            raise ValueError(
+                f'PLUGIN_NAME must be {name!r}, got {actual_name!r}'
+            )
+        if required is not None and not callable(getattr(module, required, None)):
+            _restore_module(spec_name, module, previous_module)
+            raise TypeError(
+                f'plugin {name!r} must provide callable {required!r}'
+            )
+        target = required or 'PLUGIN_NAME'
         entry_point = importlib.metadata.EntryPoint(
-            name, f'{spec_name}:dispatch', namespace
+            name, f'{spec_name}:{target}', namespace
         )
         extension = Extension(name, entry_point, module, module)
         return cls.make_test_instance(extension, namespace=namespace)
@@ -224,3 +246,16 @@ class DriverManager(NamedExtensionManager[T]):
         """Returns the driver being used by this manager."""
         ext = self.extensions[0]
         return ext.obj if ext.obj else ext.plugin
+
+
+def _restore_module(
+    name: str,
+    loaded: Any,
+    previous: Any,
+) -> None:
+    if sys.modules.get(name) is not loaded:
+        return
+    if previous is _MISSING_MODULE:
+        sys.modules.pop(name, None)
+    else:
+        sys.modules[name] = previous

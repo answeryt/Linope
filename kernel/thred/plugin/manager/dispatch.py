@@ -8,7 +8,7 @@ from typing import ParamSpec
 from typing import TypeVar
 
 from .enabled import EnabledExtensionManager
-from .exception import NoMatches
+from ..exception import NoMatches
 from .extension import Extension
 from .extension import OnLoadFailureCallbackT
 
