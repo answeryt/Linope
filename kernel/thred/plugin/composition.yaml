@@ -9,3 +9,4 @@ modules:
   kernel_thred_binding: kernel/thred/binding/thred_binding_plugin.py
   kernel_thred_runtime: kernel/thred/runtime/thred_runtime_plugin.py
 plugins: []
+sources: []
