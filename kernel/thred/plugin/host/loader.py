@@ -6,14 +6,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from .assembler import Assembler
+from .contracts import PluginState
 from .lip import Context
 from .protocol import (
     ProtocolError,
-    apply_function,
     inject_names,
     plugin_config,
     validate,
 )
+from .sources import source_from_mapping
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_COMPOSITION = _PLUGIN_DIR / "composition.yaml"
@@ -34,6 +36,7 @@ def load_composition(
     sockets = data.get("sockets", {})
     modules = data.get("modules", {})
     entries = data.get("plugins", [])
+    sources = data.get("sources", [])
     if not isinstance(sockets, dict):
         raise LoadError("composition sockets must be a mapping")
     if not isinstance(modules, dict):
@@ -48,33 +51,40 @@ def load_composition(
         raise LoadError("composition modules must map names to non-empty paths")
     if not isinstance(entries, list):
         raise LoadError("composition plugins must be a list")
+    if not isinstance(sources, list):
+        raise LoadError("composition sources must be a list")
 
     root = Path(repo) if repo is not None else _DEFAULT_REPO
     lip = Context(sockets, modules=modules, repo=root)
+    assembler = Assembler(lip)
     loaded = _load_plugins(lip, entries)
-    pending = list(loaded)
-    applied: set[str] = set()
-
     try:
-        while pending:
-            ready = [
-                item
-                for item in pending
-                if all(
-                    dependency in applied
-                    or lip.has_service(dependency)
-                    for dependency in item[2]
+        fibers = [
+            lip.plugin(
+                module,
+                config,
+                name=name,
+                requirements=inject,
+                source=str(getattr(module, "__file__", "")),
+            )
+            for name, module, inject, config in loaded
+        ]
+        pending = [
+            fiber for fiber in fibers if fiber.state is PluginState.PENDING
+        ]
+        if pending:
+            _raise_unsatisfied_fibers(pending, lip)
+        for declaration in sources:
+            if not isinstance(declaration, dict):
+                raise LoadError("composition source entries must be mappings")
+            try:
+                source = source_from_mapping(declaration, base=root)
+                assembler.mount_source(
+                    source,
+                    strict=bool(declaration.get("strict", False)),
                 )
-            ]
-            if not ready:
-                _raise_unsatisfied(pending, applied, lip)
-            for name, module, _inject, config in ready:
-                scoped = lip.bind(name)
-                cleanup = apply_function(module)(scoped, config)
-                if cleanup is not None:
-                    scoped.effect(cleanup)
-                applied.add(name)
-                pending.remove((name, module, _inject, config))
+            except Exception as error:
+                raise LoadError(f"cannot load plugin source: {error}") from error
     except BaseException:
         lip.unload()
         raise
@@ -121,22 +131,18 @@ def _load_plugins(
     return loaded
 
 
-def _raise_unsatisfied(
-    pending: list[tuple[str, ModuleType, tuple[str, ...], Any]],
-    applied: set[str],
-    lip: Context,
-) -> None:
-    pending_names = {name for name, _module, _inject, _config in pending}
-    for name, _module, inject, _config in pending:
+def _raise_unsatisfied_fibers(pending: list[Any], lip: Context) -> None:
+    pending_names = {fiber.name for fiber in pending}
+    for fiber in pending:
         missing = [
             dependency
-            for dependency in inject
-            if dependency not in applied
-            and not lip.has_service(dependency)
-            and dependency not in pending_names
+            for dependency in fiber.missing
+            if dependency not in pending_names
         ]
         if missing:
-            raise LoadError(f"plugin {name!r} injects missing {missing!r}")
+            raise LoadError(
+                f"plugin {fiber.name!r} injects missing {missing!r}"
+            )
     raise LoadError(f"plugin inject cycle: {sorted(pending_names)!r}")
 
 

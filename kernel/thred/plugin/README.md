@@ -605,6 +605,7 @@ modules:
   kernel_thred_runtime: kernel/thred/runtime/thred_runtime_plugin.py
 
 plugins: []
+sources: []
 ```
 
 三部分职责不同：
@@ -612,6 +613,8 @@ plugins: []
 - `sockets`：`(socket, name) → 文件`，由 `lip.get(socket, name)` 获取，并检查 socket 行为合同。
 - `modules`：`PLUGIN_NAME → 文件`，由调用方使用 `lip.module(name)` 获取，只检查身份，不要求 `apply`。
 - `plugins`：Host 生命周期清单。每项必须用 `path` 指向独立 Recipe，并实现 `apply(lip, config)`。这里禁止填写 `socket`。默认 composition 为空，因为 Thred Runtime 由用户编译，而不是由固定 Recipe 发布。
+- `sources`：动态发现源，可选择 manifest 目录、旧 Python 目录、静态快照或
+  Python Entry Points；默认留空，部署方显式决定允许加载的目录。
 
 个性化组装写在调用方的普通 Python 代码中，通过 `compile_runtime()` 完成；不塞进 YAML，也不强迫业务叶插件采用统一构造方式。想换实现时修改 `modules` 映射，再重新编译 `lip_thred_runtime`。
 
@@ -635,3 +638,63 @@ exception / protocol → manager / signals → host loaders → Context → load
 import 任何运行时内部模块。CI allow list 必须在 JSON、YAML、TOML 和
 Markdown 四种卡片格式中统一豁免 `kernel/thred/plugin`，避免检查结果随
 `--format` 改变。
+
+## 通用能力装配
+
+Host 统一的是插件的安装语义，而不是猜测任意业务函数的参数语义：
+
+```text
+ArtifactSource → PluginDescriptor → Assembler
+                                     ↓
+                           apply(Context, config)
+                                     ↓
+                     Capability + Effect + Fiber
+```
+
+- `contracts.py`：定义 Artifact、Capability、Requirement、Descriptor 和生命周期状态。
+- `capabilities.py`：保存可替换能力，并在 provider 变化时通知消费者。
+- `fiber.py`：管理 `PENDING → LOADING → ACTIVE → UNLOADING → DISPOSED`
+  生命周期；必需能力消失时自动卸载，重新出现时自动激活。
+- `sources.py`：提供 composition、静态快照、Entry Point、manifest 目录和旧
+  `*_plugin.py` AST 索引。发现阶段不 import 插件。
+- `assembler.py`：把任意发现源接到统一 Host。
+- `services.py`：提供工具注册、模型 Adapter/Waterfall 和带依赖排序的 Pipeline。
+- `bridges.py`：隔离旧 `tool_schemas/dispatch`、`call_api` 和转换函数 ABI；
+  新插件不需要继续扩充这些启发式规则。
+
+用户目录推荐显式提供 `plugin.toml`：
+
+```toml
+[plugin]
+name = "my_tools"
+version = "1.0"
+kind = "tool"
+source = "plugin.py"
+requires = ["tools"]
+```
+
+部署方在 `composition.yaml` 中启用该目录：
+
+```yaml
+sources:
+  - type: manifest
+    roots: [plugins]
+    recursive: true
+    strict: true
+```
+
+运行时只依赖 `ArtifactSource.discover()`。CI 可以生成 descriptor JSON，再由
+`StaticSnapshotSource` 读取；内核不会 import `ci_tools`。当前没有 manifest 的
+旧插件可由 `PythonPluginSource` 静态识别，作为迁移兼容层。
+
+插件依赖的是稳定能力名而不是具体插件路径：
+
+```python
+def apply(ctx, config):
+    adapter = MyAdapter(config)
+    ctx.get("llm").register_adapter(["my-provider"], adapter)
+```
+
+所有通过 Context 或领域 Service 完成的注册都归属于当前 Fiber，卸载时逆序
+撤销。FSM 只管理插件生命周期；服务依赖、Middleware、Pipeline 和业务状态机
+仍保持各自独立的语义。
