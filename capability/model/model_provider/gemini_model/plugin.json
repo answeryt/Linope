@@ -1,0 +1,30 @@
+{
+  "name": "model.card.gemini_model",
+  "version": "1.0",
+  "source": "../../runtime/assemble.py",
+  "entry": "register_card",
+  "kind": "model.card",
+  "provides": ["model.card", "model.card.gemini_model", "gemini_model", "gemini"],
+  "requires": ["model.interface.gemini"],
+  "constraints": {"domain": "model"},
+  "config": {
+    "provider": "gemini",
+    "interface": "gemini",
+    "model": "your-gemini-model",
+    "api_key_env": "GEMINI_API_KEY",
+    "base_url": "",
+    "stream": "UNSET",
+    "parameters": {
+      "max_tokens": "UNSET",
+      "temperature": "UNSET",
+      "top_p": "UNSET",
+      "tools": "UNSET",
+      "tool_choice": "UNSET"
+    },
+    "client_kwargs": {},
+    "generate_kwargs": {},
+    "extra_body": {},
+    "card_id": "gemini_model",
+    "routes": ["gemini_model", "gemini"]
+  }
+}

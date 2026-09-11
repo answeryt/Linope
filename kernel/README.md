@@ -54,9 +54,7 @@ Agent
 │       ├── Task Function × N
 │       ├── Signal / Timer / Child Handle
 │       └── Context Policy
-└── Resources
-    ├── Container: CPU / GPU / Memory / Sandbox / Network
-    └── Model: concurrency / quota / context tokens / rate limit
+
 ```
 
 ## 为什么不能把执行制度写死在 handler 外面
@@ -258,8 +256,8 @@ async def search(ctx, query):
 `workflow.defn` / `activity.defn`、Restate `Workflow.main` /
 `Context.run_typed`。
 
-现有 `Thread Plugin` 不删除。目标语义是：Thread 仍然是一组函数、资源要求、
-生命周期和 hooks，但每次 Thread Function 调用都产生 durable Task Call，而
+现有 `Composition Plugin` 不删除。目标语义是：Composition 仍然是一组函数、资源要求、
+生命周期和 hooks，但每次 Composition Function 调用都产生 durable Task Call，而
 不是在 `ProcessRuntime.invoke()` 中直接裸调用函数。
 
 ### 2. Journal 与确定性重放
@@ -692,7 +690,7 @@ await agent.run()
 - [x] Process Store、Run Queue、Ingress 与 Worker Host Adapter；
 - [x] Queue lease、fencing token、优先级和过期 claim 恢复；
 - [x] Runtime 从 `kernel/async` 迁移到 `kernel/process/runtime`；
-- [x] Task 定义与 Executor 迁移到 `kernel/thred/definition|executor`；
+- [x] Task 定义与 Executor 迁移到 `kernel/compose/definition|executor`；
 - [x] 删除 PCB、table、mailbox 和旧 scheduler 的重复内存事实来源。
 
 后续计划：
@@ -723,18 +721,23 @@ kernel/
 │   ├── state/               ProcessRun schema
 │   ├── handle/              durable child handle
 │   └── continuation/        Continuation Record 与 Expression
-├── thred/
-│   ├── definition/          @task、重试与资源需求
-│   ├── executor/            Task 执行和结果提交
-│   └── binding/             Resource lease
+├── compose/
+│   ├── definition/          @compose、重试与资源需求
+│   ├── executor/            执行和结果提交
+│   ├── binding/             Resource lease
+│   ├── runtime/             ComposeRuntime 门面
+│   └── capability/          能力图与 Composition
 └── resource/
     ├── definition/
     └── pool/
 ```
 
-目录名暂时保留 `thred`，避免与 Python `threading` 和 OS thread 混淆。对用户公开
-的概念应使用 `Task Function`，因为它对应 Restate action、DBOS step 和 Temporal
-activity，是持久执行边界。
+行为测试分层与夹具约定见 [`tests/README.md`](../tests/README.md)。
+
+目录名为 `compose`，避免与 Python `threading` 和 OS thread 混淆。对用户公开
+的概念是可执行组装单元（`@compose`）与能力图上的 `Composition`。副作用仍通过
+Process journal 记为 Task Call，对应 Restate action、DBOS step 和 Temporal
+activity。
 
 ## 架构约束
 

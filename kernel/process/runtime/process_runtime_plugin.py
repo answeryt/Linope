@@ -162,16 +162,16 @@ class ProcessContext:
         )
 
     async def invoke(
-        self, thread: str, interface: str, input: Any = None
+        self, composition: str, interface: str, input: Any = None
     ) -> Any:
-        target = self.engine._resolve_thread_interface(
-            self.definition, str(thread), str(interface)
+        target = self.engine._resolve_composition_interface(
+            self.definition, str(composition), str(interface)
         )
         return await self._run_command(
             target,
             input,
             command_type="invoke",
-            command_name=f"{thread}.{interface}",
+            command_name=f"{composition}.{interface}",
         )
 
     async def start_process(
@@ -563,7 +563,7 @@ class ProcessEngine:
     async def invoke(
         self,
         process_id: str,
-        thread: str,
+        composition: str,
         function: str,
         input: Any = None,
     ) -> Any:
@@ -573,7 +573,7 @@ class ProcessEngine:
             str(process.get("definition_version") or "1"),
         )
         context = ProcessContext(self, process, definition)
-        return await context.invoke(thread, function, input)
+        return await context.invoke(composition, function, input)
 
     async def _apply_outcome(
         self, process_id: str, outcome: Any, context: ProcessContext
@@ -787,11 +787,11 @@ class ProcessEngine:
         return normalized
 
     @staticmethod
-    def _resolve_thread_interface(
-        definition: Mapping[str, Any], thread: str, interface: str
+    def _resolve_composition_interface(
+        definition: Mapping[str, Any], composition: str, interface: str
     ) -> dict[str, Any]:
-        for item in definition.get("threads") or ():
-            if str(item.get("name")) != thread:
+        for item in definition.get("compositions") or ():
+            if str(item.get("name")) != composition:
                 continue
             contract = (item.get("interfaces") or {}).get(interface)
             handler = (item.get("handlers") or {}).get(interface)
@@ -801,7 +801,7 @@ class ProcessEngine:
                 selected["handlers"] = {interface: handler}
                 return selected
             break
-        raise KeyError(f"unknown thread interface: {thread}.{interface}")
+        raise KeyError(f"unknown composition interface: {composition}.{interface}")
 
     @staticmethod
     def _task_name(task: Any) -> str:

@@ -29,13 +29,13 @@ pool_module = load(
     "kernel/resource/pool/resource_pool_plugin.py",
     "resource_pool_plugin_test",
 )
-thred_module = load(
-    "kernel/thred/definition/thred_definition_plugin.py",
-    "thred_plugin_test",
+compose_module = load(
+    "kernel/compose/definition/compose_definition_plugin.py",
+    "compose_plugin_test",
 )
 binding_module = load(
-    "kernel/thred/binding/thred_binding_plugin.py",
-    "thred_binding_plugin_test",
+    "kernel/compose/binding/compose_binding_plugin.py",
+    "compose_binding_plugin_test",
 )
 
 
@@ -85,11 +85,11 @@ class ResourceThreadTest(unittest.IsolatedAsyncioTestCase):
             pool.snapshot()["resources"]["sandbox"]["available"], 1
         )
 
-    async def test_thred_decorator_and_registry(self) -> None:
+    async def test_compose_decorator_and_registry(self) -> None:
         def stop() -> str:
             return "stop"
 
-        @thred_module.thred(
+        @compose_module.compose(
             name="worker",
             handlers={"stop": stop},
             interfaces={
@@ -97,16 +97,16 @@ class ResourceThreadTest(unittest.IsolatedAsyncioTestCase):
                 "stop": {"output_schema": "StopResult"},
             },
             requires=["context"],
-            lifetime="thred",
+            lifetime="compose",
         )
         def run() -> str:
             return "run"
 
-        registry = thred_module.ThredRegistry([run])
+        registry = compose_module.ComposeRegistry([run])
         stored = registry.require("worker")
 
-        self.assertFalse(hasattr(thred_module, "define_task"))
-        self.assertEqual(stored["kind"], "thred")
+        self.assertFalse(hasattr(compose_module, "define_task"))
+        self.assertEqual(stored["kind"], "compose")
         self.assertEqual(set(stored["interfaces"]), {"run", "stop"})
         self.assertEqual(set(stored["handlers"]), {"run", "stop"})
         self.assertEqual(
@@ -114,34 +114,34 @@ class ResourceThreadTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(stored["requires"], ["context"])
 
-    async def test_thred_functions_bind_and_release_resources(self) -> None:
+    async def test_compose_functions_bind_and_release_resources(self) -> None:
         def run() -> str:
             return "run"
 
         def stop() -> str:
             return "stop"
 
-        thred = thred_module.define_thred(
+        compose = compose_module.define_compose(
             "worker",
             [run, stop],
             interfaces={"run": {}, "stop": {}},
             requires=["context", {"name": "tool", "amount": 2}],
-            lifetime="thred",
+            lifetime="compose",
             release_while_waiting=["tool"],
         )
-        self.assertEqual(set(thred["interfaces"]), {"run", "stop"})
-        self.assertEqual(thred["handlers"]["run"](), "run")
+        self.assertEqual(set(compose["interfaces"]), {"run", "stop"})
+        self.assertEqual(compose["handlers"]["run"](), "run")
 
         pool = pool_module.ResourcePool()
         pool.register(definition.define_resource("context", capacity=1))
         pool.register(definition.define_resource("tool", capacity=2))
         binding = binding_module.build_binding(
-            thred, process_id="process-1", binding_id="binding-1"
+            compose, process_id="process-1", binding_id="binding-1"
         )
 
         bound = await binding_module.bind_resources(binding, pool)
         self.assertEqual(bound["state"], "bound")
-        self.assertEqual(bound["thred"]["name"], "worker")
+        self.assertEqual(bound["compose"]["name"], "worker")
         self.assertNotIn("thread", bound)
         self.assertEqual(len(bound["resource_leases"]), 2)
         self.assertTrue(

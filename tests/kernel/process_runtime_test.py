@@ -41,8 +41,8 @@ scheduler_module = load(
 )
 worker_module = load("kernel/services/worker/process_worker_plugin.py")
 service_module = load("kernel/services/app/service_plugin.py")
-thred_definition = load("kernel/thred/definition/thred_definition_plugin.py")
-thred_executor_module = load("kernel/thred/executor/thred_executor_plugin.py")
+compose_definition = load("kernel/compose/definition/compose_definition_plugin.py")
+compose_executor_module = load("kernel/compose/executor/compose_executor_plugin.py")
 
 
 class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
@@ -58,7 +58,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with_scheduler: bool = False,
         clock: Any = None,
         policy: Any = None,
-        threads: Any = (),
+        compositions: Any = (),
     ) -> Any:
         process_store = (
             store if store is not None else store_module.MemoryProcessStore()
@@ -72,7 +72,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
             build_process_run=state.build_process_run,
         )
         process = definition.define_process(
-            process_name, handler, threads=threads
+            process_name, handler, compositions=compositions
         )
         runtime = runtime_module.ProcessEngine(
             processes=[process],
@@ -80,7 +80,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
             lifecycle=lifecycle,
             journal=process_journal,
             queue=queue,
-            task_executor=thred_executor_module.ThredExecutor(),
+            task_executor=compose_executor_module.ComposeExecutor(),
             handle_factory=handle_module.ProcessHandle,
             continuation_builder=(
                 continuation_module.build_continuation
@@ -182,7 +182,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_completed_task_is_replayed_without_reexecution(self) -> None:
         calls: list[str] = []
 
-        @thred_definition.thred(name="model.call", version="1")
+        @compose_definition.compose(name="model.call", version="1")
         async def model_call(value: Any) -> str:
             calls.append(str(value))
             return f"result:{value}"
@@ -226,8 +226,8 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("result:prompt", replayed["result"])
         self.assertEqual(["prompt"], calls)
 
-    async def test_process_invokes_thred_interface(self) -> None:
-        worker = thred_definition.define_thred(
+    async def test_process_invokes_compose_interface(self) -> None:
+        worker = compose_definition.define_compose(
             "worker",
             {"run": lambda value: f"worked:{value}"},
             interfaces={
@@ -241,10 +241,10 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         async def handler(ctx: Any, input_value: Any) -> Any:
             return await ctx.invoke("worker", "run", input_value)
 
-        runtime = self.make_runtime(handler, threads=[worker])
+        runtime = self.make_runtime(handler, compositions=[worker])
         activated = await runtime.activate(
             {
-                "activation_id": "thred-interface",
+                "activation_id": "compose-interface",
                 "process_type": "research",
                 "input": "value",
             }
@@ -618,7 +618,7 @@ class ProcessRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_continuation_executions_use_distinct_command_indexes(self) -> None:
-        @thred_definition.thred(name="round.thred", version="1")
+        @compose_definition.compose(name="round.compose", version="1")
         async def run_round(value: Any) -> Any:
             return value
 
