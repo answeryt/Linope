@@ -1,3 +1,0 @@
-# simple smoke test pipeline
-steps:
-  - arbpack.arbstep

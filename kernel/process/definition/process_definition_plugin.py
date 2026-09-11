@@ -17,7 +17,7 @@ def define_process(
     *,
     version: str = "1",
     tasks: Sequence[Any] | Mapping[str, Any] = (),
-    threads: Sequence[Mapping[str, Any]] = (),
+    compositions: Sequence[Mapping[str, Any]] = (),
     resources: Sequence[str | Mapping[str, Any]] = (),
     **fields: Any,
 ) -> dict[str, Any]:
@@ -28,19 +28,19 @@ def define_process(
         raise TypeError("handler must be callable")
     if not isinstance(version, str) or not version.strip():
         raise ValueError("version must be a non-empty string")
-    thread_items = [dict(item) for item in threads]
-    thread_names = [str(item.get("name") or "") for item in thread_items]
-    if any(not item for item in thread_names):
-        raise ValueError("every thread must have a name")
-    if len(thread_names) != len(set(thread_names)):
-        raise ValueError("thread names must be unique within a process")
+    composition_items = [dict(item) for item in compositions]
+    composition_names = [str(item.get("name") or "") for item in composition_items]
+    if any(not item for item in composition_names):
+        raise ValueError("every composition must have a name")
+    if len(composition_names) != len(set(composition_names)):
+        raise ValueError("composition names must be unique within a process")
     task_items = dict(tasks) if isinstance(tasks, Mapping) else list(tasks)
     record = {
         "name": name.strip(),
         "version": version.strip(),
         "handler": handler,
         "tasks": task_items,
-        "threads": thread_items,
+        "compositions": composition_items,
         "resources": [
             dict(item) if isinstance(item, Mapping) else {"name": str(item), "amount": 1}
             for item in resources
@@ -66,7 +66,7 @@ class ProcessRegistry:
         name: str | None = None,
         version: str = "1",
         tasks: Sequence[Any] | Mapping[str, Any] = (),
-        threads: Sequence[Mapping[str, Any]] = (),
+        compositions: Sequence[Mapping[str, Any]] = (),
         resources: Sequence[str | Mapping[str, Any]] = (),
         **fields: Any,
     ) -> dict[str, Any]:
@@ -80,7 +80,7 @@ class ProcessRegistry:
                     definition,
                     version=version,
                     tasks=tasks,
-                    threads=threads,
+                    compositions=compositions,
                     resources=resources,
                     **fields,
                 )
@@ -102,7 +102,7 @@ class ProcessRegistry:
         item["name"] = process_name
         item["version"] = process_version
         item.setdefault("tasks", [])
-        item.setdefault("threads", [])
+        item.setdefault("compositions", [])
         item.setdefault("resources", [])
         self._definitions[key] = item
         self._latest[process_name] = process_version

@@ -1,0 +1,36 @@
+# compose：Task Function 是持久副作用边界
+
+## 词汇
+
+- **TaskDefinition**：稳定名称、版本、重试、超时和资源需求。
+- **TaskExecutor**：执行同步/异步副作用并提交结果或错误。
+- **TaskBinding**：Task attempt 对 Resource Lease 的运行绑定。
+- **ResourceLease**：Task 执行期间取得的有限资源使用权。
+
+## 结构
+
+```
+Process
+└── Task Command
+    ├── Task Definition
+    ├── Task Executor
+    └── Resource Binding
+```
+
+## 在结构图中的位置
+
+目录名保留 compose；公开概念统一使用 Task Function。能力图拼装由 plugin 审查（assembly_check / descriptor_check），本卡不写代码合同。
+
+## 本层拥有
+
+- `TaskDefinition`
+- `TaskExecutor`
+- `TaskBinding`
+
+## 架构要求
+
+1. Task Function 承载模型、工具、HTTP、数据库和文件等副作用。
+2. TaskDefinition 必须具有稳定名称和版本。
+3. TaskExecutor 支持同步/异步执行、重试与超时。
+4. TaskBinding 取得 Resource Lease，并在 attempt 结束时逆序释放。
+5. Task 结果与错误由 Process Journal 记录，Replay 不重复执行已完成 Task。

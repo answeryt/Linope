@@ -1,5 +1,0 @@
-begin
-sg1.1
-sg2.a
-sg1 success
-on success

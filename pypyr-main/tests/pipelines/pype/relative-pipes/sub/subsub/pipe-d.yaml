@@ -1,6 +1,0 @@
-steps:
-  - name: pypyr.steps.append
-    in:
-      append:
-        list: out
-        addMe: D
