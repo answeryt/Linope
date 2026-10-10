@@ -29,10 +29,12 @@
 - `workspace_plugin`: `prepare_build_context`, `build_backend`
 - `ui_cli_plugin`: `parse_startup`, `create_server`, `mount_shell`, `mount_static`, `announce`, `resolve_dist_index`
 - `ui_static_plugin`: `register_fallback`, `apply_index_taps`
+- `system_prompt_builder`: `plugin`
+- `system_prompt_compression`: `parameters`
 
 ## kernel_layers
 
-- `services`: `app`, `ingress`, `worker`, `queue`, `store`, `scheduler`
 - `process`: `activation`, `definition`, `runtime`, `journal`, `lifecycle`, `state`, `handle`, `continuation`
 - `compose`: `binding`, `definition`, `executor`, `runtime`, `capability`
 - `resource`: `definition`, `pool`
+- `thread`: `runtime`, `executor`, `limiter`, `inbox`, `policy`

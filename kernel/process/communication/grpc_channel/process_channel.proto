@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package linope.communication;
+
+service ProcessChannel {
+  rpc Call (Envelope) returns (Envelope);
+}
+
+message Envelope {
+  string request_id = 1;
+  string process_id = 2;
+  string sender_id = 3;
+  bytes body = 4;
+}

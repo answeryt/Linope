@@ -12,8 +12,9 @@
 - `capability/model/model_message`
 - `capability/model/model_provider`
 - `capability/model/runtime`
-- `capability/prompt/system_prompt`
-- `capability/prompt/transient_prompt`
+- `capability/prompt/filesystem discovery/system_prompt`
+- `capability/prompt/filesystem discovery/transient_prompt`
+- `capability/prompt/filesystem discovery/filesystem_runtime`
 - `capability/sandbox/sandbox-local/src`
 - `capability/sandbox/sandbox-policy/src`
 - `capability/sandbox/sandbox-windows-acl/src`
@@ -59,12 +60,6 @@
 - `kernel/process/state`
 - `kernel/resource/definition`
 - `kernel/resource/pool`
-- `kernel/services/app`
-- `kernel/services/ingress`
-- `kernel/services/queue`
-- `kernel/services/scheduler`
-- `kernel/services/store`
-- `kernel/services/worker`
 - `kernel/compose/binding`
 - `kernel/compose/definition`
 - `kernel/compose/executor`

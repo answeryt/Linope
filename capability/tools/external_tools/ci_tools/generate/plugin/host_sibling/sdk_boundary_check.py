@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Host-sibling check: model_interface stays a thin, lazy SDK wrapper.
+"""Host-sibling check: model_interface stays a lazy SDK wrapper.
 
-model_interface README: one file per Provider API, only call_api, no message
-formatting / retry / tool conversion. SDK clients are imported inside
-call_api, not at module top level.
+model_interface README: one file per Provider API. call_api owns message
+formatting, response parsing, and context-window recovery retries. SDK
+clients are imported inside call_api, not at module top level. Tool-schema
+conversion stays outside this family.
 """
 
 from __future__ import annotations
@@ -18,10 +19,6 @@ PLUGIN_VERSION = "1.0"
 
 SDK_ROOTS = {"openai", "anthropic", "google", "genai"}
 FORBIDDEN_NAME_HINTS = {
-    "retry",
-    "format_message",
-    "format_messages",
-    "parse_response",
     "convert_tools",
     "tool_choice_convert",
 }
@@ -104,7 +101,7 @@ def _check_forbidden_helpers(
                     "sdk.thin_wrapper",
                     rel,
                     f"public helper `{node.name}` belongs outside model_interface "
-                    "(no retry, formatting, or tool conversion here)",
+                    "(no tool-schema conversion here)",
                 )
             )
 

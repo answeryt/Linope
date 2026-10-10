@@ -1,40 +1,49 @@
-from capability.model.runtime.assemble import ModelCardCapability
-from capability.model.runtime.assemble import register_card
+# -*- coding: utf-8 -*-
+"""Anthropic model provider plugin. Card identity lives in CARD_CONFIG."""
 
 CARD_CONFIG = {
-        "provider": "anthropic",
-        "interface": "anthropic",
-        "model": "your-anthropic-model",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "base_url": "https://api.anthropic.com",
-        "stream": "UNSET",
-        "parameters": {
-            "max_tokens": "UNSET",
-            "temperature": "UNSET",
-            "top_p": "UNSET",
-            "tools": "UNSET",
-            "tool_choice": "UNSET",
-        },
-        "client_kwargs": {},
-        "generate_kwargs": {},
-        "extra_body": {},
-        "card_id": "anthropic_model",
-        "routes": ["anthropic_model", "anthropic"],
+    "provider": "anthropic",
+    "interface": "anthropic",
+    "model": "claude-opus-5",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "base_url": "https://api.anthropic.com",
+    "stream": "UNSET",
+    "parameters": {
+        "max_tokens": 128000,
+        "temperature": "UNSET",
+        "top_p": "UNSET",
+        "tools": "UNSET",
+        "tool_choice": "UNSET",
+    },
+    "client_kwargs": {},
+    "generate_kwargs": {},
+    "extra_body": {},
+    "card_id": "anthropic_model",
+    "routes": ["anthropic_model", "anthropic"],
 }
 
-PLUGIN_NAME = "model.card.anthropic_model"
-PLUGIN_VERSION = "1.0"
+
+def load(kind, body, call_params=None):
+    """Load a prompt through this plugin's card id."""
+    from capability.model.model_runtime.model_main import load_named_card
+
+    return load_named_card(CARD_CONFIG["card_id"], kind, body, call_params)
 
 
-class AnthropicModelCard(ModelCardCapability):
-    name = "model.card.anthropic_model"
-    version = "1.0"
-    kind = "model.card"
-    provides = ("model.card", "model.card.anthropic_model", "anthropic_model", "anthropic")
-    requires = ("model.interface.anthropic",)
-    constraints = {"domain": "model"}
-    config = CARD_CONFIG
+async def load_async(kind, body, call_params=None):
+    """Load a prompt on the process event loop without nested asyncio.run."""
+    from capability.model.model_runtime.model_main import load_named_card_async
+
+    return await load_named_card_async(
+        CARD_CONFIG["card_id"],
+        kind,
+        body,
+        call_params,
+    )
 
 
-def activate(res, config):
-    register_card(res, config or CARD_CONFIG)
+def capability_profile(capability_id, changes):
+    """Expose this plugin's card as a process profile."""
+    from capability.model.model_provider.card_profile import declaration_from_card
+
+    return declaration_from_card(capability_id, CARD_CONFIG, changes)

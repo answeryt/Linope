@@ -14,9 +14,6 @@ from collections.abc import Callable
 from typing import Any, Optional
 
 
-PLUGIN_NAME = "bash"
-PLUGIN_VERSION = "1.0"
-
 DEFAULT_TIMEOUT_MS = 60_000
 MAX_INLINE_CHARS = 100_000
 JobsStart = Callable[..., dict[str, Any]]
@@ -82,6 +79,18 @@ def tool_schemas() -> list[dict[str, Any]]:
     return [BASH_SCHEMA]
 
 
+
+def load(kind, body, call_params=None):
+    """Load one tool call. Argument shape stays in this plugin."""
+    if kind != "tool":
+        raise ValueError(f"这个进程不能装入 {kind}")
+    if isinstance(body, str):
+        body = {"command": body, "description": body}
+    if not isinstance(body, dict):
+        raise TypeError("tool 的内容必须是映射")
+    return dispatch("bash", body, **(call_params or {}))
+
+
 def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
     if name != "bash":
         return _error(f"unknown tool: {name}")
@@ -118,11 +127,29 @@ def bash(
         return _error("bash is not available on this host")
 
     argv = [executable, "-lc", command]
+    timeout = None if run_in_background else (timeout_ms or DEFAULT_TIMEOUT_MS) / 1000.0
+    try:
+        argv, cwd, env, timeout = _permit(argv, cwd, timeout)
+    except (PermissionError, ValueError, RuntimeError) as error:
+        return _error(str(error))
     if run_in_background:
-        return _start_background(argv, cwd, description, jobs_start)
+        return _start_background(argv, cwd, description, jobs_start, env)
 
-    timeout = (timeout_ms or DEFAULT_TIMEOUT_MS) / 1000.0
-    return _run_foreground(argv, cwd, timeout)
+    return _run_foreground(argv, cwd, timeout or (DEFAULT_TIMEOUT_MS / 1000.0), env)
+
+
+def _permit(
+    argv: list[str],
+    cwd: str,
+    timeout: Optional[float],
+) -> tuple[list[str], str, Optional[dict[str, str]], Optional[float]]:
+    from kernel.environment import current_room
+
+    room = current_room()
+    if room is None:
+        return argv, cwd, None, timeout
+    permit = room.compute.prepare(argv, cwd=cwd, timeout_seconds=timeout, isolate=False)
+    return list(permit.argv), permit.cwd, permit.env, permit.timeout_seconds
 
 
 def _start_background(
@@ -130,6 +157,7 @@ def _start_background(
     cwd: str,
     label: str,
     jobs_start: Optional[JobsStart],
+    env: Optional[dict[str, str]] = None,
 ) -> str:
     if jobs_start is not None:
         snapshot = jobs_start(kind="bash", label=label, argv=argv, cwd=cwd)
@@ -154,6 +182,7 @@ def _start_background(
             proc = subprocess.Popen(
                 argv,
                 cwd=cwd,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -185,11 +214,17 @@ def _start_background(
     )
 
 
-def _run_foreground(argv: list[str], cwd: str, timeout: float) -> str:
+def _run_foreground(
+    argv: list[str],
+    cwd: str,
+    timeout: float,
+    env: Optional[dict[str, str]] = None,
+) -> str:
     try:
         completed = subprocess.run(
             argv,
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -226,3 +261,16 @@ def _error(message: str, **details: Any) -> str:
     payload = {"success": False, "error": message}
     payload.update(details)
     return json.dumps(payload, ensure_ascii=False)
+
+def capability_profile(capability_id, changes):
+    """Tell the process this tool needs a tool resource."""
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
+        ),
+    )
+

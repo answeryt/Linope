@@ -63,12 +63,12 @@ plugin/
 | `list/allow_list/allow_check.py` | `plugin_allow` | 赦免 `.gates` 隔离边；检查必注入参数 |
 | `list/allow_list/allow_list_generate.py` | `plugin_allow_generate` | 读写手写 allow list card |
 | `host_sibling/surface_check.py` | `plugin_surface` | 按文件形态推断入口合同 |
-| `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | `call_api` 家族必须是薄、懒加载的 SDK 封装 |
+| `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | `call_api` 家族懒加载 SDK；消息格式化、响应解析、窗口恢复重试写在叶子里；禁止工具 schema 转换 |
 | `host_sibling/provider_config_check.py` | `plugin_provider_config` | provider 模板多格式等价、禁止当代码用 |
 | `host_sibling/kernel_check.py` | `plugin_kernel` | kernel 分层、ProcessRun/Activation、OS/部署边界。架构词汇和结构树在各层生成器 |
 | `host_sibling/lip_check.py` | `plugin_lip` | 插座路径：`composition.yaml` 的 sockets / modules / sources；禁止叶插件 import pluggy/stevedore/lip |
 | `host_sibling/assembly_check.py` | `plugin_assembly` | 能力图路径：composer 只能做“接线”；必须用 compose Source，`register_adapter` 必须直连 `FunctionModelAdapter`，禁止自写 discover / kind 翻译、能力前缀扫描、反射成员后动态分发 |
-| `host_sibling/descriptor_check.py` | `plugin_descriptor` | 叶子 `CAPABILITY` / `MODEL_CAPABILITY` 与 `plugin.json` 的开放簇 kind、requires、entry；禁止 import `capability.contract` |
+| `host_sibling/descriptor_check.py` | `plugin_descriptor` | 叶子 `CAPABILITY` / `MODEL_CAPABILITY` 与 `plugin.json` 的开放簇 kind、requires、entry |
 
 ## 审查规则
 
@@ -82,9 +82,9 @@ plugin/
 
 ### allow：豁免与注入
 
-- `paths`：这些路径不进入生成的 deny list（含插座引擎 `kernel/compose/plugin`、能力图引擎 `kernel/compose/capability`、Host 合同 `capability/contract`）
+- `paths`：这些路径不进入生成的 deny list（含插座引擎 `kernel/compose/plugin`、能力图引擎 `kernel/compose/capability`）
 - `.gates/isolation-allowlist.json` 的 edges：在 deny 跑完后赦免对应隔离违规
-- `inject`：指定 stem 必须接收的参数（例如 `message_tokens` 必须注入 `text_estimator`），避免插件去 import 兄弟估算器
+- `inject`：指定 stem 必须接收的参数（例如 `sandbox_policy` 必须注入 `canonical_path`），避免插件去 import 兄弟实现
 - `kernel_layers`：kernel 结构图库存，由 `kernel_check` 读取
 - `sockets`：插座名 → 插头名 → 叶插件路径，由 `lip_check` 读取；Host 按名加载，叶插件不得 import 实现
 - `injection.estimator_param`：缺少必注入参数时报错
@@ -96,13 +96,14 @@ plugin/
 | `*_plugin.py` | `PLUGIN_NAME`、`PLUGIN_VERSION`；`PLUGIN_NAME` 全局唯一 |
 | `*_check.py` / `*_generate.py` | `PLUGIN_NAME`、`PLUGIN_VERSION`、`run(context)` |
 | family 中已有 `call_api` | 每个模块都暴露 `call_api` |
-| family 中已有 `apply_*` | 每个模块暴露 `apply_<stem>` |
+| family 中已有 `apply_*` | 模块暴露 `apply_*`；model 请求字段写在对应 `model_interface` 文件内，不再一字段一文件 |
 | 其它 | 至少一个公开函数或类 |
 
 对已有 `call_api` 的 family，额外约束：
 
 - Provider SDK（`openai` / `anthropic` / `google` / `genai`）必须在 `call_api` 内 import，不能出现在模块顶层
-- 不得提供 retry / format_message / parse_response / convert_tools 这类公开助手
+- 消息格式化、响应解析、上下文窗口恢复重试写在对应叶子里（`format_messages` / `parse_response` / `parse_stream_chunk`，重试在 `call_api` 内）
+- 不得提供 `convert_tools` / `tool_choice_convert` 这类工具 schema 转换助手
 
 对看起来像 provider 根目录的 family：每个 provider 子目录必须同时有 YAML、JSON、TOML，顶层键 `provider` / `interface` / `model` / `api_key_env` / `parameters` 一致；`interface` 必须对应 `model/model_API/model_interface/<interface>.py`。
 
@@ -119,7 +120,7 @@ plugin/
 
 这条规则是通用角色边界，不是 model 特判：只要是 composer，都应该只负责拼装，不负责请求整形、重试编排、反射分发等“调用细节”。
 
-`descriptor_check.py` 约束开放簇说明书：`kind` 是插件自声明的簇（可点号细分），不是内核白名单；`name` 或 `provides` 必须落在该簇下；`requires` 与 kernel `parse_requirements` 同一套语法；`entry` 必须指向存在的函数；叶子不得 import `capability.contract`。旧装载词（`recipe` / `module` / `tool` / `model`）不得再当作 `kind`。
+`descriptor_check.py` 约束开放簇说明书：`kind` 是插件自声明的簇（可点号细分），不是内核白名单；`name` 或 `provides` 必须落在该簇下；`requires` 与 kernel `parse_requirements` 同一套语法；`entry` 必须指向存在的函数。旧装载词（`recipe` / `module` / `tool` / `model`）不得再当作 `kind`。
 
 ## 生成清单
 

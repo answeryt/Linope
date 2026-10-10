@@ -1,36 +1,27 @@
-# Summary compression atomic functions
+# 摘要压缩的原子函数
 
-This directory contains stateless, atomic functions extracted from the root
-`context_compression.py` algorithm. Each Python file imports only the standard
-library. These files are not compose-discovered capability plugins yet; the Host
-imports and wires them explicitly. Functions do not import one another, `sliding_window`,
-`semantic_compression`, model code, or token code.
+这个目录里的函数从根目录的 `context_compression.py` 算法中拆出，各自无状态、只做一件事。每个 Python 文件只导入标准库。这些文件还不是会被自动发现并组装的能力插件；由宿主显式导入并接好。函数之间互不导入，也不导入 `sliding_window`、`semantic_compression`、模型代码或词元代码。
 
-## Atomic functions
+## 原子函数
 
-- `summary_budget.py`: bounded target budget using a Host-provided estimator.
-- `turn_serializer.py`: list-of-dict turn serialization with injected redaction,
-  thinking removal, and image labels.
-- `aggregate_input_bounder.py`: deterministic head/tail aggregate input bound.
-- `structured_prompt_builder.py`: first and iterative prompts, focus, memory,
-  date, and provenance instructions.
-- `static_fallback.py`: deterministic local checkpoint.
-- `summary_text.py`: summary prefix strip, normalization, and classification.
-- `handoff_helpers.py`: handoff discovery, stripping, and rehydration data.
-- `real_user_provenance.py`: real-user detection and no-user validation.
-- `latest_task_grounding.py`: deterministic latest-task grounding.
-- `auto_focus.py`: bounded focus inference from recent real-user turns.
-- `summary_runner.py`: one injected LLM call with a structured result.
-- `compressed_transcript_assembler.py`: alternation-safe insertion,
-  merge-into-tail, metadata, and injected stale-sidecar cleanup.
+- `summary_budget.py`：用宿主提供的估算器计算有上限的目标预算。
+- `turn_serializer.py`：把轮次的字典列表序列化。脱敏、去掉思考内容、给图片加标签都由外部注入。
+- `aggregate_input_bounder.py`：按确定的头尾规则限制汇总输入的长度。
+- `structured_prompt_builder.py`：构造首轮和后续提示，并写上焦点、记忆、日期和出处说明。
+- `static_fallback.py`：本地确定的检查点，不调用模型。
+- `summary_text.py`：去掉摘要前缀、做规范化，并给摘要分类。
+- `handoff_helpers.py`：发现交接内容、剥掉交接标记，以及恢复交接数据。
+- `real_user_provenance.py`：判断是不是真实用户，并在没有用户时做校验。
+- `latest_task_grounding.py`：按确定规则把摘要落实到最近一项任务。
+- `auto_focus.py`：从最近的真实用户轮次推断有限长度的焦点。
+- `summary_runner.py`：注入一次大模型调用，并返回结构化结果。
+- `compressed_transcript_assembler.py`：按交替顺序安全插入、并入末尾、写入元数据，并清理注入进来的过期附属内容。
 
-No `host.py` or `facade.py` is provided. The application Host owns composition,
-configuration, retries, cooldowns, telemetry, persistence, and failure policy.
+这里不提供 `host.py` 或 `facade.py`。组装、配置、重试、冷却、遥测、持久化和失败策略都由应用宿主负责。
 
-## Host composition
+## 宿主如何组装
 
-The Host may import the required functions and wire them with `functools.partial`
-or small local closures:
+宿主可以导入需要的函数，再用 `functools.partial` 或本地小闭包把它们接起来：
 
 ```python
 from functools import partial
@@ -86,12 +77,6 @@ result = run_summary_generation(
 )
 ```
 
-`run_summary_generation` never retries, mutates Host state, or substitutes the
-fallback. On `result["ok"] == False`, the Host must explicitly choose whether
-to preserve the original transcript, retry another provider, apply cooldown,
-or call `build_static_fallback`. Only after that decision should the Host call
-`assemble_compressed_transcript`.
+`run_summary_generation` 不会重试，不会改宿主状态，也不会自行换成兜底结果。当 `result["ok"] == False` 时，宿主必须明确选择：保留原始记录、换一个提供商再试、进入冷却，还是调用 `build_static_fallback`。只有做出这个决定之后，宿主才应调用 `assemble_compressed_transcript`。
 
-All transcript-facing APIs preserve `list[dict]`. Callbacks are the extension
-boundary for project-specific predicates, redaction, token estimation, LLM
-adapters, response extraction, and stale `api_content` removal.
+所有面向记录的接口都保持 `list[dict]`。回调是扩展边界，用来接入本项目自己的判断、脱敏、词元估算、模型适配、回复提取，以及过期 `api_content` 的清除。

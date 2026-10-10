@@ -1,8 +1,24 @@
+# Secrets
 .env
+**/.env
+!.env.example
+
+# Local runtime (machine paths and resource store)
+.linope/
+
+# Editor / agent session state
+.cursor/
+
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .venv/
-.vscode/
+venv/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Host-sibling check for the Process-driven Service + Resources kernel.
+"""Host-sibling check for the Process-driven kernel.
 
 Layer and injection inventory comes from the allow-list card. This file
 only walks ``kernel/`` and appends violations. Isolation stays in deny_check.
@@ -21,7 +21,9 @@ CORE_PREFIXES = (
     "kernel/process/",
     "kernel/compose/",
     "kernel/resource/",
+    "kernel/thread/",
 )
+THREAD_PREFIX = "kernel/thread/"
 OS_MODULES = frozenset({"multiprocessing", "subprocess", "threading", "concurrent"})
 DEPLOY_MODULES = frozenset({"fastapi", "faststream", "starlette", "uvicorn", "redis"})
 LLM_PROVIDER_MODULES = frozenset(
@@ -168,11 +170,15 @@ def _check_imports(context: dict[str, Any], rel: str, tree: ast.AST) -> None:
         roots = _import_roots(node)
         os_hit = roots & OS_MODULES
         if os_hit:
+            if rel.startswith(THREAD_PREFIX) and not (
+                os_hit & {"multiprocessing", "subprocess"}
+            ):
+                continue
             rule = "kernel.role.os_process" if os_hit & {"multiprocessing", "subprocess"} else "kernel.role.os_thread"
-            _error(context, rule, rel, "OS workers belong in kernel/services/worker, not " + ", ".join(sorted(os_hit)))
+            _error(context, rule, rel, "OS workers are not allowed in this kernel layer: " + ", ".join(sorted(os_hit)))
         deploy = roots & DEPLOY_MODULES
         if deploy:
-            _error(context, "kernel.role.deploy_api", rel, "deploy APIs belong in kernel/services, not " + ", ".join(sorted(deploy)))
+            _error(context, "kernel.role.deploy_api", rel, "deploy APIs are outside this kernel layer: " + ", ".join(sorted(deploy)))
 
 
 def _require_fns(context: dict[str, Any], rel: str, tree: ast.AST, names: tuple[str, ...], rule: str) -> None:

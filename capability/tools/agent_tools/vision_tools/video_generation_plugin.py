@@ -224,3 +224,16 @@ VIDEO_GENERATE_SCHEMA: Dict[str, Any] = {
         "required": ["prompt"],
     },
 }
+
+def capability_profile(capability_id, changes):
+    """Tell the process this tool needs a tool resource."""
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
+        ),
+    )
+

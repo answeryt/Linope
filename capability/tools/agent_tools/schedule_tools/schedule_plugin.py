@@ -85,6 +85,18 @@ def tool_schemas() -> list[dict[str, Any]]:
     return [CREATE_SCHEMA, DELETE_SCHEMA, LIST_SCHEMA]
 
 
+
+def load(kind, body, call_params=None):
+    """Load one tool call. The body names which tool this plugin runs."""
+    if kind != "tool":
+        raise ValueError(f"这个进程不能装入 {kind}")
+    if not isinstance(body, dict) or "name" not in body:
+        raise TypeError("tool 的内容必须带上 name")
+    tool_name = str(body["name"])
+    arguments = {key: value for key, value in body.items() if key != "name"}
+    return dispatch(tool_name, arguments, **(call_params or {}))
+
+
 def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
     if name == "schedule_create":
         return schedule_create(
@@ -212,3 +224,16 @@ def _error(message: str, **details: Any) -> str:
     payload = {"success": False, "error": message}
     payload.update(details)
     return json.dumps(payload, ensure_ascii=False)
+
+def capability_profile(capability_id, changes):
+    """Tell the process this tool needs a tool resource."""
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
+        ),
+    )
+

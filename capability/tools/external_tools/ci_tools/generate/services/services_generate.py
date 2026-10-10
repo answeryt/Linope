@@ -50,7 +50,7 @@ ARCHITECTURE: dict[str, Any] = {
     "title": "services：Agent = Service + Resources",
     "vocabulary": VOCABULARY,
     "tree": TREE,
-    "owns": ["App", "Ingress", "Worker", "RunQueue", "ProcessStore"],
+    "owns": ["Service", "ServiceBlueprint", "ServiceSpec", "ServiceHost"],
     "requirements": [
         "Agent 严格等于 Service + Resources，不是人格或进程层级。",
         "Service 是唯一部署边界，一个 Service 可以运行多个 Process。",
@@ -58,6 +58,8 @@ ARCHITECTURE: dict[str, Any] = {
         "Worker 使用 queue lease 和 fencing token 驱动 Process Runtime。",
         "Store、Queue 和 Ingress 是 Host adapter，不进入 Process 定义。",
         "OS process、worker、队列和部署框架只能出现在 services。",
+        "服务层只翻译规格、调用现有创建入口、按角色送信，并在关闭时逐成员停止。",
+        "副本管理和进程挑选不在服务层，分别留在 process 与 load_balancing。",
     ],
 }
 

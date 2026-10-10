@@ -73,6 +73,33 @@ def require_confined_mode(mode: str) -> str:
     return text
 
 
+def load(kind, body, call_params=None):
+    """Load a sandbox execution policy. The mode stays in this package."""
+    if kind != "workspace":
+        raise ValueError(f"这个进程不能装入 {kind}")
+    if not isinstance(body, dict):
+        raise TypeError("sandbox 的内容必须是映射")
+    extras = dict(call_params or {})
+    return execution_policy(
+        str(body.get("mode") or ""),
+        str(body.get("workspace_root") or extras.get("workspace_root") or ""),
+        body.get("session_id"),
+    )
+
+
+def capability_profile(capability_id, changes):
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    del changes
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.WORKSPACE, identity={"id": capability_id}),
+        ),
+    )
+
+
 def execution_policy(
     mode: str,
     workspace_root: str,

@@ -1,41 +1,36 @@
-# process：持久 Process Runtime 与 Replay
+# process：平级 OS Process Runtime
 
 ## 词汇
 
-- **Process**：可从 journal 重放的 durable function，不是 OS 进程。
-- **ProcessDefinition**：稳定名称、版本与 Python Process Function 的定义。
-- **ProcessActivation**：创建或恢复 Process 的输入。
-- **Journal**：按 run ID 与 command index 保存命令结果和错误。
-- **ProcessHandle**：跨重启查询或等待子 Process 的稳定引用。
+- **Process**：一个 capability 的独立 OS 运行实例，由 `process_id` 寻址。
+- **ProcessDeclaration**：一次进程所需的 capability 和资源声明。
+- **ProcessActivation**：进程启动包，包含 capability、资源句柄、环境和线程策略。
+- **ProcessRuntime**：加载 capability adapter、绑定环境、消费 Channel、调用 ThreadRuntime。
+- **ProcessHandle**：调用方使用的 submit/wait/send 视图。
+- **ProcessMonitor**：无父子语义的启动、停止、存活检查和回收视图。
 
 ## 结构
 
-```
-Process
-├── Definition / Activation
-├── Process Runtime
-│   ├── Command Interpreter
-│   └── Replay
-├── Journal
-├── Lifecycle / State
-└── Durable Handle
+```text
+ProcessDeclaration
+└── ProcessActivation
+    └── Peer Process
+        └── ThreadRuntime
 ```
 
 ## 本层拥有
 
-- `ProcessDefinition`
+- `ProcessDeclaration`
 - `ProcessActivation`
 - `ProcessRuntime`
-- `Journal`
-- `Lifecycle`
-- `State`
 - `ProcessHandle`
+- `ProcessMonitor` / `ProcessReaper`
+- Process lifecycle and communication
 
 ## 架构要求
 
-1. Process Function 从固定初始输入开始重放，不恢复 live coroutine。
-2. 每个 Task、child 或 wait 使用稳定 command index 写入 Journal。
-3. Journal 命中时返回旧结果，未命中时才执行副作用。
-4. 同一 command index 的名称、版本或输入变化必须拒绝为非确定性。
-5. Process 只通过 caused_by 表达因果关系，不形成主从 Agent 树。
-6. Process Runtime 只依赖 Host 注入的 Store、Queue、Journal 和 Executor。
+1. `process_id` 是唯一公开的 OS Process 身份。
+2. Process 只接收可序列化 Activation，不接收 live Agent 或 Thread。
+3. Process 内部使用 `kernel/thread` 执行异步任务和同步阻塞代码。
+4. ResourcePool 管理租约和句柄；Process Runtime 不拥有全局资源实体。
+5. Durable workflow/replay 如未来需要，应另建 `kernel/run` 或 `kernel/workflow`，不覆盖当前 OS Process 语义。

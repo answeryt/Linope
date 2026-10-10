@@ -386,3 +386,74 @@ class MCPToolManagerPlugin:
             except RuntimeError:
                 if inspect.iscoroutine(result):
                     result.close()
+
+_MANAGER: MCPToolManagerPlugin | None = None
+
+
+def manager() -> MCPToolManagerPlugin:
+    """The one registry this process keeps. Hosts register servers into it."""
+    global _MANAGER
+    if _MANAGER is None:
+        _MANAGER = MCPToolManagerPlugin()
+    return _MANAGER
+
+
+def load(kind, body, call_params=None):
+    """Load one tool call. The body names a registered ``mcp__<server>__<tool>``.
+
+    ``{"name": "list"}`` or an empty name returns the registered schemas. A
+    handler receives the ``arguments`` mapping as its single argument.
+    """
+    del call_params
+    name, arguments = _tool_call(kind, body)
+    if not name or name == "list":
+        return {"tools": [record.schema for record in manager().records()]}
+    record = manager().resolve(name)
+    if record.handler is None:
+        raise LookupError(f"MCP tool {name!r} has no handler bound.")
+    result = record.handler(arguments)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
+async def load_async(kind, body, call_params=None):
+    """Same as ``load`` but awaited on the process event loop."""
+    del call_params
+    name, arguments = _tool_call(kind, body)
+    if not name or name == "list":
+        return {"tools": [record.schema for record in manager().records()]}
+    record = manager().resolve(name)
+    if record.handler is None:
+        raise LookupError(f"MCP tool {name!r} has no handler bound.")
+    result = record.handler(arguments)
+    return await result if inspect.isawaitable(result) else result
+
+
+def _tool_call(kind, body) -> tuple[str, dict[str, Any]]:
+    if kind != "tool":
+        raise ValueError(f"这个进程不能装入 {kind}")
+    if isinstance(body, str):
+        body = {"name": body}
+    if body is None:
+        body = {}
+    if not isinstance(body, dict):
+        raise TypeError("tool 的内容必须是映射")
+    arguments = body.get("arguments") or {}
+    if not isinstance(arguments, dict):
+        raise TypeError("arguments 必须是映射")
+    return str(body.get("name") or ""), dict(arguments)
+
+
+def capability_profile(capability_id, changes):
+    """Tell the process this tool needs a tool resource."""
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
+        ),
+    )
+

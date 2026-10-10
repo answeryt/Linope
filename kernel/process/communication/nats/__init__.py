@@ -1,0 +1,1 @@
+"""NATS peer channel."""

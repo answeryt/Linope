@@ -24,6 +24,16 @@ def tool_schemas() -> list[dict[str, Any]]:
     return [TERMINAL_LIST_SCHEMA]
 
 
+
+def load(kind, body, call_params=None):
+    """Load one tool call. Argument shape stays in this plugin."""
+    if kind != "tool":
+        raise ValueError(f"这个进程不能装入 {kind}")
+    if not isinstance(body, dict):
+        raise TypeError("tool 的内容必须是映射")
+    return dispatch('terminal_list', body, **(call_params or {}))
+
+
 def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
     if name != "terminal_list":
         return _error(f"unknown tool: {name}")
@@ -41,3 +51,16 @@ def _error(message: str, **details: Any) -> str:
     payload = {"success": False, "error": message}
     payload.update(details)
     return json.dumps(payload, ensure_ascii=False)
+
+def capability_profile(capability_id, changes):
+    """Tell the process this tool needs a tool resource."""
+    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
+    from kernel.resource.definition import ResourceKind
+
+    return ProcessDeclaration(
+        capability=capability_id,
+        resources=(
+            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
+        ),
+    )
+

@@ -6,18 +6,12 @@
 
 - 用户配置层，描述「用哪个 Provider、连哪个接口、传哪些参数」
 - 每种 Provider 提供等价的三种格式文件，Schema 完全一致，可按偏好任选其一
-- 不包含 SDK 调用或参数转换逻辑，解析后交由 `model_paramaters` 与 `model_interface` 处理
+- 不包含 SDK 调用或参数转换逻辑；请求由对应的 `model_interface.call_api` 发出
 
 每个子目录对应一种 Provider 配置模板，三种格式内容等价，仅序列化方式不同。
 
-## 运行时清单与用户模板
-
-每个 Provider 目录中的 `plugin.json` 是 compose 运行时发现和装配使用的能力清单，
-描述 `model.card` 的 `provides`、`requires`、`entry` 和运行时 `config`。
-
 同目录下的 `<provider>.json`、`<provider>.yaml`、`<provider>.toml` 是面向用户的
-配置模板，用于展示同一组 Provider 配置如何以不同格式表达。它们不参与
-`FileSystemSource` 的能力发现；如果要改变运行时装配，请修改 `plugin.json`。
+配置模板。运行时配置以对应 `*_plugin.py` 中的 `CARD_CONFIG` 为准。
 
 ## 配置清单
 

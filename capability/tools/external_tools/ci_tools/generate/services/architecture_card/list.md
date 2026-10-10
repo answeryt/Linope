@@ -11,7 +11,7 @@
 
 ## 结构
 
-```
+``
 Agent
 ├── Service
 │   ├── Ingress
@@ -22,15 +22,14 @@ Agent
 └── Resources
     ├── Container Resources
     └── Model Resources
-```
+``
 
 ## 本层拥有
 
-- `App`
-- `Ingress`
-- `Worker`
-- `RunQueue`
-- `ProcessStore`
+- `Service`
+- `ServiceBlueprint`
+- `ServiceSpec`
+- `ServiceHost`
 
 ## 架构要求
 
@@ -40,3 +39,5 @@ Agent
 4. Worker 使用 queue lease 和 fencing token 驱动 Process Runtime。
 5. Store、Queue 和 Ingress 是 Host adapter，不进入 Process 定义。
 6. OS process、worker、队列和部署框架只能出现在 services。
+7. 服务层只翻译规格、调用现有创建入口、按角色送信，并在关闭时逐成员停止。
+8. 副本管理和进程挑选不在服务层，分别留在 process 与 load_balancing。

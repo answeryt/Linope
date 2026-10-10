@@ -1,44 +1,53 @@
-from capability.model.runtime.assemble import ModelCardCapability
-from capability.model.runtime.assemble import register_card
+# -*- coding: utf-8 -*-
+"""OpenAI Chat model provider plugin. Card identity lives in CARD_CONFIG."""
 
 CARD_CONFIG = {
-        "provider": "openai",
-        "interface": "openai_chat",
-        "model": "gpt-5.6-sol",
-        "api_key_env": "OPENAI_API_KEY",
-        "organization_env": "OPENAI_ORGANIZATION",
-        "base_url": "https://eapi.site/v1",
-        "stream": True,
-        "parameters": {
-            "max_tokens": "UNSET",
-            "temperature": "UNSET",
-            "top_p": "UNSET",
-            "thinking_enable": "UNSET",
-            "reasoning_effort": "UNSET",
-            "parallel_tool_calls": "UNSET",
-            "tools": "UNSET",
-            "tool_choice": "UNSET",
-        },
-        "client_kwargs": {},
-        "generate_kwargs": {},
-        "extra_body": {},
-        "card_id": "openai_chat_model",
-        "routes": ["openai_chat_model", "openai"],
+    "provider": "openai",
+    "interface": "openai_chat",
+    "model": "deepseek-flash",
+    "api_key_env": "OPENAI_API_KEY",
+    "organization_env": "OPENAI_ORGANIZATION",
+    "base_url": "https://api.deepseek.com",
+    "stream": True,
+    "parameters": {
+        "max_tokens": "UNSET",
+        "temperature": "UNSET",
+        "top_p": "UNSET",
+        "thinking_enable": "UNSET",
+        "reasoning_effort": "UNSET",
+        "parallel_tool_calls": "UNSET",
+        "tools": "UNSET",
+        "tool_choice": "UNSET",
+    },
+    "client_kwargs": {},
+    "generate_kwargs": {},
+    "extra_body": {},
+    "card_id": "openai_chat_model",
+    "routes": ["openai_chat_model", "openai"],
 }
 
-PLUGIN_NAME = "model.card.openai_chat_model"
-PLUGIN_VERSION = "1.0"
+
+def load(kind, body, call_params=None):
+    """Load a prompt through this plugin's card id."""
+    from capability.model.model_runtime.model_main import load_named_card
+
+    return load_named_card(CARD_CONFIG["card_id"], kind, body, call_params)
 
 
-class OpenAIChatModelCard(ModelCardCapability):
-    name = "model.card.openai_chat_model"
-    version = "1.0"
-    kind = "model.card"
-    provides = ("model.card", "model.card.openai_chat_model", "openai_chat_model", "openai")
-    requires = ("model.interface.openai_chat",)
-    constraints = {"domain": "model"}
-    config = CARD_CONFIG
+async def load_async(kind, body, call_params=None):
+    """Load a prompt on the process event loop without nested asyncio.run."""
+    from capability.model.model_runtime.model_main import load_named_card_async
+
+    return await load_named_card_async(
+        CARD_CONFIG["card_id"],
+        kind,
+        body,
+        call_params,
+    )
 
 
-def activate(res, config):
-    register_card(res, config or CARD_CONFIG)
+def capability_profile(capability_id, changes):
+    """Expose this plugin's card as a process profile."""
+    from capability.model.model_provider.card_profile import declaration_from_card
+
+    return declaration_from_card(capability_id, CARD_CONFIG, changes)

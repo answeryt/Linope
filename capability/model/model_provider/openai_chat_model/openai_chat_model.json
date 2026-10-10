@@ -1,10 +1,10 @@
 {
   "provider": "openai",
   "interface": "openai_chat",
-  "model": "gpt-5.6-sol",
+  "model": "deepseek-flash",
   "api_key_env": "OPENAI_API_KEY",
   "organization_env": "OPENAI_ORGANIZATION",
-  "base_url": "https://eapi.site/v1",
+  "base_url": "https://api.deepseek.com",
   "stream": true,
   "parameters": {
     "max_tokens": "UNSET",
