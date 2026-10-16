@@ -1,4 +1,4 @@
-"""A model service: one model capability answering prompt and context loads."""
+"""A model service: one model capability answering message and context loads."""
 
 from __future__ import annotations
 
@@ -24,5 +24,5 @@ class ModelBlueprint:
                     replica_count=spec.replica_count,
                 ),
             ),
-            route={"prompt": ROLE, "context": ROLE},
+            route={"message": ROLE, "context": ROLE},
         )

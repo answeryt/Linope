@@ -7,6 +7,7 @@ role is delegated to ``kernel.load_balancing``; nothing is decided here.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -53,22 +54,38 @@ class ServiceHandle:
         self._seats = seats or _default_seats
         self._choose = choose or _default_choose
         self._closed = False
+        self.close_errors: list[str] = []
 
     def submit(self, request: ServiceRequest, *, timeout: float = 10.0) -> Ticket:
         if self._closed:
             raise RuntimeError("服务已经关闭")
         role = self._role_for(request)
+        recorded = self._record(request)
+        if recorded is None:
+            return self._place_now(role, request, timeout)
+        from kernel.services.admit import cycle
+
+        cycle(self._store)
+        row = self._store.lookup_request(recorded)
+        status = "" if row is None else str(row.get("status") or "")
+        if status != "reserved":
+            self._receipts[recorded] = (None, None)
+            return Ticket(ticket_id=recorded, process_id="")
         process = self._pick(role)
-        receipt = process.submit(request.message(), timeout=timeout)
-        ticket_id = str(getattr(receipt, "request_id", "") or uuid.uuid4().hex)
-        self._receipts[ticket_id] = (process, receipt)
-        return Ticket(ticket_id=ticket_id, process_id=_process_id(process))
+        process_id = _process_id(process)
+        if not self._store.place_request(recorded, process_id):
+            self._receipts[recorded] = (None, None)
+            return Ticket(ticket_id=recorded, process_id="")
+        self._receipts[recorded] = (process, None)
+        return Ticket(ticket_id=recorded, process_id=process_id)
 
     def wait(self, ticket: Ticket, timeout: float = 10.0) -> dict[str, Any]:
         try:
             process, receipt = self._receipts[ticket.ticket_id]
         except KeyError:
             raise KeyError(f"没有这张回执: {ticket.ticket_id}") from None
+        if receipt is None:
+            return _wait_recorded(self._store, ticket.ticket_id, timeout)
         return process.wait(receipt, timeout=timeout)
 
     def members(self) -> tuple[Member, ...]:
@@ -94,13 +111,46 @@ class ServiceHandle:
             for process in processes:
                 try:
                     process.stop()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.close_errors.append(f"{_process_id(process)}: {exc}")
         self._receipts.clear()
         try:
             self._store.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.close_errors.append(f"ledger: {exc}")
+
+    def _record(self, request: ServiceRequest) -> str | None:
+        from kernel.communication.directory import selected_channel
+
+        selected, _settings = selected_channel(self._store)
+        if selected not in (None, "", "ledger"):
+            # Non-ledger channels own their receipt lifecycle. Recording a
+            # request here would make wait() poll the ledger forever while the
+            # channel reply is already available through process.wait().
+            return None
+        submit = getattr(self._store, "submit_request", None)
+        if not callable(submit):
+            return None
+        message = request.message()
+        members = tuple(
+            sorted(
+                pid
+                for processes in self._processes.values()
+                for pid in (_process_id(process) for process in processes)
+                if pid
+            )
+        )
+        message["service_key"] = ",".join(members)
+        if "lane" not in message:
+            message["lane"] = "interactive" if request.kind == "message" else "next"
+        return str(submit("", message, None))
+
+    def _place_now(self, role: str, request: ServiceRequest, timeout: float) -> Ticket:
+        process = self._pick(role)
+        receipt = process.submit(request.message(), timeout=timeout)
+        ticket_id = str(getattr(receipt, "request_id", "") or uuid.uuid4().hex)
+        self._receipts[ticket_id] = (process, receipt)
+        return Ticket(ticket_id=ticket_id, process_id=_process_id(process))
 
     def _role_for(self, request: ServiceRequest) -> str:
         roles = tuple(self._processes)
@@ -133,7 +183,10 @@ class ServiceHandle:
         """Ask the load balancer. Return nothing when it has nothing to say."""
         kind, identity = _resource_of(processes[0])
         if kind is None:
-            return None
+            capability = _capability_id(processes[0])
+            if not capability:
+                return None
+            kind, identity = "", {"capability": capability}
         try:
             found = self._seats(self._store, kind, identity)
         except Exception:
@@ -144,6 +197,23 @@ class ServiceHandle:
         return None if seat is None else by_id.get(seat.process_id)
 
 
+def _wait_recorded(store: Any, request_id: str, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        row = store.lookup_request(request_id)
+        if row is None:
+            raise KeyError(f"没有这张回执: {request_id}")
+        if row.get("status") == "closed":
+            raise RuntimeError("这次交互已经过了最晚开始时间")
+        if row.get("status") == "done":
+            reply = row.get("reply")
+            if not isinstance(reply, dict):
+                raise RuntimeError("请求已经结束，但没有回复")
+            return reply
+        time.sleep(0.02)
+    raise TimeoutError(f"请求还没有回复: {request_id}")
+
+
 def _process_id(process: Any) -> str:
     activation = getattr(process, "activation", None)
     return str(getattr(activation, "process_id", "") or "")
@@ -152,6 +222,15 @@ def _process_id(process: Any) -> str:
 def _pid(process: Any) -> int | None:
     pid = getattr(process, "pid", None)
     return None if pid is None else int(pid)
+
+
+def _capability_id(process: Any) -> str:
+    activation = getattr(process, "activation", None)
+    definition = getattr(activation, "definition", None)
+    instance = getattr(definition, "instance_id", None)
+    if instance:
+        return str(instance)
+    return str(getattr(activation, "capability_id", "") or "")
 
 
 def _resource_of(process: Any) -> tuple[str | None, dict[str, Any]]:

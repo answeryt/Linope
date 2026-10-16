@@ -17,19 +17,30 @@ _LOOKS = frozenset(
         "activation_for",
         "active_for",
         "active_handles",
+        "active_lease_rows",
         "endpoint_for",
         "entity",
         "get_process",
         "link_at",
         "live_processes",
         "lookup_request",
+        "all_pages",
+        "capability_seats",
         "mailbox_counts",
+        "note",
+        "noted_processes",
         "page_at",
+        "pages_for_handle",
         "resource_seats",
         "running_processes",
         "running_replicas",
         "selected_channel",
         "selected_layout",
+        "service_record",
+        "service_names",
+        "service_members",
+        "service_member_ids",
+        "services_for_process",
         "shared_capabilities",
         "shares_capability",
         "take_request",
@@ -76,9 +87,16 @@ class FileStore(StateBackedStore):
             raise RuntimeError(f"本地存储不是有效账本: {self.path}")
         self.import_state(payload)
 
+    def compact_saved(self) -> None:
+        """Rewrite this ledger from the current in-memory sections."""
+        with self._file_lock():
+            self._load_disk()
+            self._save_disk()
+
     def _save_disk(self) -> None:
+        state = self.export_state()
         payload = json.dumps(
-            self.export_state(),
+            state,
             ensure_ascii=False,
             sort_keys=True,
             indent=2,
@@ -108,6 +126,8 @@ class FileStore(StateBackedStore):
 
 def _changed(name: str, result: Any) -> bool:
     """A look, or a claim that found nothing, leaves the file alone."""
+    if name == "bind_service":
+        return isinstance(result, dict) and result.get("changed") is True
     if name in _LOOKS:
         return False
     if name == "claim_request":

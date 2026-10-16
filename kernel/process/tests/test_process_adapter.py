@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import capability.process_adapter as process_adapter
 from capability.process_adapter import create_adapter
+from kernel.environment.shell import ProcessEnvironment
 from kernel.process.process_creat.instances import adapter_module_path, describe_instance
 from kernel.process.profile import load_declaration
 from kernel.process.reconcile import ProcessReconciler
@@ -59,10 +60,15 @@ def _context_with(**call_params: object) -> SimpleNamespace:
 def _start(capability: str, tmp_path: Path, *, process_id: str):
     declaration, definition = load_declaration(capability, ())
     store = FileResourceStore(tmp_path / "resources.json")
+    environment = ProcessEnvironment.current(
+        process_id=process_id,
+        capability_id=definition.instance_id,
+    )
     process = ProcessReconciler(ResourcePool(store)).start(
         declaration,
         process_id=process_id,
         definition=definition,
+        environment=environment,
     )
     return store, process
 
@@ -98,7 +104,7 @@ class ProcessAdapterTests(unittest.TestCase):
             result = adapter.handle(
                 {
                     "operation": "load",
-                    "kind": "prompt",
+                    "kind": "message",
                     "body": "hello",
                 }
             )
@@ -141,7 +147,7 @@ class ProcessAdapterTests(unittest.TestCase):
             adapter = create_adapter()
             adapter.initialize(_context_with())
             self.assertEqual(
-                adapter.handle({"operation": "load", "kind": "prompt", "body": []}),
+                adapter.handle({"operation": "load", "kind": "message", "body": []}),
                 "hi-there",
             )
 
@@ -169,7 +175,7 @@ class ProcessAdapterTests(unittest.TestCase):
                 adapter.handle_async(
                     {
                         "operation": "load",
-                        "kind": "prompt",
+                        "kind": "message",
                         "body": "hello",
                     }
                 )
@@ -247,15 +253,16 @@ class ProcessAdapterTests(unittest.TestCase):
                     before = entity_count()
                     for text in ("请你甲", "请你乙"):
                         reply = process.send(
-                            {"operation": "load", "kind": "prompt", "body": text},
+                            {"operation": "load", "kind": "message", "body": text},
                             timeout=20,
                         )
                         self.assertEqual(reply["event"], "error")
                         self.assertIn("API key", reply["error"])
                     self.assertEqual(entity_count(), before)
-                    self.assertEqual(before, 1)
+                    self.assertEqual(before, 0)
                     stored = store.activation_for("same-model-process")
                     self.assertNotIn("请你甲", str(stored))
+                    self.assertEqual(stored["resource_context"]["settings"]["id"], "deepseek-flash")
                 finally:
                     process.stop()
                     store.close()
@@ -276,7 +283,7 @@ class ProcessAdapterTests(unittest.TestCase):
                     reply = process.send(
                         {
                             "operation": "load",
-                            "kind": "prompt",
+                            "kind": "message",
                             "body": "hi",
                         },
                         timeout=20,
@@ -349,7 +356,7 @@ class ProcessAdapterTests(unittest.TestCase):
                 reply = process.send(
                     {
                         "operation": "load",
-                        "kind": "prompt",
+                        "kind": "message",
                         "body": "hello-from-process",
                     },
                     timeout=20,

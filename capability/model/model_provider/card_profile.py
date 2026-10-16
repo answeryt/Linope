@@ -6,8 +6,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-from kernel.resource.definition import ResourceKind
+from kernel.process.declaration import ProcessDeclaration
 
 UNSET = "UNSET"
 
@@ -34,15 +33,12 @@ def declaration_from_card(
             identity["provider"] = value
         else:
             call_params[topic] = value
+    settings = {"provider": identity["provider"], "id": identity["id"]}
+    settings.update(call_params)
     return ProcessDeclaration(
         capability=capability_id,
-        resources=(
-            ResourceClaim(
-                kind=ResourceKind.MODEL,
-                identity=identity,
-                call_params=call_params,
-            ),
-        ),
+        resources=(),
+        settings=settings,
     )
 
 

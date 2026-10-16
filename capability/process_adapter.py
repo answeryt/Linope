@@ -40,9 +40,18 @@ class ProcessAdapter:
 
     def initialize(self, resource_context: Any, room: Any = None) -> None:
         params: dict[str, Any] = {}
+        settings = getattr(resource_context, "settings", None) or {}
+        if isinstance(settings, dict):
+            params.update(settings)
+        declared_model = params.pop("id", None)
+        params.pop("provider", None)
+        if declared_model and "model" not in params:
+            params["model"] = declared_model
         for grant in getattr(resource_context, "grants", ()) or ():
             incoming = getattr(grant, "call_params", None) or {}
-            params.update(incoming)
+            if isinstance(incoming, dict):
+                params.update(incoming)
+        params.pop("mode", None)
         self._call_params = params
         self._room = room
         if room is not None:

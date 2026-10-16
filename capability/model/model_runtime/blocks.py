@@ -28,6 +28,8 @@ class ToolCallBlock:
     type: Literal["tool-call"] = "tool-call"
     name: str = ""
     arguments: Any = None
+    id: str = ""
+    index: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,8 @@ def block_from_payload(raw: Any) -> Block | None:
         return ToolCallBlock(
             name=str(raw.get("name") or ""),
             arguments=raw.get("arguments"),
+            id=str(raw.get("id") or ""),
+            index=int(raw.get("index") or 0),
         )
     if kind == "tool-result":
         return ToolResultBlock(

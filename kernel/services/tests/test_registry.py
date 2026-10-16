@@ -19,7 +19,7 @@ class _Echo:
 
 
 def test_builtins_are_registered() -> None:
-    assert service_kinds() == ("agent", "capability", "mcp", "model")
+    assert service_kinds() == ("capability", "mcp", "model")
 
 
 def test_unknown_kind_lists_the_known_names() -> None:

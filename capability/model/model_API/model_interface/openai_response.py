@@ -30,6 +30,24 @@ def _param_leaf(folder: str, filename: str) -> Any:
     return module
 
 
+def _vendor_role(role: object) -> str:
+    return _param_leaf_sibling("roles.py").vendor_role(role)
+
+
+def _param_leaf_sibling(filename: str) -> Any:
+    cached = _PARAM_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    path = Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _PARAM_CACHE[filename] = module
+    return module
+
+
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
     limits = _param_leaf("context_limits", "context_limits.py")
     request = dict(payload)
@@ -96,6 +114,50 @@ def _content(content: Any) -> Any:
     return _part(content)
 
 
+def _response_items(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn one provider-neutral message into Responses API input items."""
+    if item.get("type") in {"function_call", "function_call_output"} and "role" not in item:
+        return [dict(item)]
+    if item.get("role") == "tool":
+        output = item.get("content")
+        if not isinstance(output, str):
+            import json
+            output = json.dumps(output, ensure_ascii=False)
+        return [{
+            "type": "function_call_output",
+            "call_id": str(item.get("tool_call_id") or ""),
+            "output": output,
+        }]
+    content = item.get("content")
+    role = _vendor_role(item.get("role")) if item.get("role") else ""
+    if role == "assistant" and isinstance(content, list):
+        items: list[dict[str, Any]] = []
+        texts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "tool-call":
+                arguments = part.get("arguments")
+                if not isinstance(arguments, str):
+                    import json
+                    arguments = json.dumps(arguments if arguments is not None else {}, ensure_ascii=False)
+                items.append({
+                    "type": "function_call",
+                    "call_id": str(part.get("id") or ""),
+                    "name": str(part.get("name") or ""),
+                    "arguments": arguments,
+                })
+            elif isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
+                texts.append(str(part["text"]))
+        if texts:
+            items.insert(0, {"role": "assistant", "content": "\n".join(texts)})
+        return items or [{"role": "assistant", "content": _content(content)}]
+    copied = dict(item)
+    if item.get("role"):
+        copied["role"] = role
+    if "content" in copied:
+        copied["content"] = _content(copied["content"])
+    return [copied]
+
+
 def format_messages(messages: Any) -> list[Any]:
     if messages is None:
         return []
@@ -117,10 +179,7 @@ def format_messages(messages: Any) -> list[Any]:
             "role" in item or item.get("type") in {"function_call", "function_call_output"}
         ):
             flush()
-            message = dict(item)
-            if "content" in message:
-                message["content"] = _content(message["content"])
-            result.append(message)
+            result.extend(_response_items(item))
             continue
         converted = _part(item)
         if isinstance(converted, dict) and converted.get("type") in {
@@ -153,15 +212,22 @@ def parse_response_turn(result: Any) -> dict[str, Any] | None:
         blocks.append(
             {
                 "type": "tool-call",
+                "id": str(getattr(item, "call_id", "") or getattr(item, "id", "") or ""),
                 "name": str(getattr(item, "name", "") or ""),
                 "arguments": getattr(item, "arguments", ""),
             }
         )
-    return {
+    payload = {
         "type": "model_turn",
         "blocks": blocks,
         "finish_reason": "stop",
     }
+    from capability.model.model_runtime.usage import read_usage
+
+    usage = read_usage(getattr(result, "usage", None))
+    if usage:
+        payload["usage"] = usage
+    return payload
 
 
 def parse_stream_chunk(chunk: Any) -> str:
@@ -190,7 +256,16 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
             }
         ]
     if kind == "response.completed":
-        return [{"type": "finish", "reason": "stop"}]
+        parts: list[dict[str, Any]] = [{"type": "finish", "reason": "stop"}]
+        response = getattr(chunk, "response", None)
+        from capability.model.model_runtime.usage import read_usage, usage_part
+
+        part = usage_part(read_usage(getattr(response, "usage", None) if response is not None else None))
+        if part is None:
+            part = usage_part(read_usage(getattr(chunk, "usage", None)))
+        if part is not None:
+            parts.append(part)
+        return parts
     return []
 
 

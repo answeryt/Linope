@@ -31,10 +31,15 @@ class ResourceClaim:
 
 @dataclass(frozen=True)
 class ProcessDeclaration:
-    """The only creation input: a capability plus nested resource claims."""
+    """The only creation input: a capability plus nested resource claims.
+
+    ``settings`` are call values such as provider, model id, and temperature.
+    They are not a resource lease.
+    """
 
     capability: str
     resources: tuple[ResourceClaim, ...] = ()
+    settings: dict[str, Any] = field(default_factory=dict)
 
     def resource_definitions(self) -> tuple[ResourceDefinition, ...]:
         """The kinds this profile asked for. One definition per claim."""
@@ -50,4 +55,5 @@ class ProcessDeclaration:
             resources=tuple(
                 ResourceClaim.from_payload(item) for item in raw_resources
             ),
+            settings=dict(payload.get("settings") or {}),
         )

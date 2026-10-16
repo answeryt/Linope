@@ -51,12 +51,23 @@ class ServiceHost:
     )
 
 
-def open_service(
+def launch_session(
     spec: ServiceSpec,
     options: LaunchOptions | None = None,
     host: ServiceHost | None = None,
 ) -> Service:
-    """Open one service. This is the only entry callers need."""
+    """Start the processes named by a blueprint. Closing the handle stops them."""
     from kernel.services.assembly import ServiceAssembler
 
     return ServiceAssembler(host or ServiceHost()).open(spec, options or LaunchOptions())
+
+
+def open_service(
+    name: str,
+    options: LaunchOptions | None = None,
+    host: ServiceHost | None = None,
+) -> Service:
+    """Attach to processes already bound to ``name``. Closing does not stop them."""
+    from kernel.services.bound import open_bound
+
+    return open_bound(name, options, host)

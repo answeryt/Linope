@@ -35,7 +35,7 @@ def __getattr__(name: str):
 
         return getattr(definition, name)
     if name == "ResourceContext":
-        from kernel.resource.context import ResourceContext
+        from kernel.resource.handle_view import ResourceContext
 
         return ResourceContext
     if name in {

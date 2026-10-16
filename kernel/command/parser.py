@@ -1,118 +1,148 @@
-"""Parsing helpers shared by CLI commands."""
+"""Linux-style command parsing: object, subcommand, long options, and a body."""
 
 from __future__ import annotations
 
 from kernel.process.profile import Change
 from kernel.resource.store.locator import default_store_locator
 
-USAGE = (
-    "用法: linope start 能力 [--ping] | linope load 能力 种类 内容 | "
-    "linope call 能力 ping | linope layouts | linope layout 名称 | "
-    "linope channels | linope channel 名称 | linope share 能力 | "
-    "linope file once|lasting 路径 -- 全文 | "
-    "linope ask 模型 HTTP链接 -- 问题 | "
-    "linope resources serve | linope stores | linope store current|use|check|init|migrate | "
-    "linope thread add|remove|show|idle 能力 | linope room [进程号] | "
-    "linope env init [路径] | linope env use 路径 | linope terminal | "
-    "linope services | linope service start 种类 [成员...]"
-)
-COMPOSITIONS = frozenset({"chain", "group", "chord"})
+_GLOBAL = {
+    "resource-store": "str",
+    "env-file": "str",
+    "env": "repeat",
+    "json": "bool",
+}
+
+
+class UsageError(Exception):
+    """The command line does not match the grammar. The process exits 2."""
 
 
 def env_key(raw: str) -> str:
     """Validate an environment key whose value lives in a file."""
     key = raw.strip()
     if not key or "=" in key or "\x00" in key:
-        raise SystemExit("命令只写键名，值放在环境文件里")
+        raise UsageError("命令只写键名，值放在环境文件里")
     return key
 
 
-def take_env_flags(argv: list[str]) -> tuple[list[str], str, tuple[str, ...]]:
-    """Remove the shared environment flags from a command."""
-    rest: list[str] = []
-    env_file = ""
-    keys: list[str] = []
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if token == "--env-file":
-            if index + 1 >= len(argv):
-                raise SystemExit("--env-file 后面要写文件路径")
-            env_file = argv[index + 1]
-            index += 2
-            continue
-        if token.startswith("--env-file="):
-            env_file = token.split("=", 1)[1]
-            index += 1
-            continue
-        if token == "--env":
-            if index + 1 >= len(argv):
-                raise SystemExit("--env 后面要写键名")
-            keys.append(env_key(argv[index + 1]))
-            index += 2
-            continue
-        if token.startswith("--env=") and not token.startswith("--env-file="):
-            keys.append(env_key(token.split("=", 1)[1]))
-            index += 1
-            continue
-        rest.append(token)
-        index += 1
-    if keys and not env_file:
-        raise SystemExit("还没指定环境文件，不能选择键")
-    return rest, env_file, tuple(keys)
-
-
-def resource_store_path(argv: list[str]) -> tuple[list[str], str]:
-    """Remove the shared ``--resource-store`` option."""
-    rest: list[str] = []
-    store_path = default_store_locator()
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if token == "--resource-store":
-            if index + 1 >= len(argv):
-                raise SystemExit("--resource-store 后面要写定位串")
-            store_path = argv[index + 1]
-            index += 2
-            continue
-        if token.startswith("--resource-store="):
-            store_path = token.split("=", 1)[1]
-            index += 1
-            continue
-        rest.append(token)
-        index += 1
-    return rest, store_path
-
-
-def member_names(tokens: list[str]) -> tuple[tuple[str, ...], list[str]]:
-    """Take leading capability names. A name has a dot; change clauses and counts do not."""
-    members: list[str] = []
-    rest = list(tokens)
-    while rest and "." in rest[0] and rest[1:3] != ["change", "-"]:
-        members.append(rest.pop(0))
-    return tuple(members), rest
-
-
-def replica_count(tokens: list[str]) -> tuple[int | None, list[str]]:
-    """Take a trailing integer only after complete change clauses."""
-    if not tokens or len(tokens) % 4 != 1 or not tokens[-1].isdigit():
-        return None, tokens
-    count = int(tokens[-1])
-    if count < 1:
-        raise SystemExit("份数至少为 1")
-    return count, tokens[:-1]
-
-
-def changes(tokens: list[str]) -> tuple[Change, ...]:
-    """Parse repeated ``topic change - value`` clauses."""
+def parse_changes(raw: list[str]) -> tuple[Change, ...]:
+    """Turn repeated ``key=value`` options into profile changes."""
     parsed: list[Change] = []
-    index = 0
-    while index < len(tokens):
-        if index + 3 >= len(tokens):
-            raise SystemExit("change 的写法是：主题 change - 值")
-        topic, verb, dash, value = tokens[index : index + 4]
-        if verb != "change" or dash != "-":
-            raise SystemExit("change 的写法是：主题 change - 值")
+    for item in raw:
+        if "=" not in item:
+            raise UsageError("change 的写法是：--change 主题=值")
+        topic, value = item.split("=", 1)
+        if not topic:
+            raise UsageError("change 的写法是：--change 主题=值")
         parsed.append((topic, value))
-        index += 4
     return tuple(parsed)
+
+
+def split_body(argv: list[str]) -> tuple[list[str], str | None]:
+    """``--`` starts the free text. It is not an option."""
+    if "--" not in argv:
+        return list(argv), None
+    index = argv.index("--")
+    return argv[:index], " ".join(argv[index + 1 :])
+
+
+def parse_flags(
+    argv: list[str],
+    flags: dict[str, str],
+) -> tuple[tuple[str, ...], dict[str, object], str, str, tuple[str, ...], bool]:
+    """Read positionals, declared options, and the global ledger/env/json options."""
+    known = dict(_GLOBAL)
+    known.update(flags)
+    position: list[str] = []
+    values: dict[str, object] = {}
+    for name, kind in known.items():
+        if kind == "bool":
+            values[name] = False
+        elif kind == "repeat":
+            values[name] = []
+        else:
+            values[name] = None
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--" or not token.startswith("--"):
+            position.append(token)
+            index += 1
+            continue
+        name, inline = _split_flag(token)
+        kind = known.get(name)
+        if kind is None:
+            raise UsageError(f"不认识的选项: --{name}")
+        if kind == "bool":
+            if inline is not None:
+                raise UsageError(f"--{name} 不带值")
+            values[name] = True
+            index += 1
+            continue
+        if inline is None:
+            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+                raise UsageError(f"--{name} 后面要写值")
+            raw = argv[index + 1]
+            index += 2
+        else:
+            raw = inline
+            index += 1
+        if kind == "repeat":
+            cast = values[name]
+            if isinstance(cast, list):
+                cast.append(raw)
+            continue
+        values[name] = _coerce(name, kind, raw)
+    store = values.pop("resource-store")
+    env_file = values.pop("env-file")
+    env_values = values.pop("env")
+    as_json = bool(values.pop("json"))
+    keys = tuple(env_key(item) for item in env_values) if isinstance(env_values, list) else ()
+    if keys and not env_file:
+        raise UsageError("还没指定环境文件，不能选择键")
+    return (
+        tuple(position),
+        values,
+        str(store or default_store_locator()),
+        str(env_file or ""),
+        keys,
+        as_json,
+    )
+
+
+def require_position(position: tuple[str, ...], count: int, usage: str) -> None:
+    """Reject a command that does not have the expected number of arguments."""
+    if len(position) != count:
+        raise UsageError(usage)
+
+
+def optional_count(raw: object) -> int | None:
+    """``--count`` is absent or a positive integer."""
+    if raw is None:
+        return None
+    number = int(raw)
+    if number < 1:
+        raise UsageError("份数至少为 1")
+    return number
+
+
+def _split_flag(token: str) -> tuple[str, str | None]:
+    raw = token[2:]
+    if "=" in raw:
+        name, value = raw.split("=", 1)
+        return name, value
+    return raw, None
+
+
+def _coerce(name: str, kind: str, raw: str) -> object:
+    if kind == "int":
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise UsageError(f"--{name} 后面要写整数") from exc
+    if kind == "float":
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise UsageError(f"--{name} 后面要写数字") from exc
+    return raw

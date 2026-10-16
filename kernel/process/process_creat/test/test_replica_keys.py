@@ -12,8 +12,8 @@ def _model() -> ProcessDeclaration:
         capability="model.openai_chat_model",
         resources=(
             ResourceClaim(
-                kind=ResourceKind.MODEL,
-                identity={"provider": "openai", "id": "gpt-4o-mini"},
+                kind=ResourceKind.CONTEXT,
+                identity={"id": "window"},
             ),
         ),
     )

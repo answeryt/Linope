@@ -56,7 +56,7 @@ def test_chord_waits_then_submits_the_results() -> None:
 
 
 def test_plain_text_needs_a_kind_and_a_message_keeps_its_extras() -> None:
-    request = normalize_request("你好", kind="prompt")
-    assert request.message() == {"operation": "load", "kind": "prompt", "body": "你好"}
+    request = normalize_request("你好", kind="message")
+    assert request.message() == {"operation": "load", "kind": "message", "body": "你好"}
     carried = normalize_request({"operation": "load", "kind": "tool", "body": {}, "href": "h"})
     assert carried.message()["href"] == "h"

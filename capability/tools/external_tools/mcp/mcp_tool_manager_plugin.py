@@ -10,15 +10,22 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import importlib.util
 import inspect
+import json
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
 PLUGIN_NAME = "mcp_tool_manager"
 PLUGIN_VERSION = "1.0"
 MCP_TOOL_PREFIX = "mcp__"
+CARD = {"api_key_env": "FIRECRAWL_API_KEY"}
+
+_RUNTIME: Any = None
 
 
 def sanitize_name(value: str) -> str:
@@ -401,33 +408,47 @@ def manager() -> MCPToolManagerPlugin:
 def load(kind, body, call_params=None):
     """Load one tool call. The body names a registered ``mcp__<server>__<tool>``.
 
-    ``{"name": "list"}`` or an empty name returns the registered schemas. A
-    handler receives the ``arguments`` mapping as its single argument.
+    ``{"name": "list"}`` or an empty name returns the registered schemas and
+    does not open a network connection. A named tool starts the project
+    servers on first use.
     """
     del call_params
-    name, arguments = _tool_call(kind, body)
-    if not name or name == "list":
-        return {"tools": [record.schema for record in manager().records()]}
-    record = manager().resolve(name)
-    if record.handler is None:
-        raise LookupError(f"MCP tool {name!r} has no handler bound.")
-    result = record.handler(arguments)
-    if inspect.isawaitable(result):
-        return asyncio.run(result)
-    return result
+    return _dispatch(kind, body)
 
 
 async def load_async(kind, body, call_params=None):
     """Same as ``load`` but awaited on the process event loop."""
     del call_params
+    return _dispatch(kind, body)
+
+
+def _dispatch(kind, body) -> str:
     name, arguments = _tool_call(kind, body)
     if not name or name == "list":
-        return {"tools": [record.schema for record in manager().records()]}
-    record = manager().resolve(name)
-    if record.handler is None:
-        raise LookupError(f"MCP tool {name!r} has no handler bound.")
-    result = record.handler(arguments)
-    return await result if inspect.isawaitable(result) else result
+        return json.dumps(
+            {"success": True, "tools": [record.schema for record in manager().records()]},
+            ensure_ascii=False,
+        )
+    return _runtime().call(manager(), name, arguments)
+
+
+def _runtime() -> Any:
+    """Load the host by path. This plugin does not import its siblings."""
+    global _RUNTIME
+    if _RUNTIME is None:
+        path = Path(__file__).resolve().with_name("mcp_runtime.py")
+        spec = importlib.util.spec_from_file_location("linope_mcp_runtime", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"打不开 MCP 运行时: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["linope_mcp_runtime"] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop("linope_mcp_runtime", None)
+            raise
+        _RUNTIME = module
+    return _RUNTIME
 
 
 def _tool_call(kind, body) -> tuple[str, dict[str, Any]]:

@@ -19,8 +19,9 @@ class StoreFactory(Protocol):
 
 
 _registry: dict[str, StoreFactory] = {}
-_BUILTINS = frozenset({"file", "memory", "postgresql", "mysql"})
-_ALIASES = {"local": "file", "postgres": "postgresql"}
+_BUILTINS = frozenset({"file", "memory"})
+_ALIASES = {"local": "file"}
+_DATABASE = "database"
 
 
 def register_store(
@@ -56,6 +57,8 @@ def open_store(
     normalized = normalize_locator(locator)
     scheme = _scheme_for(normalized)
     factory = _registry.get(scheme)
+    if factory is None and "://" in normalized:
+        factory = _registry.get(_DATABASE)
     if factory is None:
         known = ", ".join(store_names())
         raise KeyError(f"未知存储 {normalized!r}。已知: {known}")

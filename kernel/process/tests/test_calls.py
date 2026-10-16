@@ -83,10 +83,13 @@ def test_authorize_rejects_a_revoked_handle(tmp_path) -> None:
     process = ProcessReconciler(pool).start(_declaration())
     handle = process.activation.resource_context.grants[0].handle
     try:
-        pool.authorize(handle)
+        owner = process.activation.process_id
+        pool.authorize(handle, owner)
+        with pytest.raises(PermissionError, match="不属于"):
+            pool.authorize(handle, "other-process")
         process.revoke(handle)
         with pytest.raises(PermissionError, match="旧凭证"):
-            pool.authorize(handle)
+            pool.authorize(handle, owner)
     finally:
         process.stop()
         pool.store.close()

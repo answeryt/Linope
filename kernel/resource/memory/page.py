@@ -1,4 +1,9 @@
-"""Long-term context pages."""
+"""Durable HATEOAS representation recorded for one memory resource.
+
+The link menu is chosen from ``state`` in ``kernel.hypermedia``.
+A swapped representation keeps its address and is only a link, so its size
+does not count toward the memory quantity.
+"""
 
 from __future__ import annotations
 
@@ -20,11 +25,12 @@ class Page:
 
     def __post_init__(self) -> None:
         if not self.address:
-            raise ValueError("page address is required")
+            raise ValueError("representation address is required")
         if self.size < 0:
-            raise ValueError("page size cannot be negative")
+            raise ValueError("representation size cannot be negative")
 
-    def occupies_window(self) -> bool:
+    def embedded(self) -> bool:
+        """The body is in this representation. A swapped record is only a link."""
         return self.state is not PageState.SWAPPED
 
     def with_state(self, state: PageState) -> "Page":

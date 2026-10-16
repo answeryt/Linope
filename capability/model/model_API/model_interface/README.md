@@ -32,6 +32,8 @@ model_provider card
 
 `None` / `"UNSET"` 跳过，不覆盖 SDK 默认值。各接口自己的字段改名（如 `max_tokens` → `max_completion_tokens`）写在该文件的私有函数里。窗口级重试由本层 `call_api` 调用 `recover_request`；Journal 级 Task 重试仍归 kernel。
 
+一次模型步骤可以收到完整 `messages`，以及 `tools` 和 `tool_choice`。工具调用保留 `id`，工具结果用这个 `id` 回到同一次步骤。是否再次调用模型由 Agent 任务的下一条动作决定，不由本层循环。
+
 ## 与 Kernel 持久执行的边界
 
 模型请求属于有外部副作用的 Task Function，不能直接写在可重放 Process Function

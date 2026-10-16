@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 PLUGIN_NAME = "mcp_configuration"
 PLUGIN_VERSION = "1.0"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("mcp_servers.json")
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
@@ -85,7 +86,7 @@ class MCPConfigPlugin:
     """Load JSON/TOML/YAML and validate complete MCP server settings."""
 
     _KNOWN_KEYS = {
-        "enabled", "transport", "command", "args", "env", "cwd", "url",
+        "enabled", "transport", "type", "command", "args", "env", "cwd", "url",
         "headers", "auth", "oauth", "ssl_verify", "client_cert", "client_key",
         "connect_timeout", "read_timeout", "tool_timeout",
         "timeout", "preflight_timeout", "skip_preflight", "keepalive_interval",
@@ -250,7 +251,9 @@ class MCPConfigPlugin:
                 raise MCPConfigError(
                     f"MCP server {name!r} URL must be absolute HTTP(S).",
                 )
-            transport = str(config.get("transport", "streamable_http")).lower()
+            transport = str(
+                config.get("transport", config.get("type", "streamable_http"))
+            ).lower()
             aliases = {
                 "http": "streamable_http",
                 "streamable-http": "streamable_http",
@@ -393,6 +396,17 @@ class MCPConfigPlugin:
             metadata=metadata,
         )
 
+    def project_servers(
+        self,
+        *,
+        include_disabled: bool = False,
+    ) -> dict[str, MCPServerConfig]:
+        """Load the servers listed for this project."""
+        return self.load_servers(
+            DEFAULT_CONFIG_PATH,
+            include_disabled=include_disabled,
+        )
+
     def load_servers(
         self,
         path: str | os.PathLike[str],
@@ -404,7 +418,11 @@ class MCPConfigPlugin:
         if self.safe_mode:
             return {}
         document = self.load_document(path)
-        raw_servers = document.get(key, document if key == "" else None)
+        raw_servers = document.get(key)
+        if raw_servers is None and key == "mcp_servers":
+            raw_servers = document.get("mcpServers")
+        if raw_servers is None and key == "":
+            raw_servers = document
         if raw_servers is None:
             return {}
         if not isinstance(raw_servers, Mapping):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from kernel.services.contracts import ServiceBlueprint
 
-_BUILTINS = frozenset({"capability", "model", "agent", "mcp"})
+_BUILTINS = frozenset({"capability", "model", "mcp"})
 _registry: dict[str, ServiceBlueprint] = {}
 
 

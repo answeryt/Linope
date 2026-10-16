@@ -80,17 +80,21 @@ class ProcessEnvironment:
         )
 
     def apply(self) -> None:
-        """Apply the working directory, the env file, and explicit variables.
+        """Apply the working directory and explicit variables.
 
         The environment present at creation stays in place. It is replaced
-        only when ``inherit_parent_env`` is false. Values read from the env
-        file are not written back into the startup package.
+        only when ``inherit_parent_env`` is false. Named env-file keys are
+        checked so a missing key fails now, then removed from the process
+        environment. Their values are read later from the file.
         """
         os.chdir(self.cwd)
         if not self.inherit_parent_env:
             os.environ.clear()
-        os.environ.update(_read_env_file(self.env_file, self.env_file_keys))
+        if self.env_file_keys:
+            _read_env_file(self.env_file, self.env_file_keys)
         os.environ.update(self.public_env())
+        for key in self.env_file_keys:
+            os.environ.pop(key, None)
 
     def public_env(self) -> dict[str, str]:
         """Variables safe to write into the startup package."""

@@ -8,7 +8,7 @@ from typing import Any
 
 from kernel.environment import HostExecutionPolicy, KernelEnvironment, ProcessEnvironment
 from kernel.process.process_creat.instances import CapabilityDefinition
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 from kernel.resource.definition import ResourceGrant
 from kernel.thread.contracts import ThreadPolicy
 
@@ -26,6 +26,7 @@ class ProcessActivation:
     communication: dict[str, Any] = field(
         default_factory=lambda: {"name": "ledger", "settings": {}}
     )
+    settings: dict[str, Any] = field(default_factory=dict)
     resource_context: ResourceContext = field(init=False)
 
     def __post_init__(self) -> None:
@@ -37,6 +38,7 @@ class ProcessActivation:
                 capability_id=self.definition.instance_id,
                 requirements=self.definition.resource_requirements,
                 grants=self.grants,
+                settings=self.settings,
             ),
         )
         if self.environment is None:

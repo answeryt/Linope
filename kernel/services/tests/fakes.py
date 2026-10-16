@@ -25,6 +25,9 @@ class Store:
     def close(self) -> None:
         self.closed = True
 
+    def selected_channel(self) -> tuple[None, dict]:
+        return None, {}
+
 
 class Process:
     def __init__(self, process_id: str, *, kind: str = "tool", identity: dict | None = None) -> None:

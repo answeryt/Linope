@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from kernel.process.communication.ledger_contracts import ChannelStore, RequestStore
+from kernel.communication.ledger_contracts import ChannelStore, RequestStore
 from kernel.resource.store.contracts import LeaseStore, StoreIdentity
 
 
@@ -50,7 +50,7 @@ class ProcessStore(Protocol):
         pid: int,
         identity: str | None,
         ready: dict[str, Any],
-    ) -> None:
+    ) -> bool:
         ...
 
     def mark_failed(

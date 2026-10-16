@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 from kernel.resource.definition import ResourceShareMode
 
 
@@ -75,11 +75,13 @@ class ResourceLeaseManager:
         self._handles: dict[str, dict[str, Any]] = {}
         self._pending_loads: dict[str, list[str]] = {}
 
-    def authorize(self, handle: str) -> None:
-        """Reject a handle whose token is no longer the current one."""
+    def authorize(self, handle: str, process_id: str) -> None:
+        """Reject a handle that is not this process's current token."""
         record = self._handles.get(handle)
         if record is None or record["status"] != HandleStatus.ACTIVE:
             raise PermissionError("旧凭证不能再写")
+        if str(record["process_id"]) != process_id:
+            raise PermissionError("这张句柄不属于这个进程")
         entity = self._entities[str(record["resource_id"])]
         if int(record["fencing_token"]) != int(entity.fencing_token):
             raise PermissionError("旧凭证不能再写")

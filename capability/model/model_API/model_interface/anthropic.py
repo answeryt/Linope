@@ -30,6 +30,24 @@ def _param_leaf(folder: str, filename: str) -> Any:
     return module
 
 
+def _vendor_role(role: object) -> str:
+    return _param_leaf_sibling("roles.py").vendor_role(role)
+
+
+def _param_leaf_sibling(filename: str) -> Any:
+    cached = _PARAM_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    path = Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _PARAM_CACHE[filename] = module
+    return module
+
+
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
     limits = _param_leaf("context_limits", "context_limits.py")
     request = dict(payload)
@@ -127,16 +145,59 @@ def format_messages(messages: Any) -> list[dict[str, Any]]:
     for item in messages:
         if isinstance(item, dict) and "role" in item:
             flush()
-            role = item.get("role")
+            role = _vendor_role(item.get("role"))
             if role == "system":
                 result.append({"role": "user", "content": _content(item.get("content"))})
                 continue
             message = {"role": role, "content": _content(item.get("content", item))}
-            result.append(message)
+            if item.get("tool_call_id"):
+                message["tool_call_id"] = item.get("tool_call_id")
+            result.append(_anthropic_tools(message))
             continue
         pending.append(item)
     flush()
     return result
+
+
+def _anthropic_tools(message: dict[str, Any]) -> dict[str, Any]:
+    """Turn provider-neutral tool blocks into Anthropic tool_use and tool_result."""
+    content = message.get("content")
+    if message.get("role") == "assistant" and isinstance(content, list):
+        converted = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "tool-call":
+                arguments = part.get("arguments")
+                if isinstance(arguments, str):
+                    import json
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {"raw": arguments}
+                converted.append({
+                    "type": "tool_use",
+                    "id": str(part.get("id") or ""),
+                    "name": str(part.get("name") or ""),
+                    "input": arguments if isinstance(arguments, dict) else {},
+                })
+            elif isinstance(part, dict) and part.get("type") == "text":
+                converted.append({"type": "text", "text": part.get("text") or ""})
+            else:
+                converted.append(part)
+        message["content"] = converted
+        return message
+    if message.get("role") == "tool":
+        output = message.get("content")
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": str(message.get("tool_call_id") or ""),
+                    "content": output if isinstance(output, str) else str(output),
+                }
+            ],
+        }
+    return message
 
 
 def parse_response(result: Any) -> str | None:
@@ -159,15 +220,22 @@ def parse_response_turn(result: Any) -> dict[str, Any] | None:
             blocks.append(
                 {
                     "type": "tool-call",
+                    "id": str(getattr(block, "id", "") or ""),
                     "name": str(getattr(block, "name", "") or ""),
                     "arguments": getattr(block, "input", {}),
                 }
             )
-    return {
+    payload = {
         "type": "model_turn",
         "blocks": blocks,
         "finish_reason": str(getattr(result, "stop_reason", None) or "stop"),
     }
+    from capability.model.model_runtime.usage import read_usage
+
+    usage = read_usage(getattr(result, "usage", None))
+    if usage:
+        payload["usage"] = usage
+    return payload
 
 
 def parse_stream_chunk(chunk: Any) -> str:
@@ -182,6 +250,18 @@ def parse_stream_chunk(chunk: Any) -> str:
 
 def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
     kind = getattr(chunk, "type", None)
+    if kind == "content_block_start":
+        block = getattr(chunk, "content_block", None)
+        if getattr(block, "type", None) == "tool_use":
+            return [
+                {
+                    "type": "tool-call-delta",
+                    "index": int(getattr(chunk, "index", 0) or 0),
+                    "id": str(getattr(block, "id", "") or ""),
+                    "name": str(getattr(block, "name", "") or ""),
+                    "arguments": "",
+                }
+            ]
     if kind == "content_block_delta":
         delta = getattr(chunk, "delta", None)
         delta_kind = getattr(delta, "type", None)
@@ -197,10 +277,22 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
                     "arguments": str(fragment),
                 }
             ]
+    from capability.model.model_runtime.usage import read_usage, usage_part
+
+    if kind == "message_start":
+        message = getattr(chunk, "message", None)
+        part = usage_part(read_usage(getattr(message, "usage", None) if message is not None else None))
+        return [part] if part is not None else []
     if kind == "message_delta":
         delta = getattr(chunk, "delta", None)
         stop = getattr(delta, "stop_reason", None) if delta is not None else None
-        return [{"type": "finish", "reason": str(stop)}] if stop else []
+        parts: list[dict[str, Any]] = []
+        if stop:
+            parts.append({"type": "finish", "reason": str(stop)})
+        part = usage_part(read_usage(getattr(chunk, "usage", None)))
+        if part is not None:
+            parts.append(part)
+        return parts
     return []
 
 

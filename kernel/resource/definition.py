@@ -9,16 +9,11 @@ from typing import Any
 
 class ResourceKind(StrEnum):
     CONTEXT = "context"
-    MODEL = "model"
     MEMORY = "memory"
     WORKSPACE = "workspace"
     TOOL = "tool"
     NETWORK = "network"
-    IDENTITY = "identity"
-    PERSISTENCE = "persistence"
-    LIFECYCLE = "lifecycle"
     COMMUNICATION = "communication"
-    PROMPT = "prompt"
 
 
 class ResourceShareMode(StrEnum):

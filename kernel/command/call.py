@@ -3,106 +3,108 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
+from typing import Any
 
-from kernel.command.parser import COMPOSITIONS, USAGE, changes, resource_store_path, take_env_flags
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import Invocation, Line, UsageError, parse
+from kernel.command.parser import parse_changes
 from kernel.process.profile import ProfileUnavailable
-from kernel.services import LaunchOptions, ServiceRequest, ServiceSpec, open_service
-from kernel.services.compose import chain, chord, group
+from kernel.services import LaunchOptions, ServiceRequest, ServiceSpec, launch_session
+from kernel.services.compose import chord, group
+from kernel.services.contracts import Ticket
+
+USAGE = "用法: linope capability call|chain|group|chord <能力> <操作>..."
 
 
-def parse_call(
-    argv: list[str],
-) -> tuple[str, tuple, str, tuple[str, ...], str | None, str, str, tuple[str, ...]]:
-    """Split a capability, changes, composition, and operations."""
-    argv, env_file, env_keys = take_env_flags(list(argv))
-    rest, store_path = resource_store_path(argv)
-    if len(rest) < 2:
-        raise SystemExit(USAGE)
-    capability = rest.pop(0)
-    change_tokens: list[str] = []
-    while len(rest) >= 4 and rest[1:3] == ["change", "-"]:
-        change_tokens.extend(rest[:4])
-        del rest[:4]
-    if not rest:
-        raise SystemExit(USAGE)
-    mode = rest.pop(0)
-    parsed_changes = changes(change_tokens)
-    if mode == "call":
-        raise SystemExit("业务装入请用 linope load")
-    if mode not in COMPOSITIONS:
-        if rest:
-            raise SystemExit("单次调用不接受多个操作；chain/group/chord 可组合调用")
-        return (
-            capability,
-            parsed_changes,
-            "single",
-            (mode,),
-            None,
-            store_path,
-            env_file,
-            env_keys,
-        )
-    if mode in {"chain", "group"}:
-        if not rest or "--" in rest:
-            raise SystemExit(f"{mode} 后面要写一个或多个操作")
-        return (
-            capability,
-            parsed_changes,
-            mode,
-            tuple(rest),
-            None,
-            store_path,
-            env_file,
-            env_keys,
-        )
-    if rest.count("--") != 1:
-        raise SystemExit("chord 写法是：chord 操作... -- 最后操作")
-    separator = rest.index("--")
-    operations = tuple(rest[:separator])
-    body = rest[separator + 1 :]
-    if not operations or len(body) != 1:
-        raise SystemExit("chord 写法是：chord 操作... -- 最后操作")
-    return (
-        capability,
-        parsed_changes,
-        mode,
-        operations,
-        body[0],
-        store_path,
-        env_file,
-        env_keys,
+def render(service: Any, line: Line, *, role: str = "") -> str:
+    """Run one parsed call and return the text the terminal shows.
+
+    A chain prints every reply. Before each later reply it prints the
+    ``prior`` the caller attached. That line is the caller's record, not a
+    field the process added to its own reply.
+    """
+    requests = tuple(
+        ServiceRequest(operation=operation, role=role) for operation in line.operations
     )
+    if line.mode == "single":
+        return str(service.wait(service.submit(requests[0])))
+    if line.mode == "chain":
+        return _chain_text(service, requests)
+    if line.mode == "group":
+        return "\n".join(str(service.wait(ticket)) for ticket in group(service, requests))
+    assert line.final is not None
+    final = chord(service, requests, ServiceRequest(operation=line.final, role=role))
+    return str(service.wait(final))
 
 
-def run(argv: list[str]) -> int:
-    capability, profile_changes, mode, operations, body, store_path, env_file, env_keys = (
-        parse_call(argv)
-    )
+def _chain_text(service: Any, requests: tuple[ServiceRequest, ...], timeout: float = 10.0) -> str:
+    lines: list[str] = []
+    ticket: Ticket | None = None
+    for request in requests:
+        if ticket is not None:
+            prior = service.wait(ticket)
+            lines.append(str(prior))
+            lines.append(f"prior={prior}")
+            request = replace(request, extras={**request.extras, "prior": prior})
+        ticket = service.submit(request, timeout=timeout)
+    assert ticket is not None
+    lines.append(str(service.wait(ticket)))
+    return "\n".join(lines)
+
+
+def execute(line: Line) -> int:
     try:
-        service = open_service(
-            ServiceSpec(kind="capability", members=(capability,), changes=profile_changes),
-            LaunchOptions(store_locator=store_path, env_file=env_file, env_file_keys=env_keys),
+        service = launch_session(
+            ServiceSpec(kind="capability", members=(line.name,), changes=line.changes),
+            LaunchOptions(
+                store_locator=line.store,
+                env_file=line.env_file,
+                env_file_keys=line.env_keys,
+            ),
         )
     except (ProfileUnavailable, KeyError) as exc:
         print(exc, file=sys.stderr)
         return 1
     try:
-        requests = tuple(ServiceRequest(operation=operation) for operation in operations)
-        if mode == "single":
-            print(service.wait(service.submit(requests[0])))
-        elif mode == "chain":
-            print(service.wait(chain(service, requests)))
-        elif mode == "group":
-            for ticket in group(service, requests):
-                print(service.wait(ticket))
-        else:
-            assert body is not None
-            final = chord(service, requests, ServiceRequest(operation=body))
-            print(service.wait(final))
+        print(render(service, line))
     finally:
         service.close()
     return 0
 
 
-SPEC = CommandSpec(name="call", run=run)
+def run_composition(mode: str, argv: list[str]) -> int:
+    """Run one composition. ``mode`` is call, chain, group, or chord."""
+    invocation = parse(argv, flags={"change": "repeat"}, usage=USAGE)
+    line = _line(mode, invocation)
+    return execute(line)
+
+
+def _line(mode: str, invocation: Invocation) -> Line:
+    if not invocation.position:
+        raise UsageError(USAGE)
+    capability = invocation.position[0]
+    operations = invocation.position[1:]
+    final = None
+    parsed = "single" if mode == "call" else mode
+    if parsed == "chord":
+        if invocation.body is None:
+            raise UsageError("chord 写法是：linope capability chord <能力> <操作>... -- <最后操作>")
+        final_parts = invocation.body.split()
+        if not operations or len(final_parts) != 1:
+            raise UsageError("chord 写法是：linope capability chord <能力> <操作>... -- <最后操作>")
+        final = final_parts[0]
+    elif parsed == "single":
+        if len(operations) != 1:
+            raise UsageError("用法: linope capability call <能力> <操作>")
+    elif not operations:
+        raise UsageError(USAGE)
+    return Line(
+        name=capability,
+        changes=parse_changes(list(invocation.options.get("change") or [])),
+        store=invocation.store,
+        env_file=invocation.env_file,
+        env_keys=invocation.env_keys,
+        mode=parsed,
+        operations=operations,
+        final=final,
+    )

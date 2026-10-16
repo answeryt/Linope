@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from kernel.load_balancing.hints import Seat
+from kernel.load_balancing.pick import load_key
 
 
 def reconciler_opener(reconciler: Any, declaration: Any, thread_policy: Any = None) -> Callable[[], str]:
@@ -41,7 +42,11 @@ def close_idle(
     floor: int,
     keep: str | None = None,
 ) -> tuple[str, ...]:
-    """Ask idle processes to stop, leaving at least ``floor`` of them."""
+    """Ask idle processes to stop, leaving at least ``floor`` of them.
+
+    Heavier idle processes stop first. Weight is the same key ``choose`` uses:
+    claimed work, waiting work, round trip, then process id.
+    """
     if floor < 0:
         raise ValueError("最少进程数不能是负数")
     idle = [
@@ -49,11 +54,15 @@ def close_idle(
         for seat in found
         if seat.process_id != keep and seat.pending == 0 and seat.claimed == 0
     ]
+    idle.sort(key=load_key, reverse=True)
     can_close = max(0, len(found) - floor)
     closed: list[str] = []
+    services_for = getattr(store, "services_for_process", None)
     for seat in idle:
         if can_close <= 0:
             break
+        if callable(services_for) and services_for(seat.process_id):
+            continue
         store.set_desired(seat.process_id, "stop")
         closed.append(seat.process_id)
         can_close -= 1

@@ -23,7 +23,10 @@ def _compiled(process_id: str = "process"):
 
 
 def test_registry_exposes_all_builtin_store_kinds() -> None:
-    assert {"file", "memory", "mysql", "postgresql"} <= set(store_names())
+    names = set(store_names())
+    assert {"file", "memory"} <= names
+    assert "mysql" not in names
+    assert "postgresql" not in names
 
 
 def test_memory_store_supports_requests_and_channels() -> None:
@@ -90,6 +93,33 @@ def test_file_store_reads_a_flat_version_one_document(tmp_path) -> None:
         assert store.take_request("p1")["request_id"] == "1"
     finally:
         store.close()
+
+
+def test_database_store_stops_when_the_driver_is_missing() -> None:
+    import pytest
+
+    with pytest.raises(RuntimeError, match="驱动"):
+        open_store("postgresql+nosuch://user@localhost/ledger", reap=False)
+
+
+def test_database_store_reopens_resource_state(tmp_path) -> None:
+    locator = "sqlite:///" + (tmp_path / "ledger.db").as_posix()
+    store = open_store(locator, reap=False)
+    compiled = _compiled()
+    ResourcePool(store).bind("process", "context.sliding_window", compiled)
+    store.initialize_schema()
+    store.migrate()
+    store.close()
+
+    reopened = open_store(locator, reap=False)
+    try:
+        assert reopened.check()["backend"] == "database"
+        assert reopened.active_for("process")
+        assert reopened.entity(compiled[0].resource_id).refcount == 1
+        reopened.initialize_schema()
+        reopened.migrate()
+    finally:
+        reopened.close()
 
 
 def test_path_locator_still_opens_file_store(tmp_path) -> None:

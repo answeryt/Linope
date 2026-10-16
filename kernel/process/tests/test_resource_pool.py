@@ -23,8 +23,8 @@ def _model_declaration(*, share_requested: bool, temperature: float = 0.2) -> Pr
         capability="model.openai_chat_model",
         resources=(
             ResourceClaim(
-                kind=ResourceKind.MODEL,
-                identity={"provider": "openai", "id": "gpt-4o-mini"},
+                kind=ResourceKind.CONTEXT,
+                identity={"id": "window"},
                 call_params={"temperature": temperature},
                 share_requested=share_requested,
             ),
@@ -48,17 +48,17 @@ def _tool_declaration() -> ProcessDeclaration:
 def test_prompt_text_does_not_change_model_entity_key() -> None:
     from kernel.resource.compile import entity_key
 
-    identity = {"provider": "anthropic", "id": "claude-opus-5"}
-    first = entity_key(ResourceKind.MODEL, identity, process_id="model-process")
+    identity = {"id": "window"}
+    first = entity_key(ResourceKind.CONTEXT, identity, process_id="model-process")
     second = entity_key(
-        ResourceKind.MODEL,
-        {"provider": "anthropic", "id": "claude-opus-5"},
+        ResourceKind.CONTEXT,
+        {"id": "window"},
         process_id="model-process",
     )
     assert first == second
     other = entity_key(
-        ResourceKind.MODEL,
-        {"provider": "anthropic", "id": "claude-opus-5", "prompt": "请你甲"},
+        ResourceKind.CONTEXT,
+        {"id": "window", "prompt": "请你甲"},
         process_id="model-process",
     )
     assert other != first

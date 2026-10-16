@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from kernel.environment.identity import check_access_mode
+from kernel.resource.workspace.mount.mode import writes
+from kernel.resource.workspace.mount.view import admit_path, private_temp
 
 
 @dataclass(frozen=True)
@@ -50,22 +52,17 @@ class FilesystemView:
 
     def locate(self, candidate: Path, *, write: bool) -> Path:
         """Normalize a path, then keep it inside an allowed place."""
-        resolved = candidate.expanduser().resolve()
-        matches = [root for root in self.roots if _contains(root.path, resolved)]
-        if not matches:
-            raise PermissionError("这个路径不在允许的地方")
-        if write:
-            deepest = max(
-                matches,
-                key=lambda root: (len(root.path), 0 if root.writable else 1),
-            )
-            if not deepest.writable:
-                raise PermissionError("这里只能读，不能改")
-        return resolved
+        own_temp = next((root.path for root in self.roots if root.name == "temp"), "")
+        return admit_path(
+            candidate,
+            tuple((root.path, root.writable) for root in self.roots),
+            write=write,
+            own_temp=own_temp,
+        )
 
     def with_access_mode(self, access_mode: str) -> "FilesystemView":
         mode = check_access_mode(access_mode)
-        writable = mode == "workspace-write"
+        writable = writes(mode)
         roots = tuple(
             FilesystemRoot(
                 name=root.name,
@@ -98,15 +95,16 @@ class FilesystemView:
         *,
         package_paths: tuple[Path, ...] = (),
         access_mode: str = "workspace-write",
+        process_id: str = "",
     ) -> "FilesystemView":
         mode = check_access_mode(access_mode)
-        writable = mode == "workspace-write"
+        writable = writes(mode)
         root = workspace.expanduser().resolve()
         roots = [
             FilesystemRoot(name="workspace", path=str(root), writable=writable),
             FilesystemRoot(
                 name="temp",
-                path=str(root / ".linope-tmp"),
+                path=private_temp(str(root), process_id),
                 writable=writable,
             ),
         ]
@@ -126,12 +124,3 @@ class FilesystemView:
                 FilesystemRoot(name="package", path=str(resolved), writable=False)
             )
         return cls(roots=tuple(roots), access_mode=mode)
-
-
-def _contains(root: str, path: Path) -> bool:
-    root_text = os.path.normcase(str(Path(root)))
-    path_text = os.path.normcase(str(path))
-    if path_text == root_text:
-        return True
-    prefix = root_text.rstrip("\\/") + os.sep
-    return path_text.startswith(os.path.normcase(prefix))

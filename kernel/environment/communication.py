@@ -1,6 +1,6 @@
 """Which mailbox this process uses, and which outside hosts are listed.
 
-Process-to-process delivery stays in kernel.process.communication.
+Process-to-process delivery stays in kernel.communication.
 This door only records the channel name and the outbound list.
 An empty outbound list is not enforced yet, so model calls keep their exit.
 """

@@ -1,4 +1,4 @@
-"""Command checks for room, thread show/idle, env files, and start knobs."""
+"""Command checks for room, thread idle, env files, and start knobs."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from kernel.command.env import run as env_command
-from kernel.command.room import run as room_command
+from kernel.command.room import list_processes, show_process
 from kernel.command.start import run as start_command
 from kernel.command.thread import run as thread_command
 from kernel.environment import HostExecutionPolicy, KernelEnvironment, ProcessEnvironment
@@ -15,7 +15,7 @@ from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.process_creat.instances import describe_instance
 from kernel.process.profile import load_declaration
 from kernel.process.reconcile import ProcessReconciler
-from kernel.process.ledger import FileResourceStore
+from kernel.process.ledger import FileResourceStore, MemoryResourceStore
 from kernel.process.process_manager.liveness import process_identity
 from kernel.resource.store.locator import set_default_env_file
 from kernel.resource.definition import ResourceKind
@@ -41,9 +41,14 @@ class _CapturedProcess:
 
 def _isolate_config(monkeypatch, tmp_path: Path) -> Path:
     config = tmp_path / "project" / ".linope" / "config.json"
+    user = tmp_path / "user" / "config.json"
     monkeypatch.setattr(
         "kernel.resource.store.locator.project_config_path",
         lambda: config,
+    )
+    monkeypatch.setattr(
+        "kernel.resource.store.locator.user_config_path",
+        lambda: user,
     )
     return config
 
@@ -56,6 +61,23 @@ def _running(store: FileResourceStore, process_id: str, capability: str) -> None
         process_identity(os.getpid()),
         {"sync_thread_safe": True, "is_async": False},
     )
+
+
+def test_mark_running_does_not_resurrect_a_stopped_process() -> None:
+    store = MemoryResourceStore()
+    store.register_process("p1", CAPABILITY, None, "starting")
+    store.set_desired("p1", "stop")
+
+    assert (
+        store.mark_running(
+            "p1",
+            123,
+            "identity",
+            {"event": "ready"},
+        )
+        is False
+    )
+    assert store.get_process("p1")["status"] == "starting"
 
 
 def test_room_lists_live_processes_and_hides_secret_values(tmp_path, capsys) -> None:
@@ -88,19 +110,19 @@ def test_room_lists_live_processes_and_hides_secret_values(tmp_path, capsys) -> 
     store.close()
     locator = f"file:{path}"
 
-    assert room_command(["--resource-store", locator]) == 0
+    assert list_processes(["--resource-store", locator]) == 0
     listed = capsys.readouterr().out
     assert "p1 tools.bash" in listed
     assert "p2" not in listed
 
-    assert room_command(["p1", "--resource-store", locator]) == 0
+    assert show_process(["p1", "--resource-store", locator]) == 0
     shown = capsys.readouterr().out
     assert f"工作目录: {tmp_path.resolve()}" in shown
     assert "LINOPE_SECRET" in shown
     assert "hidden-room-secret" not in shown
     assert "shown-name-only" not in shown
     assert "墙钟: 9" in shown
-    assert room_command(["missing", "--resource-store", locator]) == 1
+    assert show_process(["missing", "--resource-store", locator]) == 1
 
 
 def test_start_writes_cwd_and_runtime_into_the_room(tmp_path, monkeypatch) -> None:
@@ -133,18 +155,23 @@ def test_start_writes_cwd_and_runtime_into_the_room(tmp_path, monkeypatch) -> No
     assert payload["host_policy"]["max_runtime_seconds"] == 15
 
 
-def test_thread_show_prints_mailbox_counts(tmp_path, capsys) -> None:
+
+def test_thread_idle_keeps_the_lighter_idle_process(tmp_path, capsys) -> None:
     path = tmp_path / "resources.json"
     store = FileResourceStore(path)
     _running(store, "p1", CAPABILITY)
-    store.set_worker_ceiling("p1", 4)
-    store.set_inflight_ceiling("p1", 6)
-    store.submit_request("p1", {"operation": "ping"})
+    _running(store, "p2", CAPABILITY)
+    store.replace_note("p1", "rtt", {"ms": 500})
     store.close()
     locator = f"file:{path}"
-    assert thread_command(["show", CAPABILITY, "--resource-store", locator]) == 0
-    shown = capsys.readouterr().out
-    assert "p1 pending=1 claimed=0 worker_ceiling=4 inflight_ceiling=6" in shown
+    assert thread_command(["idle", CAPABILITY, "--resource-store", locator]) == 0
+    assert "p1" in capsys.readouterr().out
+    again = FileResourceStore(path)
+    try:
+        assert again.get_process("p1")["desired"] == "stop"
+        assert again.get_process("p2").get("desired") != "stop"
+    finally:
+        again.close()
 
 
 def test_thread_idle_stops_only_an_empty_process(tmp_path, capsys) -> None:
@@ -191,8 +218,12 @@ def test_env_use_records_a_path_and_models_take_only_their_key(
         encoding="utf-8",
     )
     assert env_command(["use", str(secret)]) == 0
-    saved = json.loads(config.read_text(encoding="utf-8"))
+    from kernel.resource.store.locator import user_config_path
+
+    saved = json.loads(user_config_path().read_text(encoding="utf-8"))
     assert saved["env_file"] == str(secret.resolve())
+    if config.exists():
+        assert "env_file" not in json.loads(config.read_text(encoding="utf-8"))
     assert secret.read_text(encoding="utf-8").startswith("ANTHROPIC_API_KEY=secret-value")
 
     monkeypatch.setattr("kernel.process.reconcile.CapabilityProcess", _CapturedProcess)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import os
 import time
@@ -26,6 +27,7 @@ class ThreadRuntime:
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._wait_for_sync_shutdown = True
         self._inflight: InflightLimit | None = None
+        self._on_sample: Callable[[float, int | None], None] | None = None
         self._active = 0
 
     async def run(
@@ -37,11 +39,13 @@ class ThreadRuntime:
         should_stop: Callable[[], bool | Awaitable[bool]],
         staff_ceiling: Callable[[], int | None] | None = None,
         inflight_ceiling: Callable[[], int | None] | None = None,
+        on_sample: Callable[[float, int | None], None] | None = None,
     ) -> None:
         """Run until the process asks for a cooperative stop."""
 
         pending: set[asyncio.Task[None]] = set()
         self._wait_for_sync_shutdown = True
+        self._on_sample = on_sample
         self._thread_safe = bool(getattr(adapter, "sync_thread_safe", False))
         self._workers = WorkerPool(self._sync_worker_count(adapter))
         if _adapter_is_async(adapter):
@@ -93,6 +97,9 @@ class ThreadRuntime:
         async with self._task_limiter.slot():
             self._active += 1
             started = time.monotonic()
+            from kernel.command.live_stream import bind_stream_keys, reset_stream_keys, stream_keys_for
+
+            token = bind_stream_keys(stream_keys_for(request.body, request.request_id))
             try:
                 lock = self._session_lock(request.body)
                 if lock is None:
@@ -100,9 +107,14 @@ class ThreadRuntime:
                 else:
                     async with lock:
                         reply = await self._dispatch(adapter, request.body)
+                elapsed = time.monotonic() - started
+                allowance = None
                 if self._inflight is not None:
-                    self._inflight.sample(time.monotonic() - started, self._active)
+                    allowance = self._inflight.sample(elapsed, self._active)
+                if self._on_sample is not None:
+                    self._on_sample(elapsed, allowance)
             finally:
+                reset_stream_keys(token)
                 self._active -= 1
             reply["request_id"] = request.request_id
             await asyncio.to_thread(
@@ -142,7 +154,8 @@ class ThreadRuntime:
             else:
                 if self._workers is None:
                     raise RuntimeError("同步插件执行器尚未启动")
-                result = await self._workers.run(adapter.handle, payload)
+                context = contextvars.copy_context()
+                result = await self._workers.run(context.run, adapter.handle, payload)
         except Exception as error:
             return {
                 "event": "error",

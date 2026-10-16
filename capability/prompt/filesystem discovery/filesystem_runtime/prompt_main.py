@@ -53,8 +53,8 @@ def _emit(assembled: dict[str, Any]) -> None:
 
 
 def load(kind, body, call_params=None):
-    """Load prompt text through the existing assembler."""
-    if kind != "prompt":
+    """Assemble one user message. This process does not lease a prompt resource."""
+    if kind != "message":
         raise ValueError(f"这个进程不能装入 {kind}")
     del call_params
     text = body if isinstance(body, str) else ""
@@ -65,16 +65,11 @@ def load(kind, body, call_params=None):
 
 
 def capability_profile(capability_id, changes):
-    """Tell the process this prompt capability needs a prompt resource."""
-    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-    from kernel.resource.definition import ResourceKind
+    """The assembler is not a resource kind and does not take a lease."""
+    from kernel.process.declaration import ProcessDeclaration
 
-    return ProcessDeclaration(
-        capability=capability_id,
-        resources=(
-            ResourceClaim(kind=ResourceKind.PROMPT, identity={"id": capability_id}),
-        ),
-    )
+    del changes
+    return ProcessDeclaration(capability=capability_id)
 
 
 def main(argv: list[str] | None = None) -> int:

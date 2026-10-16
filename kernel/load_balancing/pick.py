@@ -21,12 +21,13 @@ def choose(candidates: Sequence[Seat]) -> Seat | None:
     if not open_seats:
         return None
     if len(open_seats) <= 2:
-        return min(open_seats, key=_load)
+        return min(open_seats, key=load_key)
     left, right = random.sample(open_seats, 2)
-    if _load(left) <= _load(right):
+    if load_key(left) <= load_key(right):
         return left
     return right
 
 
-def _load(seat: Seat) -> tuple[int, int, str]:
-    return (seat.claimed, seat.pending, seat.process_id)
+def load_key(seat: Seat) -> tuple[int, int, int, str]:
+    """Busy work, then round trip, then process id. A larger key is heavier."""
+    return (seat.claimed, seat.pending, int(getattr(seat, "rtt_ms", 0) or 0), seat.process_id)

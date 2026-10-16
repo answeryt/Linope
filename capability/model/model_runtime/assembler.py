@@ -13,16 +13,15 @@ from capability.model.model_runtime.blocks import (
 
 
 class BlockAssembler:
-    """Assemble text and at most one tool call for a model step."""
+    """Assemble text and one tool call per index. Truncation drops every call."""
 
     def __init__(self) -> None:
         self._text: list[str] = []
         self._reasoning: list[str] = []
-        self._tool_name = ""
-        self._tool_arguments: Any = None
-        self._has_tool = False
+        self._tools: dict[int, dict[str, Any]] = {}
         self._finish_reason = "stop"
         self._usage: dict[str, Any] | None = None
+        self._errors: list[str] = []
 
     def push(self, part: Any) -> None:
         if not isinstance(part, dict):
@@ -39,24 +38,28 @@ class BlockAssembler:
             if text:
                 self._reasoning.append(str(text))
         elif kind in {"tool-call", "tool-call-delta"}:
-            self._has_tool = True
+            index = int(part.get("index") or 0)
+            slot = self._tools.setdefault(
+                index,
+                {"id": "", "name": "", "arguments": "" if kind == "tool-call-delta" else None},
+            )
+            if part.get("id"):
+                slot["id"] = str(part["id"])
             if part.get("name"):
-                self._tool_name = str(part["name"])
+                slot["name"] = str(part["name"])
             if kind == "tool-call":
-                self._tool_arguments = part.get("arguments")
+                slot["arguments"] = part.get("arguments")
             else:
                 fragment = part.get("arguments")
                 if fragment:
-                    previous = (
-                        self._tool_arguments
-                        if isinstance(self._tool_arguments, str)
-                        else ""
-                    )
-                    self._tool_arguments = previous + str(fragment)
+                    previous = slot["arguments"] if isinstance(slot["arguments"], str) else ""
+                    slot["arguments"] = previous + str(fragment)
         elif kind == "finish":
             self._finish_reason = str(part.get("reason") or "stop")
         elif kind == "usage" and isinstance(part.get("usage"), dict):
-            self._usage = dict(part["usage"])
+            merged = dict(self._usage or {})
+            merged.update(part["usage"])
+            self._usage = merged
 
     def finish(self) -> ModelTurn:
         blocks: list = []
@@ -64,13 +67,29 @@ class BlockAssembler:
             blocks.append(TextBlock(text="".join(self._text)))
         if self._reasoning:
             blocks.append(ReasoningBlock(text="".join(self._reasoning)))
-        if self._has_tool and self._finish_reason not in {"max-tokens", "length"}:
-            blocks.append(
-                ToolCallBlock(
-                    name=self._tool_name,
-                    arguments=self._tool_arguments,
+        if self._tools and self._finish_reason not in {"max-tokens", "length"}:
+            for index in sorted(self._tools):
+                slot = self._tools[index]
+                if not slot["name"]:
+                    self._errors.append(f"tool call {index} has no name")
+                    continue
+                arguments = slot["arguments"]
+                if isinstance(arguments, str) and arguments:
+                    import json
+                    try:
+                        json.loads(arguments)
+                    except json.JSONDecodeError:
+                        self._errors.append(f"tool call {index} arguments are not JSON")
+                blocks.append(
+                    ToolCallBlock(
+                        name=slot["name"],
+                        arguments=arguments,
+                        id=slot["id"],
+                        index=index,
+                    )
                 )
-            )
+        if self._errors:
+            blocks.append(TextBlock(text="; ".join(self._errors)))
         return ModelTurn(
             blocks=tuple(blocks),
             finish_reason=self._finish_reason,

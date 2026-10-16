@@ -88,14 +88,25 @@ def load(kind, body, call_params=None):
 
 
 def capability_profile(capability_id, changes):
+    import os
+
     from kernel.process.declaration import ProcessDeclaration, ResourceClaim
     from kernel.resource.definition import ResourceKind
+    from kernel.resource.workspace.kind import identity, root_from
 
-    del changes
+    root = root_from(changes, os.getcwd())
+    mode = "workspace-write"
+    for topic, raw in changes or ():
+        if topic == "mode" and str(raw).strip():
+            mode = str(raw)
     return ProcessDeclaration(
         capability=capability_id,
         resources=(
-            ResourceClaim(kind=ResourceKind.WORKSPACE, identity={"id": capability_id}),
+            ResourceClaim(
+                kind=ResourceKind.WORKSPACE,
+                identity=identity(root),
+                call_params={"mode": mode},
+            ),
         ),
     )
 

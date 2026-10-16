@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,12 @@ def _load_modules(module_paths: tuple[str, ...]) -> list[Any]:
         if spec is None or spec.loader is None:
             raise ImportError(path)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(name, None)
+            raise
         loaded.append(module)
     return loaded
 
@@ -88,11 +94,14 @@ def serve_capability(
 ) -> None:
     """Load one capability and serve ledger requests until asked to stop."""
     from kernel.process.process_manager.liveness import process_identity
-    from kernel.resource.context import ResourceContext
+    from kernel.resource.handle_view import ResourceContext
+
+    from kernel.resource.account.bind import bind_store, reset_store
 
     process_id = str(activation["process_id"])
     identity = process_identity(os.getpid())
     adapter = None
+    account_store = None
     store.update_process(
         process_id,
         pid=os.getpid(),
@@ -100,6 +109,7 @@ def serve_capability(
         identity=identity,
     )
     try:
+        account_store = bind_store(store)
         row = store.get_process(process_id)
         if row is not None and (
             row.get("desired") == "stop" or row.get("status") == "failed"
@@ -121,12 +131,12 @@ def serve_capability(
         ):
             _shutdown(adapter, store, process_id, failed=True)
             return
-        from kernel.process.communication.registry import open_channel
+        from kernel.communication.registry import open_channel
 
         channel = open_channel(store, activation.get("communication"))
         try:
             channel.bind(process_id)
-            store.mark_running(
+            started = store.mark_running(
                 process_id,
                 os.getpid(),
                 identity,
@@ -146,6 +156,12 @@ def serve_capability(
                     "is_async": _adapter_is_async(adapter),
                 },
             )
+            # #region agent log
+
+            # #endregion
+            if started is False:
+                _shutdown(adapter, store, process_id, failed=False)
+                return
             policy = ThreadPolicy.from_payload(activation.get("thread_policy"))
             inbox = ChannelInbox(channel)
             started_at = time.monotonic()
@@ -178,6 +194,22 @@ def serve_capability(
                     return None
                 return int(row["inflight_ceiling"])
 
+            def on_sample(elapsed: float, allowance: int | None) -> None:
+                if not hasattr(store, "replace_note"):
+                    return
+                store.replace_note(
+                    process_id,
+                    "rtt",
+                    {"ms": max(0, int(elapsed * 1000))},
+                )
+                if allowance is not None:
+                    store.replace_note(
+                        process_id,
+                        "inflight",
+                        {"current": int(allowance)},
+                    )
+
+            # #endregion
             asyncio.run(
                 ThreadRuntime(policy).run(
                     process_id=process_id,
@@ -186,6 +218,7 @@ def serve_capability(
                     should_stop=should_stop,
                     staff_ceiling=staff_ceiling,
                     inflight_ceiling=inflight_ceiling,
+                    on_sample=on_sample,
                 )
             )
             row = _look_process(store, process_id)
@@ -223,6 +256,8 @@ def serve_capability(
             pass
         raise
     finally:
+        if account_store is not None:
+            reset_store(account_store)
         bind_room(None)
 
 

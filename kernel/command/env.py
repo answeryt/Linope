@@ -5,23 +5,27 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from kernel.command.parser import USAGE, resource_store_path
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import UsageError, guard, parse
 from kernel.resource.store.locator import set_default_env_file
 
+USAGE = "用法: linope env init [路径] | linope env use <路径>"
 
+
+@guard(USAGE)
 def run(argv: list[str]) -> int:
-    rest, _store_path = resource_store_path(argv)
-    if not rest or rest[0] not in {"init", "use"}:
-        raise SystemExit(USAGE)
-    if rest[0] == "init":
-        if len(rest) > 2:
-            raise SystemExit("env init 的写法是：env init [路径]")
-        path = Path.cwd() / ".env" if len(rest) == 1 else Path(rest[1])
+    invocation = parse(argv, flags={}, usage=USAGE)
+    if not invocation.position or invocation.position[0] not in {"init", "use"}:
+        raise UsageError(USAGE)
+    action = invocation.position[0]
+    extra = invocation.position[1:]
+    if action == "init":
+        if len(extra) > 1:
+            raise UsageError("用法: linope env init [路径]")
+        path = Path.cwd() / ".env" if not extra else Path(extra[0])
         return _init(path.expanduser())
-    if len(rest) != 2:
-        raise SystemExit("env use 的写法是：env use <路径>")
-    recorded = set_default_env_file(rest[1])
+    if len(extra) != 1:
+        raise UsageError("用法: linope env use <路径>")
+    recorded = set_default_env_file(extra[0])
     print(f"已记下 {recorded}")
     return 0
 
@@ -39,6 +43,3 @@ def _init(path: Path) -> int:
     recorded = set_default_env_file(path)
     print(f"已记下 {recorded}")
     return 0
-
-
-SPEC = CommandSpec(name="env", run=run)

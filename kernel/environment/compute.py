@@ -61,13 +61,15 @@ class ComputeDoor:
             and timeout_seconds > self.max_command_seconds
         ):
             raise ValueError("命令超过这间屋子允许的最长时间")
-        if self.filesystem.access_mode == "read-only" and not isolate:
-            raise RuntimeError("只读屋子不能直接跑外部程序")
-        if isolate and self.isolator is None:
-            raise RuntimeError("没有隔离器，不能直接跑")
+        from kernel.resource.workspace.mount.mode import DANGER_FULL_ACCESS, confines
+
         command = tuple(str(part) for part in argv)
-        if isolate and self.isolator is not None:
+        mode = self.filesystem.access_mode
+        if mode != DANGER_FULL_ACCESS and confines(mode):
+            if self.isolator is None:
+                raise RuntimeError("没有隔离器，不能直接跑")
             command = tuple(self.isolator(command, str(directory)))
+        del isolate
         return CommandPermit(
             argv=command,
             cwd=str(directory),
@@ -91,6 +93,8 @@ class ComputeDoor:
         identity: IdentityDoor,
     ) -> "ComputeDoor":
         raw = dict(payload or {})
+        from kernel.environment.confine import host_isolator
+
         cap = raw.get("max_command_seconds")
         return cls(
             max_concurrent_tasks=int(raw.get("max_concurrent_tasks", 1)),
@@ -98,4 +102,5 @@ class ComputeDoor:
             max_command_seconds=None if cap is None else float(cap),
             filesystem=filesystem,
             identity=identity,
+            isolator=host_isolator(filesystem.access_mode),
         )

@@ -23,7 +23,7 @@ def chain(
     ticket: Ticket | None = None
     for request in requests:
         if ticket is not None:
-            prior = service.wait(ticket, timeout)
+            prior = service.wait(ticket)
             request = replace(request, extras={**request.extras, "prior": prior})
         ticket = service.submit(request, timeout=timeout)
     assert ticket is not None
@@ -47,7 +47,7 @@ def chord(
 ) -> Ticket:
     """Wait for the group, then submit one request carrying their results."""
     tickets = group(service, requests, timeout)
-    results = [service.wait(ticket, timeout) for ticket in tickets]
+    results = [service.wait(ticket) for ticket in tickets]
     return service.submit(
         replace(final, extras={**final.extras, "results": results}),
         timeout=timeout,

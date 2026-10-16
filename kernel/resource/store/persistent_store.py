@@ -11,8 +11,9 @@ from kernel.resource.store.state_codec import JsonStateCodec, StateCodec
 class StateBackedStore:
     """Delegate domain operations while owning their persistence boundary.
 
-    Domain behavior lives in ``_memory``.  Concrete adapters implement
-    ``_run_operation`` to add a file lock or a database transaction.
+    Domain behavior lives in ``_memory``.  The file adapter implements
+    ``_run_operation`` to add a file lock. Database transactions live in
+    ``kernel.database``.
     """
 
     def __init__(self, memory: Any, *, codec: StateCodec | None = None) -> None:

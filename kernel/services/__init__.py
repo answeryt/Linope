@@ -1,4 +1,4 @@
-"""Services: the aggregate boundary of one Agent, made of peer processes.
+"""Services name groups of processes. A service does not own their lifetime.
 
 Only the small face is exported. Processes, receipts, the pool and the
 ledger never leave this package.
@@ -14,6 +14,7 @@ __all__ = [
     "ServiceRequest",
     "ServiceSpec",
     "Ticket",
+    "launch_session",
     "open_service",
     "register_service_kind",
     "service_kinds",
@@ -21,7 +22,7 @@ __all__ = [
 
 _CONTRACTS = {"Member", "Service", "ServiceRequest", "Ticket"}
 _SPEC = {"LaunchOptions", "ServiceSpec"}
-_HOST = {"ServiceHost", "open_service"}
+_HOST = {"ServiceHost", "launch_session", "open_service"}
 _REGISTRY = {"register_service_kind", "service_kinds"}
 
 

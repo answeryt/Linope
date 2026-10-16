@@ -1,4 +1,4 @@
-"""Long-term pages created for files."""
+"""Representations recorded for files that were just written."""
 
 from __future__ import annotations
 

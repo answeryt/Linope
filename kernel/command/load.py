@@ -5,62 +5,54 @@ from __future__ import annotations
 import sys
 
 from kernel.command.command_blocks import tool_body
-from kernel.command.parser import USAGE, changes, resource_store_path, take_env_flags
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import Line, UsageError, guard, parse
+from kernel.command.parser import parse_changes
 from kernel.process.profile import ProfileUnavailable
-from kernel.resource.definition import ResourceKind
-from kernel.services import LaunchOptions, ServiceRequest, ServiceSpec, open_service
+from kernel.services import LaunchOptions, ServiceRequest, ServiceSpec, launch_session
+
+USAGE = "用法: linope capability load <能力> <种类> <内容>"
 
 
-def parse_load(
-    argv: list[str],
-) -> tuple[str, tuple, str, str, str, str, tuple[str, ...]]:
-    argv, env_file, env_keys = take_env_flags(list(argv))
-    rest, store_path = resource_store_path(argv)
-    if not rest:
-        raise SystemExit(USAGE)
-    capability = rest.pop(0)
-    change_tokens: list[str] = []
-    while len(rest) >= 4 and rest[1:3] == ["change", "-"]:
-        change_tokens.extend(rest[:4])
-        del rest[:4]
-    if len(rest) < 2:
-        raise SystemExit("load 的写法是：load 能力名 种类 内容")
-    kind = rest.pop(0)
+def execute(line: Line) -> int:
     try:
-        ResourceKind(kind)
-    except ValueError:
-        raise SystemExit(f"不认识的资源种类: {kind}") from None
-    return (
-        capability,
-        changes(change_tokens),
-        kind,
-        " ".join(rest),
-        store_path,
-        env_file,
-        env_keys,
-    )
-
-
-def run(argv: list[str]) -> int:
-    capability, profile_changes, kind, body, store_path, env_file, env_keys = (
-        parse_load(argv)
-    )
-    try:
-        service = open_service(
-            ServiceSpec(kind="capability", members=(capability,), changes=profile_changes),
-            LaunchOptions(store_locator=store_path, env_file=env_file, env_file_keys=env_keys),
+        service = launch_session(
+            ServiceSpec(kind="capability", members=(line.name,), changes=line.changes),
+            LaunchOptions(
+                store_locator=line.store,
+                env_file=line.env_file,
+                env_file_keys=line.env_keys,
+            ),
         )
     except (ProfileUnavailable, KeyError) as exc:
         print(exc, file=sys.stderr)
         return 1
     try:
-        payload = tool_body(body) if kind == "tool" else body
-        ticket = service.submit(ServiceRequest(kind=kind, body=payload))
+        payload = tool_body(line.body) if line.kind == "tool" else line.body
+        ticket = service.submit(ServiceRequest(kind=line.kind, body=payload))
         print(service.wait(ticket, timeout=180))
     finally:
         service.close()
     return 0
 
 
-SPEC = CommandSpec(name="load", run=run)
+def line_from(argv: list[str]) -> Line:
+    invocation = parse(argv, flags={"change": "repeat"}, usage=USAGE)
+    if len(invocation.position) < 2:
+        raise UsageError(USAGE)
+    body = invocation.body if invocation.body is not None else " ".join(invocation.position[2:])
+    if not body and invocation.body is None and len(invocation.position) < 3:
+        raise UsageError(USAGE)
+    return Line(
+        name=invocation.position[0],
+        kind=invocation.position[1],
+        body=body,
+        changes=parse_changes(list(invocation.options.get("change") or [])),
+        store=invocation.store,
+        env_file=invocation.env_file,
+        env_keys=invocation.env_keys,
+    )
+
+
+@guard(USAGE)
+def run(argv: list[str]) -> int:
+    return execute(line_from(argv))

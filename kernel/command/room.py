@@ -4,25 +4,41 @@ from __future__ import annotations
 
 import sys
 
-from kernel.command.parser import USAGE, resource_store_path
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import UsageError, guard, parse
 from kernel.process.ledger import open_store
 
+LIST_USAGE = "用法: linope process list [--capability <能力>]"
+STATUS_USAGE = "用法: linope process status <进程号>"
 
-def run(argv: list[str]) -> int:
-    rest, store_path = resource_store_path(argv)
-    if len(rest) > 1:
-        raise SystemExit(USAGE)
-    store = open_store(store_path)
+
+@guard(LIST_USAGE)
+def list_processes(argv: list[str]) -> int:
+    invocation = parse(argv, flags={"capability": "str"}, usage=LIST_USAGE)
+    if invocation.position:
+        raise UsageError(LIST_USAGE)
+    selected = invocation.options.get("capability")
+    store = open_store(invocation.store)
     try:
-        if not rest:
-            rows = store.live_processes()
-            for row in sorted(rows, key=lambda item: str(item.get("process_id", ""))):
-                print(f"{row.get('process_id', '')} {row.get('capability_id', '')}")
-            return 0
-        process_id = rest[0]
+        rows = store.live_processes()
+        for row in sorted(rows, key=lambda item: str(item.get("process_id", ""))):
+            capability = str(row.get("capability_id", ""))
+            if selected and capability != selected:
+                continue
+            print(f"{row.get('process_id', '')} {capability}")
+        return 0
+    finally:
+        store.close()
+
+
+@guard(STATUS_USAGE)
+def show_process(argv: list[str]) -> int:
+    invocation = parse(argv, flags={}, usage=STATUS_USAGE)
+    if len(invocation.position) != 1:
+        raise UsageError(STATUS_USAGE)
+    store = open_store(invocation.store)
+    try:
         try:
-            activation = store.activation_for(process_id)
+            activation = store.activation_for(invocation.position[0])
         except KeyError:
             print("没有这个进程", file=sys.stderr)
             return 1
@@ -79,6 +95,3 @@ def format_room(room: dict) -> str:
 
 def _mapping(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
-
-
-SPEC = CommandSpec(name="room", run=run)

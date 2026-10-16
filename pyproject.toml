@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linope"
+version = "0.0.1"
+description = "Linope kernel and terminal"
+requires-python = ">=3.11"
+
+[project.scripts]
+linope = "tui.launch:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tui*", "kernel*", "capability*"]
+namespaces = true

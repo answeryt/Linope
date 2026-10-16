@@ -18,7 +18,7 @@ TERMINAL_SEND_SCHEMA: dict[str, Any] = {
     "description": (
         "Send text to a persistent terminal. By default Enter is submitted and "
         "the call waits for a prompt, stdin wait, output silence, timeout, or "
-        "session exit. Background mode returns a job id for job_output/job_kill."
+        "session exit. Background mode returns a job id immediately."
     ),
     "parameters": {
         "type": "object",
@@ -40,7 +40,7 @@ TERMINAL_SEND_SCHEMA: dict[str, Any] = {
             },
             "run_in_background": {
                 "type": "boolean",
-                "description": "Return a job id immediately; collect with job_output or stop with job_kill.",
+                "description": "Return a job id immediately. There is no separate tool to read or stop it.",
             },
         },
         "required": ["sessionId", "text"],
@@ -101,14 +101,8 @@ def _error(message: str, **details: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 def capability_profile(capability_id, changes):
-    """Tell the process this tool needs a tool resource."""
-    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-    from kernel.resource.definition import ResourceKind
+    """This process leases a tool and the shared project workspace."""
+    from kernel.process.profiles import tool_with_workspace
 
-    return ProcessDeclaration(
-        capability=capability_id,
-        resources=(
-            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
-        ),
-    )
+    return tool_with_workspace(capability_id, changes)
 

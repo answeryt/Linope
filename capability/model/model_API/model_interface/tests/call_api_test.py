@@ -76,6 +76,38 @@ class OpenAIChatCallApiTest(unittest.TestCase):
         self.assertEqual(kwargs["seed"], 1)
         self.assertEqual(kwargs["extra_body"], {"foo": "bar"})
 
+    def test_normalizes_kernel_tools_and_omits_empty_tool_choice(self) -> None:
+        kwargs = self.leaf._request_kwargs(
+            {
+                "tools": [
+                    {
+                        "name": "read",
+                        "description": "Read a file.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"file_path": {"type": "string"}},
+                        },
+                    }
+                ]
+            },
+            stream=False,
+            generate_kwargs=None,
+            extra_body=None,
+        )
+        self.assertEqual(kwargs["tools"][0]["type"], "function")
+        self.assertEqual(kwargs["tools"][0]["function"]["name"], "read")
+        self.assertNotIn("tool_choice", kwargs)
+
+    def test_omits_empty_tools_and_tool_choice(self) -> None:
+        kwargs = self.leaf._request_kwargs(
+            {"tools": [], "tool_choice": "auto"},
+            stream=False,
+            generate_kwargs=None,
+            extra_body=None,
+        )
+        self.assertNotIn("tools", kwargs)
+        self.assertNotIn("tool_choice", kwargs)
+
     def test_call_api_uses_lazy_sdk(self) -> None:
         create = AsyncMock(return_value="ok")
         client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
@@ -98,6 +130,24 @@ class OpenAIChatCallApiTest(unittest.TestCase):
         create.assert_awaited_once()
         self.assertEqual(create.await_args.kwargs["max_completion_tokens"], 8)
 
+    def test_format_messages_translates_kernel_roles(self) -> None:
+        formatted = self.leaf.format_messages(
+            [
+                {"role": "user_msg", "content": "hi"},
+                {"role": "model_msg", "content": "yo"},
+                {"role": "tool_msg", "content": "out"},
+                {"role": "system_msg", "content": "rules"},
+            ]
+        )
+        self.assertEqual(
+            [item["role"] for item in formatted],
+            ["user", "assistant", "tool", "system"],
+        )
+        roles = _load("roles")
+        self.assertEqual(roles.kernel_role("assistant"), "model_msg")
+        self.assertEqual(roles.kernel_role("model"), "model_msg")
+        self.assertEqual(roles.vendor_role("model_msg"), "assistant")
+
     def test_formats_text_blocks(self) -> None:
         block = SimpleNamespace(type="text", text="hello")
         messages = self.leaf.format_messages([block])
@@ -105,6 +155,12 @@ class OpenAIChatCallApiTest(unittest.TestCase):
             messages,
             [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
         )
+
+    def test_normalizes_null_message_content(self) -> None:
+        messages = self.leaf.format_messages(
+            [{"role": "tool_msg", "content": None}]
+        )
+        self.assertEqual(messages, [{"role": "tool", "content": ""}])
 
     def test_parse_response_reads_choice_content(self) -> None:
         result = SimpleNamespace(
@@ -166,6 +222,8 @@ class GeminiCallApiTest(unittest.TestCase):
         formatted = leaf.format_messages([{"role": "assistant", "content": "hi"}])
         self.assertEqual(formatted[0]["role"], "model")
         self.assertEqual(formatted[0]["parts"], [{"text": "hi"}])
+        again = leaf.format_messages([{"role": "model_msg", "content": "hi"}])
+        self.assertEqual(again[0]["role"], "model")
 
 
 class AnthropicCallApiTest(unittest.TestCase):

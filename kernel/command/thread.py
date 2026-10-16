@@ -1,33 +1,32 @@
-"""Raise, lower, show, or idle the workers of a running capability."""
+"""Raise, lower, or idle the workers of a running capability."""
 
 from __future__ import annotations
 
 import sys
 from typing import Any
 
-from kernel.command.parser import USAGE, resource_store_path
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import UsageError, guard, parse
 from kernel.load_balancing.hints import Seat
 from kernel.load_balancing.process_scale import close_idle
 from kernel.load_balancing.workers import lower_ceiling, raise_ceiling
 from kernel.process.ledger import open_store
 
+USAGE = "用法: linope process workers add|remove|idle <能力> [--count 人数]"
 
+
+@guard(USAGE)
 def run(argv: list[str]) -> int:
-    rest, store_path = resource_store_path(argv)
-    if len(rest) not in {2, 3}:
-        raise SystemExit(USAGE)
-    verb, capability = rest[0], rest[1]
-    if verb not in {"add", "remove", "show", "idle"}:
-        raise SystemExit(USAGE)
-    if verb in {"show", "idle"} and len(rest) != 2:
-        raise SystemExit(USAGE)
-    count = 1
-    if verb in {"add", "remove"} and len(rest) == 3:
-        if not rest[2].isdigit() or int(rest[2]) < 1:
-            raise SystemExit("人数至少为 1")
-        count = int(rest[2])
-    store = open_store(store_path)
+    if not argv or argv[0] not in {"add", "remove", "idle"}:
+        raise UsageError(USAGE)
+    verb, rest = argv[0], argv[1:]
+    invocation = parse(rest, flags={"count": "int"}, usage=USAGE)
+    if len(invocation.position) != 1:
+        raise UsageError(USAGE)
+    capability = invocation.position[0]
+    count = 1 if invocation.options.get("count") is None else int(invocation.options["count"])
+    if count < 1:
+        raise UsageError("人数至少为 1")
+    store = open_store(invocation.store)
     try:
         try:
             if verb == "add":
@@ -36,8 +35,6 @@ def run(argv: list[str]) -> int:
             elif verb == "remove":
                 ceiling = lower_ceiling(store, capability, count)
                 print(f"thread remove {capability} {ceiling}")
-            elif verb == "show":
-                print(_show(store, capability))
             else:
                 closed = _idle(store, capability)
                 shown = " ".join(closed) if closed else "0"
@@ -50,21 +47,6 @@ def run(argv: list[str]) -> int:
         store.close()
 
 
-def _show(store: Any, capability: str) -> str:
-    rows = store.running_processes(capability)
-    if not rows:
-        raise ValueError("这个能力还没有在跑的进程")
-    lines: list[str] = []
-    for row in rows:
-        pending, claimed = store.mailbox_counts(row["process_id"])
-        lines.append(
-            f"{row['process_id']} pending={pending} claimed={claimed} "
-            f"worker_ceiling={_ceiling(row, 'worker_ceiling', 'max_sync_workers')} "
-            f"inflight_ceiling={_ceiling(row, 'inflight_ceiling', 'max_concurrent_tasks')}"
-        )
-    return "\n".join(lines)
-
-
 def _idle(store: Any, capability: str) -> tuple[str, ...]:
     rows = tuple(store.running_processes(capability))
     if not rows:
@@ -75,6 +57,7 @@ def _idle(store: Any, capability: str) -> tuple[str, ...]:
 
 def _seat(store: Any, capability: str, row: dict[str, Any]) -> Seat:
     pending, claimed = store.mailbox_counts(row["process_id"])
+    note = store.note(str(row["process_id"]), "rtt") if hasattr(store, "note") else {}
     return Seat(
         process_id=str(row["process_id"]),
         resource_id="",
@@ -85,19 +68,9 @@ def _seat(store: Any, capability: str, row: dict[str, Any]) -> Seat:
         claimed=claimed,
         limits={},
         capacity=1,
+        occupied=0,
         window=None,
-        used=0,
         share_mode="",
         handle="",
+        rtt_ms=int(note.get("ms") or 0),
     )
-
-
-def _ceiling(row: dict[str, Any], field: str, policy_key: str) -> int:
-    if row.get(field) is not None:
-        return int(row[field])
-    activation = row.get("activation") if isinstance(row.get("activation"), dict) else {}
-    policy = activation.get("thread_policy") if isinstance(activation.get("thread_policy"), dict) else {}
-    return int(policy.get(policy_key, 1))
-
-
-SPEC = CommandSpec(name="thread", run=run)

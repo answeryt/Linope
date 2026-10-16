@@ -7,19 +7,15 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from kernel.process.communication.ledger.channel_state import ChannelSection
-from kernel.process.communication.ledger.requests import MailboxSection
-from kernel.process.communication.ledger_contracts import ChannelStore, RequestStore
+from kernel.communication.ledger.channel_state import ChannelSection
+from kernel.communication.ledger.requests import MailboxSection
+from kernel.communication.ledger_contracts import ChannelStore, RequestStore
 from kernel.process.process_manager.ledger_contracts import (
     ReconcileStore,
     ResourceRuntimeStore,
 )
 from kernel.process.process_manager.process_ledger import ProcessSection
 from kernel.resource.store.file_store import FileStore
-from kernel.resource.store.mysql_store import MySQLResourceStore as MysqlBackend
-from kernel.resource.store.postgres_store import (
-    PostgreSQLResourceStore as PostgresBackend,
-)
 from kernel.resource.store.registry import (
     open_store,
     register_store,
@@ -34,9 +30,6 @@ __all__ = [
     "ChannelStore",
     "FileResourceStore",
     "MemoryResourceStore",
-    "MySQLResourceStore",
-    "PostgreSQLResourceStore",
-    "PostgresResourceStore",
     "ReconcileStore",
     "RequestStore",
     "ResourceRuntimeStore",
@@ -58,7 +51,12 @@ class MemoryResourceStore:
         self.process = ProcessSection(self._lock)
         self.mailbox = MailboxSection(self._lock)
         self.channel = ChannelSection(self._lock)
-        self._sections = (self.resource, self.process, self.mailbox, self.channel)
+        self._sections = (
+            self.resource,
+            self.process,
+            self.mailbox,
+            self.channel,
+        )
         if reap:
             self.reap_dead_processes()
 
@@ -107,28 +105,103 @@ class MemoryResourceStore:
                     continue
                 if process.get("desired") == "stop":
                     continue
-                pending, claimed = self.mailbox.mailbox_counts(lease.process_id)
-                limits, capacity = _seat_limits(process)
-                window = _window_limit(limits)
-                used = self.resource.window_used(resource_id) if window is not None else 0
                 seats.append(
-                    {
-                        "process_id": lease.process_id,
-                        "resource_id": resource_id,
-                        "capability_id": process.get("capability_id") or "",
-                        "kind": entity.kind,
-                        "identity": dict(entity.identity),
-                        "pending": pending,
-                        "claimed": claimed,
-                        "limits": limits,
-                        "capacity": capacity,
-                        "window": window,
-                        "used": used,
-                        "share_mode": lease.share_mode.value,
-                        "handle": handle,
-                    }
+                    self._seat(
+                        lease.process_id,
+                        resource_id=resource_id,
+                        kind=entity.kind,
+                        identity=dict(entity.identity),
+                        share_mode=lease.share_mode.value,
+                        handle=handle,
+                        process=process,
+                    )
                 )
             return tuple(seats)
+
+    def capability_seats(self, capability_id: str) -> tuple[dict[str, Any], ...]:
+        """Running processes of one capability, grouped by whether they are shared."""
+        with self._lock:
+            shared = self.process.shares_capability(capability_id)
+            seats: list[dict[str, Any]] = []
+            for row in self.process.running_processes(capability_id):
+                process_id = str(row["process_id"])
+                process = self.process.get_process(process_id)
+                if process is None:
+                    continue
+                seats.append(
+                    self._seat(
+                        process_id,
+                        resource_id=capability_id if shared else process_id,
+                        kind="",
+                        identity={"capability": capability_id},
+                        share_mode="shared" if shared else "exclusive",
+                        handle="",
+                        process=process,
+                    )
+                )
+            return tuple(seats)
+
+    def submit_request(
+        self,
+        process_id: str,
+        body: dict[str, Any],
+        sender_id: str | None = None,
+    ) -> str:
+        """Hand one mailbox body over, and charge its size to the sender."""
+        request_id = self.mailbox.submit_request(process_id, body, sender_id)
+        from kernel.resource.account.recorded import record_communication
+
+        record_communication(self, sender_id or process_id, body)
+        return request_id
+
+    def complete_request(
+        self,
+        request_id: str,
+        reply: dict[str, Any],
+        claim_token: str | None = None,
+    ) -> None:
+        """Store a reply when the scheduled checks still hold."""
+        from kernel.communication.ledger.requests import allow_commit
+
+        if not allow_commit(self, str(request_id), read=_read_representation):
+            schedule = self.mailbox.request_schedule(str(request_id)) or {}
+            token = schedule.get("claim_token")
+            if claim_token is None or token is None or claim_token == token:
+                self.mailbox.requeue_request(str(request_id))
+            return
+        self.mailbox.complete_request(request_id, reply, claim_token)
+
+    def _seat(
+        self,
+        process_id: str,
+        *,
+        resource_id: str,
+        kind: str,
+        identity: dict[str, Any],
+        share_mode: str,
+        handle: str,
+        process: dict[str, Any],
+    ) -> dict[str, Any]:
+        pending, claimed = self.mailbox.mailbox_counts(process_id)
+        limits, capacity = _seat_limits(process)
+        occupied, window = _context_snapshot(self, process_id)
+        rtt_ms = _rtt_ms(self, process_id)
+        return {
+            "process_id": process_id,
+            "resource_id": resource_id,
+            "capability_id": process.get("capability_id") or "",
+            "kind": kind,
+            "identity": identity,
+            "pending": pending,
+            "claimed": claimed,
+            "limits": limits,
+            "capacity": capacity,
+            "occupied": occupied,
+            "window": window,
+            "share_mode": share_mode,
+            "handle": handle,
+            "rtt_ms": rtt_ms,
+        }
 
     def initialize_schema(self) -> None:
         return None
@@ -171,29 +244,11 @@ class FileResourceStore(FileStore):
         )
 
 
-class PostgreSQLResourceStore(PostgresBackend):
-    """PostgreSQL ledger wired with every section."""
+def _read_representation(href: str) -> dict[str, Any]:
+    """Read one representation for a mailbox commit check."""
+    from kernel.hypermedia.observation import fetch_representation
 
-    def __init__(self, locator: str, *, reap: bool = True) -> None:
-        super().__init__(
-            locator,
-            memory=MemoryResourceStore(locator=locator, reap=False),
-            reap=reap,
-        )
-
-
-class MySQLResourceStore(MysqlBackend):
-    """MySQL ledger wired with every section."""
-
-    def __init__(self, locator: str, *, reap: bool = True) -> None:
-        super().__init__(
-            locator,
-            memory=MemoryResourceStore(locator=locator, reap=False),
-            reap=reap,
-        )
-
-
-PostgresResourceStore = PostgreSQLResourceStore
+    return fetch_representation(href)
 
 
 def _file_store(locator: str, *, reap: bool = True):
@@ -204,25 +259,41 @@ def _memory_store(locator: str, *, reap: bool = True):
     return MemoryResourceStore(locator=locator, reap=reap)
 
 
-def _postgres_store(locator: str, *, reap: bool = True):
-    return PostgreSQLResourceStore(locator, reap=reap)
+def _database_store(locator: str, *, reap: bool = True):
+    from kernel.database.store import DatabaseStore
 
-
-def _mysql_store(locator: str, *, reap: bool = True):
-    return MySQLResourceStore(locator, reap=reap)
+    return DatabaseStore(
+        locator,
+        memory=MemoryResourceStore(locator=locator, reap=False),
+        reap=reap,
+    )
 
 
 def _install_builtins() -> None:
     register_store("file", _file_store, builtin=True)
     register_store("memory", _memory_store, builtin=True)
-    register_store("postgresql", _postgres_store, builtin=True)
-    register_store("mysql", _mysql_store, builtin=True)
+    register_store("database", _database_store)
 
 
 def _same_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return json.dumps(left, sort_keys=True, default=str) == json.dumps(
         right, sort_keys=True, default=str
     )
+
+
+def _rtt_ms(store: Any, process_id: str) -> int:
+    note = store.note(process_id, "rtt") if hasattr(store, "note") else {}
+    if not isinstance(note, dict) or "ms" not in note:
+        return 0
+    return int(note["ms"])
+
+
+def _context_snapshot(store: Any, process_id: str) -> tuple[int, int | None]:
+    note = store.note(process_id, "context") if hasattr(store, "note") else {}
+    if not isinstance(note, dict) or not note:
+        return 0, None
+    ceiling = note.get("ceiling")
+    return int(note.get("occupied", 0)), None if ceiling is None else int(ceiling)
 
 
 def _seat_limits(process: dict[str, Any]) -> tuple[dict[str, Any], int]:
@@ -246,13 +317,6 @@ def _seat_limits(process: dict[str, Any]) -> tuple[dict[str, Any], int]:
     else:
         capacity = int(policy.get("max_concurrent_tasks", 1))
     return limits, max(1, capacity)
-
-
-def _window_limit(limits: dict[str, Any]) -> int | None:
-    for key in ("context_budget", "window"):
-        if key in limits:
-            return int(limits[key])
-    return None
 
 
 _install_builtins()

@@ -10,13 +10,24 @@ class ProcessSection:
     """Who is running, which layout is selected, and which capabilities share."""
 
     name = "process"
-    flat_keys = ("processes", "layout", "shares", "failures")
+    flat_keys = (
+        "processes",
+        "layout",
+        "shares",
+        "failures",
+        "names",
+        "specs",
+        "services",
+        "bindings",
+    )
 
     def __init__(self, lock: threading.RLock) -> None:
         self._lock = lock
         self._processes: dict[str, dict[str, Any]] = {}
         self._layout: tuple[str | None, dict[str, Any]] = (None, {})
         self._shares: set[str] = set()
+        self._services: dict[str, dict[str, Any]] = {}
+        self._bindings: dict[str, dict[str, str]] = {}
         self.failures: list[str] = []
 
     def register_process(
@@ -93,15 +104,18 @@ class ProcessSection:
         pid: int,
         identity: str | None,
         ready: dict[str, Any],
-    ) -> None:
+    ) -> bool:
         with self._lock:
             record = self._processes[process_id]
+            if record.get("desired") == "stop" or record.get("status") == "failed":
+                return False
             record.update(
                 pid=pid,
                 identity=identity,
                 status="running",
                 ready=dict(ready),
             )
+            return True
 
     def mark_failed(
         self,
@@ -196,6 +210,97 @@ class ProcessSection:
         with self._lock:
             self._shares.clear()
 
+    def create_service(self, name: str) -> None:
+        """Create an empty service. This does not start a process."""
+        if not name or name.strip() != name:
+            raise ValueError("服务名字不能为空")
+        with self._lock:
+            if name in self._services:
+                raise ValueError(f"已经有这个服务: {name}")
+            self._services[name] = {"name": name}
+            self._bindings[name] = {}
+
+    def service_record(self, name: str) -> dict[str, Any] | None:
+        """One service, or none when create has not been run."""
+        with self._lock:
+            record = self._services.get(name)
+            return None if record is None else dict(record)
+
+    def service_names(self) -> tuple[str, ...]:
+        """Service names in alphabetical order."""
+        with self._lock:
+            return tuple(sorted(self._services))
+
+    def bind_service(self, name: str, process_id: str, role: str) -> dict[str, Any]:
+        """Attach one existing process. The same pair is not stored twice."""
+        if not role or role.strip() != role:
+            raise ValueError("关系不能为空")
+        with self._lock:
+            if name not in self._services:
+                raise KeyError(name)
+            if process_id not in self._processes:
+                raise KeyError(process_id)
+            current = self._bindings.setdefault(name, {})
+            if current.get(process_id) == role:
+                return {"changed": False}
+            current[process_id] = role
+            return {"changed": True}
+
+    def unbind_service(self, name: str, process_id: str) -> None:
+        """Drop one membership. The process keeps running."""
+        with self._lock:
+            if name not in self._services:
+                raise KeyError(name)
+            current = self._bindings.get(name) or {}
+            if process_id not in current:
+                raise KeyError(process_id)
+            del current[process_id]
+
+    def delete_service(self, name: str) -> None:
+        """Drop the service and its memberships. Processes keep running."""
+        with self._lock:
+            if name not in self._services:
+                raise KeyError(name)
+            self._services.pop(name, None)
+            self._bindings.pop(name, None)
+
+    def service_members(self, name: str) -> tuple[dict[str, Any], ...]:
+        """Memberships of one service. Missing services have none."""
+        with self._lock:
+            if name not in self._services:
+                return ()
+            found = []
+            for process_id, role in sorted(self._bindings.get(name, {}).items()):
+                row = dict(self._processes.get(process_id) or {})
+                found.append(
+                    {
+                        "process_id": process_id,
+                        "role": role,
+                        "capability_id": str(row.get("capability_id") or ""),
+                        "status": str(row.get("status") or ""),
+                        "pid": row.get("pid"),
+                    }
+                )
+            return tuple(found)
+
+    def service_member_ids(self, name: str) -> tuple[str, ...] | None:
+        """Process ids of one service, or none when that service does not exist."""
+        with self._lock:
+            if name not in self._services:
+                return None
+            return tuple(sorted(self._bindings.get(name, {})))
+
+    def services_for_process(self, process_id: str) -> tuple[str, ...]:
+        """Every service this process currently belongs to."""
+        with self._lock:
+            return tuple(
+                sorted(
+                    name
+                    for name, bindings in self._bindings.items()
+                    if process_id in bindings
+                )
+            )
+
     def export_part(self) -> dict[str, Any]:
         return {
             "processes": {
@@ -205,6 +310,10 @@ class ProcessSection:
             "layout": [self._layout[0], dict(self._layout[1])],
             "shares": sorted(self._shares),
             "failures": list(self.failures),
+            "services": {name: dict(record) for name, record in self._services.items()},
+            "bindings": {
+                name: dict(bindings) for name, bindings in self._bindings.items()
+            },
         }
 
     def import_part(self, payload: dict[str, Any]) -> None:
@@ -222,3 +331,24 @@ class ProcessSection:
         )
         self._shares = {str(item) for item in payload.get("shares") or ()}
         self.failures = [str(value) for value in payload.get("failures") or ()]
+        if payload.get("names") or payload.get("specs"):
+            raise ValueError("旧的服务配方不能再读入，请重新创建服务并绑定进程")
+        self._services = {}
+        raw_services = payload.get("services") or {}
+        if isinstance(raw_services, dict):
+            for name, record in raw_services.items():
+                if isinstance(record, dict):
+                    self._services[str(name)] = {"name": str(name)}
+        self._bindings = {}
+        raw_bindings = payload.get("bindings") or {}
+        if isinstance(raw_bindings, dict):
+            for name, bindings in raw_bindings.items():
+                if not isinstance(bindings, dict):
+                    continue
+                cleaned = {
+                    str(process_id): str(role)
+                    for process_id, role in bindings.items()
+                    if process_id and role
+                }
+                if str(name) in self._services:
+                    self._bindings[str(name)] = cleaned

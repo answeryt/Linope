@@ -30,6 +30,24 @@ def _param_leaf(folder: str, filename: str) -> Any:
     return module
 
 
+def _vendor_role(role: object) -> str:
+    return _param_leaf_sibling("roles.py").vendor_role(role)
+
+
+def _param_leaf_sibling(filename: str) -> Any:
+    cached = _PARAM_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    path = Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _PARAM_CACHE[filename] = module
+    return module
+
+
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
     limits = _param_leaf("context_limits", "context_limits.py")
     request = dict(payload)
@@ -124,9 +142,11 @@ def format_messages(messages: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict) and "role" in item:
             flush()
             message = dict(item)
+            message["role"] = _vendor_role(message.get("role"))
             if "content" in message:
-                message["content"] = _content(message["content"])
-            result.append(message)
+                converted = _content(message["content"])
+                message["content"] = "" if converted is None else converted
+            result.append(_promote_tool_calls(message))
             continue
         converted = _part(item)
         if isinstance(converted, dict) and converted.get("role") == "tool":
@@ -168,15 +188,22 @@ def parse_response_turn(result: Any) -> dict[str, Any] | None:
         blocks.append(
             {
                 "type": "tool-call",
+                "id": str(getattr(call, "id", "") or ""),
                 "name": str(getattr(function, "name", "") or ""),
                 "arguments": getattr(function, "arguments", ""),
             }
         )
-    return {
+    payload = {
         "type": "model_turn",
         "blocks": blocks,
         "finish_reason": str(getattr(choice, "finish_reason", None) or "stop"),
     }
+    from capability.model.model_runtime.usage import read_usage
+
+    usage = read_usage(getattr(result, "usage", None))
+    if usage:
+        payload["usage"] = usage
+    return payload
 
 
 def parse_stream_chunk(chunk: Any) -> str:
@@ -203,6 +230,7 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
                 {
                     "type": "tool-call-delta",
                     "index": int(getattr(call, "index", 0) or 0),
+                    "id": getattr(call, "id", None),
                     "name": getattr(function, "name", None),
                     "arguments": getattr(function, "arguments", "") or "",
                 }
@@ -210,7 +238,76 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
         finish = getattr(choice, "finish_reason", None)
         if finish:
             parts.append({"type": "finish", "reason": str(finish)})
+    from capability.model.model_runtime.usage import read_usage, usage_part
+
+    part = usage_part(read_usage(getattr(chunk, "usage", None)))
+    if part is not None:
+        parts.append(part)
     return parts
+
+
+def _promote_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
+    """Turn provider-neutral tool blocks into chat-completions tool_calls."""
+    content = message.get("content")
+    if not isinstance(content, list) or message.get("role") != "assistant":
+        return message
+    calls = [part for part in content if isinstance(part, dict) and part.get("type") == "tool-call"]
+    if not calls:
+        return message
+    texts = [
+        str(part.get("text") or "")
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text" and part.get("text")
+    ]
+    message["content"] = "\n".join(texts)
+    message["tool_calls"] = [
+        {
+            "id": str(part.get("id") or ""),
+            "type": "function",
+            "function": {
+                "name": str(part.get("name") or ""),
+                "arguments": _argument_text(part.get("arguments")),
+            },
+        }
+        for part in calls
+    ]
+    return message
+
+
+def _argument_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    import json
+    return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+def _function_tools(value: Any) -> list[dict[str, Any]]:
+    """Normalize kernel tool schemas to OpenAI Chat function tools."""
+    if value is None or value == "UNSET":
+        return []
+    raw = value if isinstance(value, list) else [value]
+    normalized: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function" and isinstance(item.get("function"), dict):
+            normalized.append(item)
+            continue
+        name = item.get("name")
+        if not name:
+            continue
+        normalized.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": str(name),
+                    "description": str(item.get("description") or ""),
+                    "parameters": item.get("parameters")
+                    or {"type": "object", "properties": {}},
+                },
+            }
+        )
+    return normalized
 
 
 def _request_kwargs(
@@ -231,10 +328,11 @@ def _request_kwargs(
         kwargs["reasoning_effort"] = params["reasoning_effort"]
     if params.get("parallel_tool_calls") is False:
         kwargs["parallel_tool_calls"] = False
-    if not _omit(params.get("tools")):
-        kwargs["tools"] = params["tools"]
-    if not _omit(params.get("tool_choice")):
-        kwargs["tool_choice"] = params["tool_choice"]
+    tools = _function_tools(params.get("tools"))
+    if tools:
+        kwargs["tools"] = tools
+        if not _omit(params.get("tool_choice")):
+            kwargs["tool_choice"] = params["tool_choice"]
     if stream:
         kwargs["stream_options"] = {"include_usage": True}
     if not _omit(params.get("voice")):

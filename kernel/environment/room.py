@@ -60,9 +60,13 @@ class KernelEnvironment:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "KernelEnvironment":
         filesystem = FilesystemView.from_payload(payload["filesystem"])
-        identity = IdentityDoor.from_payload(payload["identity"])
+        shell = ProcessEnvironment.from_payload(payload["shell"])
+        identity = IdentityDoor.from_payload(payload["identity"]).with_secrets(
+            shell.env_file,
+            shell.env_file_keys,
+        )
         return cls(
-            shell=ProcessEnvironment.from_payload(payload["shell"]),
+            shell=shell,
             policy=HostExecutionPolicy.from_payload(payload.get("policy")),
             filesystem=filesystem,
             identity=identity,
@@ -92,17 +96,23 @@ class KernelEnvironment:
         access_mode: str | None = None,
         outbound_hosts: tuple[str, ...] = (),
         max_command_seconds: float | None = None,
+        confine: bool = True,
     ) -> "KernelEnvironment":
+        from kernel.environment.confine import host_isolator
+
         mode = _access_mode(access_mode, grants)
         filesystem = FilesystemView.for_local(
             Path(shell.cwd),
             package_paths=tuple(Path(path) for path in module_paths),
             access_mode=mode,
+            process_id=shell.process_id,
         )
         identity = IdentityDoor(
             process_id=shell.process_id,
             capability_id=shell.capability_id,
             access_mode=mode,
+            secret_file=shell.env_file,
+            secret_names=shell.env_file_keys,
         )
         return cls(
             shell=shell,
@@ -122,6 +132,7 @@ class KernelEnvironment:
                 max_command_seconds=max_command_seconds,
                 filesystem=filesystem,
                 identity=identity,
+                isolator=host_isolator(mode) if confine else None,
             ),
             lifecycle=LifecycleDoor.from_policy(policy),
             file_io=FileDoor(filesystem),
@@ -136,6 +147,12 @@ def _access_mode(explicit: str | None, grants: tuple[object, ...]) -> str:
         if str(getattr(kind, "value", kind)) != "workspace":
             continue
         metadata = getattr(grant, "metadata", {}) or {}
-        if isinstance(metadata, dict) and metadata.get("access_mode"):
-            return check_access_mode(str(metadata["access_mode"]))
+        call_params = getattr(grant, "call_params", {}) or {}
+        chosen = ""
+        if isinstance(call_params, dict) and call_params.get("mode"):
+            chosen = str(call_params["mode"])
+        elif isinstance(metadata, dict) and metadata.get("access_mode"):
+            chosen = str(metadata["access_mode"])
+        if chosen:
+            return check_access_mode(chosen)
     return "workspace-write"

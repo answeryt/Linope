@@ -31,8 +31,8 @@ BASH_SCHEMA: dict[str, Any] = {
         "Non-zero exits are reported as `[exit code: N]`. "
         "Long output is truncated to its tail. "
         "Set `run_in_background: true` for long-running commands: the call "
-        "returns a job id immediately; read its output with `job_output` and "
-        "stop it with `job_kill`."
+        "returns a job id immediately. The job stays with this tool; there is "
+        "no separate tool to read or stop it."
     ),
     "parameters": {
         "type": "object",
@@ -65,8 +65,8 @@ BASH_SCHEMA: dict[str, Any] = {
             "run_in_background": {
                 "type": "boolean",
                 "description": (
-                    "Run in the background and return a job id immediately "
-                    "(collect with job_output, stop with job_kill). No timeout applies."
+                    "Run in the background and return a job id immediately. "
+                    "No timeout applies. There is no separate tool to read or stop it."
                 ),
             },
         },
@@ -94,6 +94,7 @@ def load(kind, body, call_params=None):
 def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
     if name != "bash":
         return _error(f"unknown tool: {name}")
+    kwargs.pop("mode", None)
     return bash(
         command=str(arguments.get("command") or ""),
         description=str(arguments.get("description") or ""),
@@ -263,14 +264,8 @@ def _error(message: str, **details: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 def capability_profile(capability_id, changes):
-    """Tell the process this tool needs a tool resource."""
-    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-    from kernel.resource.definition import ResourceKind
+    """This process leases a tool and the shared project workspace."""
+    from kernel.process.profiles import tool_with_workspace
 
-    return ProcessDeclaration(
-        capability=capability_id,
-        resources=(
-            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
-        ),
-    )
+    return tool_with_workspace(capability_id, changes)
 

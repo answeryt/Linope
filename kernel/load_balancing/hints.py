@@ -23,23 +23,32 @@ class Seat:
     claimed: int
     limits: dict[str, Any]
     capacity: int
+    occupied: int
     window: int | None
-    used: int
     share_mode: str
     handle: str
+    rtt_ms: int = 0
 
     @property
-    def window_full(self) -> bool:
-        return self.window is not None and self.used > self.window
+    def budget_full(self) -> bool:
+        """The context window is full when occupancy is past the model's ceiling."""
+        return self.window is not None and self.occupied > self.window
 
     @property
     def has_room(self) -> bool:
-        return (not self.window_full) and self.claimed < self.capacity
+        return (not self.budget_full) and self.claimed < self.capacity
 
 
 def seats(store: Any, kind: str, identity: dict[str, Any]) -> tuple[Seat, ...]:
-    """List the processes that still lease this kind and identity."""
-    raw = store.resource_seats(kind, dict(identity))
+    """List peer processes for one leased resource, or one capability name.
+
+    An empty kind groups running processes of ``identity["capability"]``.
+    That is how model processes are seated after the model lease is gone.
+    """
+    if not kind:
+        raw = store.capability_seats(str(identity.get("capability") or ""))
+    else:
+        raw = store.resource_seats(kind, dict(identity))
     return tuple(Seat(**item) for item in raw)
 
 

@@ -4,25 +4,11 @@ import pytest
 
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.process_manager.replica_layout.layout import ReplicaPlan
-from kernel.process.process_manager.replica_layout.registry import (
-    register_layout,
-    unregister_layout,
-)
 from kernel.command import main
 from kernel.process.reconcile import ProcessReconciler
 from kernel.resource.definition import ResourceKind
 from kernel.resource.pool import ResourcePool
 from kernel.process.ledger import FileResourceStore
-
-
-class _Listed:
-    def desired_replicas(self, capability: str, running: tuple) -> tuple:
-        del capability, running
-        return ()
-
-    def plan_replicas(self, capability: str, running: tuple) -> ReplicaPlan:
-        del capability, running
-        return ReplicaPlan((), (), ())
 
 
 def _declaration() -> ProcessDeclaration:
@@ -36,40 +22,9 @@ def _declaration() -> ProcessDeclaration:
         ),
     )
 
-
-def test_layouts_lists_builtin_and_custom_names(tmp_path, capsys) -> None:
-    path = tmp_path / "resources.json"
-    register_layout("custom_demo", _Listed())
-    try:
-        assert main(["layouts", "--resource-store", str(path)]) == 0
-        listed = capsys.readouterr().out
-        assert "numbered" in listed
-        assert "counted" in listed
-        assert "named" in listed
-        assert "custom_demo" in listed
-        assert "????????????" in listed
-
-        assert main(["layout", "numbered", "--resource-store", str(path)]) == 0
-        capsys.readouterr()
-        assert main(["layouts", "--resource-store", str(path)]) == 0
-        selected = capsys.readouterr().out
-        assert "* numbered" in selected
-        assert "????????????" not in selected
-
-        assert main(["layout", "off", "--resource-store", str(path)]) == 0
-        capsys.readouterr()
-        store = FileResourceStore(path)
-        try:
-            assert store.selected_layout() == (None, {})
-        finally:
-            store.close()
-    finally:
-        unregister_layout("custom_demo")
-
-
 def test_share_list_is_selected_from_the_command(tmp_path, capsys) -> None:
     path = tmp_path / "resources.json"
-    assert main(["share", "tools.bash", "context.sliding_window", "--resource-store", str(path)]) == 0
+    assert main(["process", "share", "tools.bash", "context.sliding_window", "--resource-store", str(path)]) == 0
     assert "share tools.bash context.sliding_window" in capsys.readouterr().out
     store = FileResourceStore(path)
     try:
@@ -77,7 +32,7 @@ def test_share_list_is_selected_from_the_command(tmp_path, capsys) -> None:
         assert store.shares_capability("tools.bash")
     finally:
         store.close()
-    assert main(["share", "off", "--resource-store", str(path)]) == 0
+    assert main(["process", "share", "off", "--resource-store", str(path)]) == 0
     store = FileResourceStore(path)
     try:
         assert store.shared_capabilities() == ()
@@ -110,7 +65,7 @@ def test_shared_capability_uses_one_entity_across_processes(tmp_path) -> None:
 
 def test_unshared_capability_gets_one_entity_per_process(tmp_path) -> None:
     path = tmp_path / "resources.json"
-    assert main(["layout", "numbered", "--resource-store", str(path)]) == 0
+    assert main(["layout", "use", "numbered", "--resource-store", str(path)]) == 0
     store = FileResourceStore(path)
     started: list = []
     try:
@@ -131,7 +86,7 @@ def test_unshared_capability_gets_one_entity_per_process(tmp_path) -> None:
 
 def test_numbered_layout_defaults_to_one_and_count_starts_two(tmp_path) -> None:
     path = tmp_path / "resources.json"
-    assert main(["layout", "numbered", "--resource-store", str(path)]) == 0
+    assert main(["layout", "use", "numbered", "--resource-store", str(path)]) == 0
     store = FileResourceStore(path)
     started: list = []
     try:
@@ -177,6 +132,29 @@ def test_numbered_layout_defaults_to_one_and_count_starts_two(tmp_path) -> None:
         started.extend(ProcessReconciler(ResourcePool(store)).launch(_declaration()))
         assert len(started) == 1
         assert started[0].send({"operation": "ping"})["event"] == "pong"
+    finally:
+        for process in started:
+            process.stop()
+        store.close()
+
+
+def test_a_smaller_replica_count_marks_the_extra_copy_to_stop(tmp_path) -> None:
+    path = tmp_path / "resources.json"
+    assert main(["layout", "use", "numbered", "--resource-store", str(path)]) == 0
+    store = FileResourceStore(path)
+    started: list = []
+    try:
+        started.extend(
+            ProcessReconciler(ResourcePool(store)).launch(_declaration(), replica_count=2)
+        )
+        assert len(started) == 2
+        again = ProcessReconciler(ResourcePool(store)).launch(_declaration(), replica_count=1)
+        assert again == ()
+        marked = [
+            (store.get_process(process.activation.process_id) or {}).get("desired")
+            for process in started
+        ]
+        assert marked.count("stop") == 1
     finally:
         for process in started:
             process.stop()

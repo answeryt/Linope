@@ -1,4 +1,4 @@
-"""Whether a task writes a long-term page."""
+"""Whether following a link keeps a representation in the memory quantity."""
 
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 
 
 class CapabilityAdapter(Protocol):

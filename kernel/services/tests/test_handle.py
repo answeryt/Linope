@@ -22,8 +22,8 @@ def _seat(process_id: str) -> Seat:
         claimed=0,
         limits={},
         capacity=4,
+        occupied=0,
         window=None,
-        used=0,
         share_mode="shared",
         handle="h",
     )
@@ -31,7 +31,7 @@ def _seat(process_id: str) -> Seat:
 
 def _handle(processes: tuple[Process, ...], *, route: dict[str, str] | None = None, **hooks):
     member = MemberPlan(role="model", capability="model.x")
-    plan = ServicePlan(members=(member,), route=route if route is not None else {"prompt": "model"})
+    plan = ServicePlan(members=(member,), route=route if route is not None else {"message": "model"})
     return ServiceHandle(plan, ((member, processes),), Store(), **hooks)
 
 
@@ -39,8 +39,8 @@ def test_one_member_gets_the_request_directly() -> None:
     process = Process("only")
     seen: list = []
     handle = _handle((process,), choose=lambda seats: seen.append(seats))
-    ticket = handle.submit(ServiceRequest(kind="prompt", body="hi"))
-    assert process.submitted == [{"operation": "load", "kind": "prompt", "body": "hi"}]
+    ticket = handle.submit(ServiceRequest(kind="message", body="hi"))
+    assert process.submitted == [{"operation": "load", "kind": "message", "body": "hi"}]
     assert seen == []
     assert handle.wait(ticket)["request_id"] == "only-1"
     handle.close()
@@ -60,7 +60,7 @@ def test_several_copies_are_chosen_by_the_injected_picker() -> None:
         seats=lambda _store, _kind, _identity: (_seat("a"), _seat("b")),
         choose=choose,
     )
-    handle.submit(ServiceRequest(kind="prompt", body="hi"))
+    handle.submit(ServiceRequest(kind="message", body="hi"))
     assert chosen == [("a", "b")]
     assert first.submitted == []
     assert second.submitted[0]["body"] == "hi"
@@ -73,7 +73,7 @@ def test_an_unreadable_seat_table_sends_to_the_first_living_member() -> None:
         raise RuntimeError("读不到")
 
     handle = _handle((first, second), seats=seats, choose=lambda _seats: pytest.fail("不应挑选"))
-    handle.submit(ServiceRequest(kind="prompt", body="hi"))
+    handle.submit(ServiceRequest(kind="message", body="hi"))
     assert first.submitted and not second.submitted
 
 
@@ -86,14 +86,33 @@ def test_a_missing_route_names_the_roles_that_exist() -> None:
         ((model, (Process("m"),)), (tool, (Process("t"),))),
         Store(),
     )
-    with pytest.raises(KeyError, match="prompt"):
-        handle.submit(ServiceRequest(kind="prompt", body="hi"))
+    with pytest.raises(KeyError, match="message"):
+        handle.submit(ServiceRequest(kind="message", body="hi"))
 
 
 def test_a_named_role_that_does_not_exist_is_refused() -> None:
     handle = _handle((Process("only"),))
     with pytest.raises(KeyError, match="tool:bash"):
         handle.submit(ServiceRequest(kind="tool", role="tool:bash"))
+
+
+def test_closing_a_launched_session_stops_its_process() -> None:
+    process = Process("planner-model")
+    handle = _handle((process,))
+    handle.close()
+    assert process.stopped is True
+
+
+def test_a_stop_failure_is_visible_after_close() -> None:
+    process = Process("only")
+
+    def stop() -> None:
+        raise RuntimeError("还没停下")
+
+    process.stop = stop
+    handle = _handle((process,))
+    handle.close()
+    assert handle.close_errors == ["only: 还没停下"]
 
 
 def test_an_unknown_ticket_is_refused() -> None:

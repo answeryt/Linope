@@ -2,6 +2,7 @@ import json
 import os
 
 from kernel.environment import HostExecutionPolicy, KernelEnvironment, ProcessEnvironment
+from kernel.environment.identity import IdentityDoor
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.process_creat.activation import ProcessActivation
 from kernel.process.process_creat.instances import CapabilityDefinition, describe_instance
@@ -62,13 +63,27 @@ def test_apply_loads_named_keys_and_leaves_values_out_of_the_payload(tmp_path, m
     previous = os.getcwd()
     try:
         environment.apply()
-        assert os.environ["LINOPE_SECRET"] == "hidden-value"
+        assert "LINOPE_SECRET" not in os.environ
         assert "LINOPE_OTHER_SECRET" not in os.environ
     finally:
         os.chdir(previous)
+    door = IdentityDoor(
+        process_id="env-file",
+        capability_id="context.sliding_window",
+        secret_file=str(env_path),
+        secret_names=("LINOPE_SECRET",),
+    )
+    assert door.resolve_secret("LINOPE_SECRET") == "hidden-value"
+    try:
+        door.resolve_secret("LINOPE_OTHER_SECRET")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("unnamed secret was returned")
     payload = json.dumps(environment.payload())
     assert "hidden-value" not in payload
     assert "other-secret-value" not in payload
+    assert "hidden-value" not in json.dumps(door.payload())
     assert environment.env_file_keys == ("LINOPE_SECRET",)
 
 
@@ -193,11 +208,60 @@ def test_subprocess_env_is_scrubbed(tmp_path) -> None:
     assert "OPENAI_API_KEY" not in scrubbed
     assert "DB_PASSWORD" not in scrubbed
     assert scrubbed["OK"] == "1"
+    named = IdentityDoor(
+        process_id="secret-process",
+        capability_id="context.sliding_window",
+        secret_names=("PLAIN_CREDENTIAL",),
+    )
+    hidden = named.scrub_env({"PLAIN_CREDENTIAL": "x", "OK": "1"})
+    assert "PLAIN_CREDENTIAL" not in hidden
+    assert hidden["OK"] == "1"
     assert "Windows" in scrubbed["PATH"]
 
 
-def test_missing_isolator_refuses_a_bare_run(tmp_path) -> None:
+def test_git_and_secret_paths_stay_out(tmp_path) -> None:
+    room = _room(tmp_path, confine=False)
+    git = tmp_path / ".git"
+    git.mkdir()
+    secret = tmp_path / ".env"
+    secret.write_text("KEY=1", encoding="utf-8")
+    for path in (git / "config", secret):
+        try:
+            room.file_io.resolve(str(path), write=False)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError(f"blocked path was accepted: {path}")
+    assert room.filesystem.root_path("temp").endswith("room")
+
+
+def test_confined_command_is_wrapped(tmp_path) -> None:
     room = _room(tmp_path)
+    permit = room.compute.prepare(("echo", "hi"), cwd=str(tmp_path), timeout_seconds=1)
+    assert permit.argv != ("echo", "hi")
+    assert "echo" in permit.argv
+
+
+def test_full_access_keeps_the_original_command(tmp_path) -> None:
+    shell = ProcessEnvironment(
+        process_id="room",
+        capability_id="tools.bash",
+        cwd=tmp_path,
+    )
+    room = KernelEnvironment.build(
+        shell=shell,
+        policy=HostExecutionPolicy(),
+        max_concurrent_tasks=1,
+        max_sync_workers=1,
+        channel_name="ledger",
+        access_mode="danger-full-access",
+    )
+    permit = room.compute.prepare(("echo", "hi"), cwd=str(tmp_path), timeout_seconds=1)
+    assert permit.argv == ("echo", "hi")
+
+
+def test_missing_isolator_refuses_a_bare_run(tmp_path) -> None:
+    room = _room(tmp_path, confine=False)
     try:
         room.compute.prepare(("echo", "hi"), cwd=str(tmp_path), timeout_seconds=1, isolate=True)
     except RuntimeError as error:
@@ -241,7 +305,7 @@ def test_wall_clock_asks_the_process_to_stop() -> None:
     assert door.heartbeat_late(0, now=1) is False
 
 
-def _room(workspace):
+def _room(workspace, *, confine: bool = True):
     shell = ProcessEnvironment(
         process_id="room",
         capability_id="tools.bash",
@@ -253,4 +317,5 @@ def _room(workspace):
         max_concurrent_tasks=1,
         max_sync_workers=1,
         channel_name="ledger",
+        confine=confine,
     )

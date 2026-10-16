@@ -24,6 +24,7 @@ class ServiceSpec:
     changes: tuple[Change, ...] = ()
     replica_count: int | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    name: str = ""
 
     def __post_init__(self) -> None:
         if not self.kind or self.kind.strip() != self.kind:

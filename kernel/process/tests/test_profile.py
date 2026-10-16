@@ -31,7 +31,7 @@ class _Recording:
         return ProcessDeclaration(
             capability=capability_id,
             resources=(
-                ResourceClaim(kind=ResourceKind.MODEL, identity={"id": "from-function"}),
+                ResourceClaim(kind=ResourceKind.CONTEXT, identity={"id": "from-function"}),
             ),
         )
 
@@ -67,7 +67,7 @@ def test_missing_profile_stops_before_reconciler(monkeypatch) -> None:
         "kernel.process.process_creat.instances.load_capability",
         no_profile,
     )
-    assert main(["start", "tools.bash"]) == 1
+    assert main(["process", "start", "tools.bash"]) == 1
     assert called is False
 
 
@@ -124,7 +124,14 @@ def test_reconciler_reuses_the_definition(tmp_path, monkeypatch) -> None:
 
 def test_parse_start_keeps_change_clauses() -> None:
     capability, changes, ping, _store, replica_count, env_file, env_keys = parse_start(
-        ["model.openai_chat_model", "--ping", "model", "change", "-", "gpt-4o", "temperature", "change", "-", "0.2"]
+        [
+            "model.openai_chat_model",
+            "--ping",
+            "--change",
+            "model=gpt-4o",
+            "--change",
+            "temperature=0.2",
+        ]
     )
     assert capability == "model.openai_chat_model"
     assert ping is True
@@ -134,15 +141,17 @@ def test_parse_start_keeps_change_clauses() -> None:
     assert env_keys == ()
 
 
-def test_parse_start_takes_a_trailing_count_and_leaves_change_values() -> None:
+def test_parse_start_takes_a_count_and_leaves_change_values() -> None:
+    from kernel.command.parser import UsageError
+
     _capability, changes, _ping, _store, replica_count, _env_file, _env_keys = parse_start(
-        ["model.openai_chat_model", "model", "change", "-", "10", "10"]
+        ["model.openai_chat_model", "--change", "model=10", "--count", "10"]
     )
     assert changes == (("model", "10"),)
     assert replica_count == 10
 
     _capability, changes, _ping, _store, replica_count, _env_file, _env_keys = parse_start(
-        ["model.openai_chat_model", "model", "change", "-", "10"]
+        ["model.openai_chat_model", "--change", "model=10"]
     )
     assert changes == (("model", "10"),)
     assert replica_count is None
@@ -160,10 +169,14 @@ def test_parse_start_selects_keys_from_an_env_file() -> None:
 
 
 def test_parse_start_rejects_an_env_value_on_the_command() -> None:
-    with pytest.raises(SystemExit, match="值放在环境文件里"):
+    from kernel.command.parser import UsageError
+
+    with pytest.raises(UsageError, match="值放在环境文件里"):
         parse_start(["tools.bash", "--env-file", "capability/.env", "--env", "TOKEN=secret"])
 
 
 def test_parse_start_rejects_a_count_below_one() -> None:
-    with pytest.raises(SystemExit, match="份数至少为 1"):
-        parse_start(["model.openai_chat_model", "0"])
+    from kernel.command.parser import UsageError
+
+    with pytest.raises(UsageError, match="份数至少为 1"):
+        parse_start(["model.openai_chat_model", "--count", "0"])

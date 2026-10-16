@@ -22,7 +22,7 @@ from kernel.command.command_blocks import (
     split_line,
     tool_body,
 )
-from kernel.command.protocol import CommandSpec
+from kernel.command.convention import UsageError
 from kernel.process.profile import ProfileUnavailable
 from kernel.process.process_manager.tool_dispatch import (
     tool_capability,
@@ -48,13 +48,29 @@ def resource_href(body: str) -> str | None:
     return match.group(0).rstrip(".,)")
 
 
+def _follow_commands(line: str, from_output: bool) -> bool:
+    """Model and tool text can contain the next command. A status line cannot.
+
+    A command the model already asked for is ``from_output``. A person typing
+    ``load`` also receives model or tool text. Other commands only report
+    what they did.
+    """
+    if from_output:
+        return True
+    try:
+        argv = split_line(line.strip())
+    except ValueError:
+        return False
+    return bool(argv) and argv[:2] == ["capability", "load"]
+
+
 def slip(kind: str, body: str) -> dict[str, str]:
     """One load message. A bare address stays the body; the file text does not."""
     message = {"operation": "load", "kind": kind, "body": body}
     href = resource_href(body)
     if href:
         message["href"] = href
-        if kind == "prompt" and body.strip() == href:
+        if kind == "message" and body.strip() == href:
             message["body"] = href
     return message
 
@@ -62,17 +78,41 @@ def slip(kind: str, body: str) -> dict[str, str]:
 class Session:
     """Commands typed here, and command lines found in later output."""
 
-    def __init__(self, writer: _WRITER | None = None) -> None:
+    def __init__(self, writer: _WRITER | None = None, live: Callable[[dict], None] | None = None) -> None:
         self.follow_limit = MAX_FOLLOW
         self._writer = writer or _print
+        self._live = live
+        self._seen = ""
+        self._out = sys.stdout
         self._living: dict[tuple[str, str], list[tuple]] = {}
         self._order: list = []
         self._last_model: tuple[str, str] | None = None
         self._runners: dict | None = None
         self.closed = False
 
+    def emit_live(self, event: dict) -> None:
+        """Show one model fragment now. The final reply will not repeat it."""
+        if event.get("type") == "text-delta":
+            self._seen += str(event.get("text") or "")
+        if self._live is not None:
+            self._live(event)
+            return
+        text = str(event.get("text") or "")
+        if text:
+            self._out.write(text)
+            self._out.flush()
+
     def turn(self, line: str) -> None:
         """Run one line, then any command lines that show up in the output."""
+        from kernel.command.live_stream import reset_emitter, use_emitter
+
+        token = use_emitter(self.emit_live)
+        try:
+            self._turn(line)
+        finally:
+            reset_emitter(token)
+
+    def _turn(self, line: str) -> None:
         queue: list[tuple[str, bool]] = [(line, False)]
         steps = 0
         while queue:
@@ -83,16 +123,17 @@ class Session:
             if from_output:
                 steps += 1
             try:
-                output = self.execute(current)
+                output = self._without_seen(self.execute(current))
             except SessionExit:
                 self.closed = True
                 return
             self._emit(output)
-            for found in command_lines(output, self._names()):
-                queue.append((found, True))
+            if _follow_commands(current, from_output):
+                for found in command_lines(output, self._names()):
+                    queue.append((found, True))
             if not from_output or self._last_model is None:
                 continue
-            if self._is_prompt_to_last(current):
+            if self._is_message_to_last(current):
                 continue
             if steps >= self.follow_limit:
                 self._show_stopped(
@@ -100,7 +141,7 @@ class Session:
                 )
                 return
             steps += 1
-            reply = self._safe_prompt_last(output)
+            reply = self._safe_message_last(output)
             self._emit(reply)
             for found in command_lines(reply, self._names()):
                 queue.append((found, True))
@@ -123,17 +164,17 @@ class Session:
             raise SessionExit()
         if name == "terminal":
             return "已经在终端里"
-        if name == "start":
-            return self._start(argv[1:])
-        if name == "service" and argv[1:2] == ["start"]:
-            return self._service_start(argv[2:])
-        if name == "load":
-            return self._load(argv[1:])
+        if name == "process" and argv[1:2] == ["start"]:
+            return self._process_start(argv[2:])
+        if name == "capability" and argv[1:2] == ["load"]:
+            return self._load(argv[2:])
+        if name == "capability" and argv[1:2] in (["call"], ["chain"], ["group"], ["chord"]):
+            return self._call(argv[1], argv[2:])
         runner = self._names_table().get(name)
         if runner is None:
-            from kernel.command.parser import USAGE
+            from kernel.command.dispatch import usage
 
-            return USAGE
+            return usage()
         return _capture(runner, argv[1:])
 
     def close(self) -> None:
@@ -161,34 +202,19 @@ class Session:
     def open_spec(self, spec, options: tuple) -> list:
         """Open one service from a spec and the start flags. Tests replace this."""
         from kernel.command.start import launch_options
-        from kernel.services import open_service
+        from kernel.services import launch_session
 
-        return [open_service(spec, launch_options(options))]
+        return [launch_session(spec, launch_options(options))]
 
-    def _start(self, argv: list[str]) -> str:
+    def _process_start(self, argv: list[str]) -> str:
         from kernel.command.start import _parse_start_options
 
         try:
             options = _parse_start_options(argv)
-        except SystemExit as exc:
-            return _exit_text(exc)
+        except UsageError as exc:
+            return str(exc)
         try:
             services = self.open_started(options)
-        except (ProfileUnavailable, ValueError, KeyError, RuntimeError, OSError) as exc:
-            return str(exc)
-        return self._opened(options, services)
-
-    def _service_start(self, argv: list[str]) -> str:
-        from kernel.command.service import parse_service_start
-
-        try:
-            spec, options = parse_service_start(argv)
-        except SystemExit as exc:
-            return _exit_text(exc)
-        except ValueError as exc:
-            return str(exc)
-        try:
-            services = self.open_spec(spec, options)
         except (ProfileUnavailable, ValueError, KeyError, RuntimeError, OSError) as exc:
             return str(exc)
         return self._opened(options, services)
@@ -208,21 +234,37 @@ class Session:
                     lines.append(str(service.wait(ticket)))
         return "\n".join(lines)
 
-    def _load(self, argv: list[str]) -> str:
-        from kernel.command.load import parse_load
+    def _call(self, mode: str, argv: list[str]) -> str:
+        """Run a composition on the living process, or launch one when none is open."""
+        from kernel.command.call import _line, execute
+        from kernel.command.convention import parse
+        from kernel.command.call import USAGE, render
 
         try:
-            (
-                capability,
-                profile_changes,
-                kind,
-                body,
-                store_path,
-                env_file,
-                env_keys,
-            ) = parse_load(argv)
-        except SystemExit as exc:
-            return _exit_text(exc)
+            invocation = parse(argv, flags={"change": "repeat"}, usage=USAGE)
+            line = _line(mode, invocation)
+        except UsageError as exc:
+            return str(exc)
+        found = self._first_alive(line.store, line.name)
+        if found is None:
+            return _capture(lambda _argv: execute(line), [])
+        service, role = found
+        return render(service, line, role=role)
+
+    def _load(self, argv: list[str]) -> str:
+        from kernel.command.load import line_from
+
+        try:
+            line = line_from(argv)
+        except UsageError as exc:
+            return str(exc)
+        capability = line.name
+        profile_changes = line.changes
+        kind = line.kind
+        body = line.body
+        store_path = line.store
+        env_file = line.env_file
+        env_keys = line.env_keys
         found = self._first_alive(store_path, capability)
         if found is None:
             try:
@@ -248,7 +290,7 @@ class Session:
         else:
             message = slip(kind, body)
         reply = _send(found, message)
-        if kind == "prompt":
+        if kind == "message":
             self._last_model = (store_path, capability)
             turn = turn_from_payload(reply_payload(reply))
             if turn is not None and turn.tool_calls():
@@ -258,7 +300,7 @@ class Session:
                     env_file,
                     env_keys,
                 )
-                return self._prompt_last(reply_text(tool_reply))
+                return self._message_last(reply_text(tool_reply))
         return reply_text(reply)
 
     def _execute_tool_call(
@@ -307,44 +349,42 @@ class Session:
         for key in env_keys:
             argv.extend(["--env", key])
         for topic, value in profile_changes:
-            argv.extend([topic, "change", "-", value])
+            argv.extend(["--change", f"{topic}={value}"])
         services = self.open_started(_parse_start_options(argv))
         self._remember(store_path, capability, services)
         return self._first_alive(store_path, capability)
 
-    def _prompt_last(self, text: str) -> str:
+    def _message_last(self, text: str) -> str:
         if self._last_model is None:
             return ""
         store_path, capability = self._last_model
         found = self._first_alive(store_path, capability)
         if found is None:
             return "刚才的模型已经不在"
-        return reply_text(_send(found, slip("prompt", text)))
+        return reply_text(_send(found, slip("message", text)))
 
-    def _safe_prompt_last(self, text: str) -> str:
+    def _safe_message_last(self, text: str) -> str:
         try:
-            return self._prompt_last(text)
+            return self._message_last(text)
         except Exception as exc:
             return str(exc)
 
-    def _is_prompt_to_last(self, line: str) -> bool:
+    def _is_message_to_last(self, line: str) -> bool:
         if self._last_model is None:
             return False
         try:
             argv = split_line(line)
         except ValueError:
             return False
-        if not argv or argv[0] != "load":
+        if not argv or argv[:2] != ["capability", "load"]:
             return False
-        from kernel.command.load import parse_load
+        from kernel.command.load import line_from
 
         try:
-            capability, _changes, kind, _body, store_path, _env_file, _keys = parse_load(
-                argv[1:]
-            )
-        except SystemExit:
+            parsed = line_from(argv[2:])
+        except UsageError:
             return False
-        return kind == "prompt" and (store_path, capability) == self._last_model
+        return parsed.kind == "message" and (parsed.store, parsed.name) == self._last_model
 
     def _remember(self, store_path: str, head: str, services: list) -> None:
         """File each service under every member capability, with the member's role."""
@@ -377,6 +417,13 @@ class Session:
             self._runners = command_table()
         return self._runners
 
+    def _without_seen(self, text: str) -> str:
+        seen = self._seen
+        self._seen = ""
+        if seen and text and seen in text:
+            return text.replace(seen, "", 1)
+        return text
+
     def _emit(self, text: str) -> None:
         if text is None:
             return
@@ -397,9 +444,16 @@ class Session:
 
 def _send(found: tuple, message: dict) -> dict:
     """Send one mailbox message to the member role a service was filed under."""
+    from kernel.command.live_stream import StreamTail
+
     service, role = found
     ticket = service.submit(ServiceRequest.from_message(message, role=role))
-    return service.wait(ticket, timeout=180)
+    tail = StreamTail(str(ticket.ticket_id))
+    tail.start()
+    try:
+        return service.wait(ticket, timeout=180)
+    finally:
+        tail.finish()
 
 
 def _capture(runner: Callable[[list[str]], int], argv: list[str]) -> str:
@@ -420,15 +474,161 @@ def _capture(runner: Callable[[list[str]], int], argv: list[str]) -> str:
 
 
 def _exit_text(exc: SystemExit) -> str:
-    from kernel.command.parser import USAGE
+    from kernel.command.dispatch import usage
 
     if isinstance(exc.code, str) and exc.code:
         return exc.code
-    return USAGE
+    return usage()
 
 
 def _print(text: str) -> None:
     print(text, end="")
+
+
+_DISPLAY_STREAM = None
+_IMAGE = re.compile(r"https?://\S+\.(?:png|jpe?g|gif|webp)\b", re.IGNORECASE)
+
+
+def _parts_in(body: str) -> list[dict] | None:
+    """Return display parts when a reply is already a fragment list."""
+    if not body.startswith(("{", "[")):
+        return None
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, list) and payload and all(isinstance(item, dict) and "type" in item for item in payload):
+        return payload
+    if not isinstance(payload, dict):
+        return None
+    parts = payload.get("parts")
+    if isinstance(parts, list) and parts and all(isinstance(item, dict) for item in parts):
+        return parts
+    blocks = payload.get("blocks")
+    if payload.get("type") == "model_turn" and isinstance(blocks, list):
+        return [block for block in blocks if isinstance(block, dict)]
+    return None
+
+
+def _event_from_part(part: dict) -> dict[str, str] | None:
+    kind = str(part.get("type") or "")
+    if kind == "text-delta":
+        return {"type": "text-delta", "text": str(part.get("text") or "")}
+    if kind == "text":
+        return {"type": "text", "text": str(part.get("text") or "")}
+    if kind == "image":
+        href = str(part.get("href") or part.get("url") or part.get("text") or "")
+        return {"type": "image", "href": href} if href else None
+    if kind in {"tool-call", "tool-call-delta"}:
+        name = str(part.get("name") or "")
+        arguments = str(part.get("arguments") or "")
+        shown = f"{name} {arguments}".strip()
+        return {"type": "text", "text": shown} if shown else None
+    return None
+
+
+def events_for(text: str) -> list[dict[str, str]]:
+    """Turn one reply into display events. Fragments stay fragments."""
+    body = text.strip()
+    parts = _parts_in(body)
+    if parts:
+        return [event for part in parts if (event := _event_from_part(part))]
+    events: list[dict[str, str]] = []
+    if body:
+        events.append({"type": "text", "text": body})
+    for href in _IMAGE.findall(body):
+        events.append({"type": "image", "href": href.rstrip(".,)")})
+    return events
+
+
+def _input_text(line: str) -> str:
+    raw = line.strip()
+    if not raw:
+        return ""
+    if raw.startswith("{"):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return line.rstrip("\r\n")
+        if isinstance(payload, dict) and payload.get("type") == "input":
+            return str(payload.get("text") or "")
+    return line.rstrip("\r\n")
+
+
+def _emit_event(event: dict[str, str]) -> None:
+    stream = _DISPLAY_STREAM or sys.stdout
+    stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+    stream.flush()
+
+
+def _display_writer(text: str) -> None:
+    for event in events_for(text):
+        if event.get("text") or event.get("href"):
+            _emit_event(event)
+
+
+def _display_reader(_prompt: str = "") -> str:
+    line = sys.stdin.readline()
+    if line == "":
+        raise EOFError
+    return _input_text(line)
+
+
+def run_display() -> int:
+    """One living session. Commands come in as lines; replies go out as events."""
+    global _DISPLAY_STREAM
+    from kernel.process.process_creat.instances import repo_root
+
+    _DISPLAY_STREAM = sys.stdout
+    try:
+        offer_env_files(str(repo_root()), _display_reader, _display_writer)
+    except EOFError:
+        return 0
+    _emit_session()
+    _emit_event({"type": "status", "text": "ready"})
+    _emit_event({"type": "done"})
+    session = Session(_display_writer, live=_emit_event)
+    try:
+        while not session.closed:
+            line = sys.stdin.readline()
+            if line == "":
+                break
+            text = _input_text(line)
+            if not text.strip():
+                continue
+            if text.strip() == "exit":
+                break
+            _emit_event({"type": "status", "text": "running"})
+            try:
+                session.turn(text)
+            except Exception as exc:
+                _emit_event({"type": "error", "text": str(exc)})
+            if session.closed:
+                break
+            _emit_event({"type": "status", "text": "ready"})
+            _emit_event({"type": "done"})
+    except EOFError:
+        pass
+    finally:
+        session.close()
+    return 0
+
+
+def _emit_session() -> None:
+    """Tell the TUI which directory and ledger this command session is using."""
+    from pathlib import Path
+
+    from kernel.resource.store.locator import default_env_file, default_store_locator, env_file_problem
+
+    _emit_event(
+        {
+            "type": "session",
+            "cwd": str(Path.cwd().resolve()),
+            "store": default_store_locator(),
+            "env": "已配置" if default_env_file() else "未配置",
+            "text": env_file_problem(),
+        }
+    )
 
 
 def _person_is_typing() -> bool:
@@ -483,6 +683,14 @@ def _window_name() -> str:
 _NO_ENV = "当前没有可用的环境文件。需要的话在终端里执行 env init 或 env init capability/.env"
 
 
+def _write_env_problem(writer: _WRITER) -> None:
+    from kernel.resource.store.locator import env_file_problem
+
+    problem = env_file_problem()
+    if problem:
+        writer(problem + "\n")
+
+
 def offer_env_files(
     root: str,
     reader: Callable[[str], str],
@@ -495,7 +703,9 @@ def offer_env_files(
     files = find_env_files(root)
     if not files:
         writer(_NO_ENV + "\n")
+        _write_env_problem(writer)
         return None
+    _write_env_problem(writer)
     for index, (path, keys) in enumerate(files, start=1):
         names = ", ".join(keys) if keys else "无"
         writer(f"{index}. {path}\n   键名: {names}\n")
@@ -520,11 +730,13 @@ def offer_env_files(
 
 
 def run(argv: list[str]) -> int:
+    if argv == ["--display", "json"]:
+        return run_display()
     if argv:
-        from kernel.command.parser import USAGE
+        from kernel.command.dispatch import usage
 
-        print(USAGE)
-        return 1
+        print(usage())
+        return 2
     previous = os.environ.pop("LINOPE_PREVIOUS_TITLE", "")
     if not previous:
         previous = _window_name()
@@ -550,6 +762,3 @@ def run(argv: list[str]) -> int:
             _show_window_name(previous)
         session.close()
     return 0
-
-
-SPEC = CommandSpec(name="terminal", run=run)

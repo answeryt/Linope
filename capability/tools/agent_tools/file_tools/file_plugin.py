@@ -1924,7 +1924,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
             return json.dumps({
                 "error": (
                     f"Cannot read binary file '{path}' ({_ext}). "
-                    "Use vision_analyze for images, or terminal to inspect binary files."
+                    "Use read_image for images, or terminal to inspect binary files."
                 ),
             })
 
@@ -2669,7 +2669,7 @@ def _check_file_reqs():
 
 READ_FILE_SCHEMA = {
     "name": "read_file",
-    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are truncated on a line boundary and return a next_offset; continue with offset to read the rest. Jupyter notebooks (.ipynb), Word documents (.docx), and Excel workbooks (.xlsx) are auto-extracted to readable text. NOTE: Cannot read images or other binary files — use vision_analyze for images.",
+    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are truncated on a line boundary and return a next_offset; continue with offset to read the rest. Jupyter notebooks (.ipynb), Word documents (.docx), and Excel workbooks (.xlsx) are auto-extracted to readable text. NOTE: Cannot read images or other binary files — use read_image for images.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -2824,14 +2824,8 @@ def _handle_search_files(args, **kw):
         output_mode=args.get("output_mode", "content"), context=args.get("context", 0), task_id=tid)
 
 def capability_profile(capability_id, changes):
-    """Tell the process this tool needs a tool resource."""
-    from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-    from kernel.resource.definition import ResourceKind
+    """This process leases a tool and the shared project workspace."""
+    from kernel.process.profiles import tool_with_workspace
 
-    return ProcessDeclaration(
-        capability=capability_id,
-        resources=(
-            ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
-        ),
-    )
+    return tool_with_workspace(capability_id, changes)
 

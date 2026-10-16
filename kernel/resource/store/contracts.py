@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol
 
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 from kernel.resource.lease import HandleRevocation, ResourceEntity, ResourceLease
 from kernel.resource.memory.page import Page
 from kernel.resource.store.page_link import PageLink
@@ -26,7 +26,7 @@ class LeaseStore(Protocol):
     def revoke(self, handle: str) -> HandleRevocation:
         ...
 
-    def authorize(self, handle: str) -> None:
+    def authorize(self, handle: str, process_id: str) -> None:
         ...
 
     def active_for(self, process_id: str) -> tuple[ResourceLease, ...]:

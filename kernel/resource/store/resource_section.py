@@ -1,11 +1,11 @@
-"""Resource entities, leases, handles, and long-term pages."""
+"""Resource entities, leases, handles, and kept representations."""
 
 from __future__ import annotations
 
 import threading
 from typing import Any
 
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 from kernel.resource.lease import (
     HandleRevocation,
     HandleStatus,
@@ -22,12 +22,13 @@ class ResourceSection:
     """The resource slice of a ledger. It does not record process rows."""
 
     name = "resource"
-    flat_keys = ("entities", "leases", "handles", "pending_loads", "pages")
+    flat_keys = ("entities", "leases", "handles", "pending_loads", "pages", "usage")
 
     def __init__(self, lock: threading.RLock) -> None:
         self._lock = lock
         self._manager = ResourceLeaseManager()
         self._pages: dict[str, tuple[Page, PageLink]] = {}
+        self._notes: dict[str, dict[str, dict[str, int]]] = {}
 
     def acquire(self, context: ResourceContext) -> tuple[ResourceLease, ...]:
         with self._lock:
@@ -41,9 +42,9 @@ class ResourceSection:
         with self._lock:
             return self._manager.revoke(handle)
 
-    def authorize(self, handle: str) -> None:
+    def authorize(self, handle: str, process_id: str) -> None:
         with self._lock:
-            self._manager.authorize(handle)
+            self._manager.authorize(handle, process_id)
 
     def active_for(self, process_id: str) -> tuple[ResourceLease, ...]:
         with self._lock:
@@ -77,6 +78,17 @@ class ResourceSection:
     def save_page(self, page: Page, link: object) -> None:
         with self._lock:
             self._pages[page.address] = (page, page_link_from(link))
+
+    def pages_for_handle(self, handle: str) -> tuple[tuple[Page, PageLink], ...]:
+        """Every page linked to this handle. An empty handle maps nothing."""
+        if not handle:
+            return ()
+        with self._lock:
+            return tuple(
+                (page, link)
+                for page, link in self._pages.values()
+                if link.handle == handle
+            )
 
     def link_at(self, handle: str) -> tuple[Page, PageLink] | None:
         if not handle:
@@ -119,13 +131,34 @@ class ResourceSection:
                     )
             return tuple(rows)
 
-    def window_used(self, resource_id: str) -> int:
+    def all_pages(self) -> tuple[tuple[Page, PageLink], ...]:
+        """Every kept page and the link beside it."""
         with self._lock:
-            used = 0
-            for page, _link in self._pages.values():
-                if page.address == resource_id and page.occupies_window():
-                    used += page.size
-            return used
+            return tuple(self._pages.values())
+
+    def note(self, process_id: str, kind: str) -> dict[str, int]:
+        """Numbers already written for this process and kind."""
+        with self._lock:
+            return dict(self._notes.get(process_id, {}).get(kind, {}))
+
+    def noted_processes(self) -> tuple[str, ...]:
+        """Processes that have at least one written note."""
+        with self._lock:
+            return tuple(self._notes)
+
+    def add_note(self, process_id: str, kind: str, fields: dict[str, int]) -> None:
+        """Add these numbers onto the note. Missing keys start at zero."""
+        with self._lock:
+            bucket = self._notes.setdefault(process_id, {}).setdefault(kind, {})
+            for key, value in fields.items():
+                bucket[str(key)] = int(bucket.get(str(key), 0)) + int(value)
+
+    def replace_note(self, process_id: str, kind: str, fields: dict[str, int]) -> None:
+        """Set these keys and keep any other keys already on the note."""
+        with self._lock:
+            bucket = self._notes.setdefault(process_id, {}).setdefault(kind, {})
+            for key, value in fields.items():
+                bucket[str(key)] = int(value)
 
     def export_part(self) -> dict[str, Any]:
         manager = self._manager
@@ -186,6 +219,12 @@ class ResourceSection:
                 }
                 for address, (page, link) in self._pages.items()
             },
+            "usage": {
+                process_id: {
+                    kind: dict(fields) for kind, fields in kinds.items()
+                }
+                for process_id, kinds in self._notes.items()
+            },
         }
 
     def import_part(self, payload: dict[str, Any]) -> None:
@@ -197,6 +236,7 @@ class ResourceSection:
         manager._handles.clear()
         manager._pending_loads.clear()
         self._pages.clear()
+        self._notes.clear()
         for resource_id, raw in (payload.get("entities") or {}).items():
             manager._entities[str(resource_id)] = ResourceEntity(
                 resource_id=str(raw.get("resource_id", resource_id)),
@@ -244,6 +284,20 @@ class ResourceSection:
                     handle=str(raw_link.get("handle", "")),
                 ),
             )
+        for process_id, kinds in (payload.get("usage") or {}).items():
+            if not isinstance(kinds, dict):
+                continue
+            saved: dict[str, dict[str, int]] = {}
+            for kind, fields in kinds.items():
+                if not isinstance(fields, dict):
+                    continue
+                saved[str(kind)] = {
+                    str(key): int(value)
+                    for key, value in fields.items()
+                    if isinstance(value, int) and not isinstance(value, bool)
+                }
+            if saved:
+                self._notes[str(process_id)] = saved
 
 
 def _handle_for(

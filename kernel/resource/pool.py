@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from kernel.resource.compile import CompiledResource
-from kernel.resource.context import ResourceContext
+from kernel.resource.handle_view import ResourceContext
 from kernel.resource.definition import ResourceGrant, ResourceKind
 from kernel.resource.lease import HandleRevocation, ResourceEntity
 
@@ -32,7 +32,7 @@ class ResourcePoolStore(Protocol):
     def release(self, process_id: str) -> tuple[ResourceEntity, ...]:
         ...
 
-    def authorize(self, handle: str) -> None:
+    def authorize(self, handle: str, process_id: str) -> None:
         ...
 
     def revoke(self, handle: str) -> HandleRevocation:
@@ -125,10 +125,10 @@ class ResourcePool:
         self._unload_all(unloaded)
         return unloaded
 
-    def authorize(self, handle: str) -> None:
-        """Check the handle's fencing token at the moment it is used."""
+    def authorize(self, handle: str, process_id: str) -> None:
+        """Check that this process still holds the handle."""
         with self._lock:
-            self.store.authorize(handle)
+            self.store.authorize(handle, process_id)
 
     def revoke(self, handle: str) -> HandleRevocation:
         with self._lock:
@@ -185,8 +185,13 @@ class ResourcePool:
             self._unload_entity(entity)
 
     def _unload_entity(self, entity: ResourceEntity) -> None:
+        try:
+            kind = ResourceKind(entity.kind)
+        except ValueError:
+            self.store.mark_unloaded(entity.resource_id)
+            return
         self.loader.unload(
-            ResourceKind(entity.kind),
+            kind,
             entity.identity,
             entity.state,
         )

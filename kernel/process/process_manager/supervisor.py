@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
 import time
 from collections.abc import Callable
 from typing import Any, cast
@@ -13,12 +16,31 @@ from kernel.process.process_manager.client import Receipt
 from kernel.process.process_manager.client import wait_first
 from kernel.process.process_manager.reaper import ProcessReaper
 from kernel.process.process_manager.lifecycle import ProcessStatus
-from kernel.process.communication.channel import Channel
-from kernel.process.communication.registry import open_channel
+from kernel.communication.channel import Channel
+from kernel.communication.registry import open_channel
 from kernel.process.process_manager.liveness import process_matches
 from kernel.resource.pool import ResourcePool
 from kernel.resource.lease import ResourceLeaseManager
 from kernel.process.process_manager.ledger_contracts import ResourceRuntimeStore
+
+
+def _force_stop(pid: int | None) -> None:
+    """Terminate a detached capability process and its descendants."""
+    if not pid:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+        else:
+            os.killpg(pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 class CapabilityProcess:
@@ -90,6 +112,7 @@ class CapabilityProcess:
         process_id = self.activation.process_id
         self._store.set_activation(process_id, self.activation.payload())
         self.status = ProcessStatus.STARTING
+        pid: int | None = None
         try:
             pid = ProcessCreator(str(store_locator)).spawn(process_id)
             self._store.note_spawn_pid(process_id, pid)
@@ -114,6 +137,7 @@ class CapabilityProcess:
                 self._store.set_desired(process_id, "stop")
             except Exception:
                 pass
+            _force_stop(pid)
             self._pool.release(process_id)
             self._pool.notify(
                 "process_exited",
@@ -226,7 +250,12 @@ class CapabilityProcess:
                 self._close_channel()
                 return
             time.sleep(0.02)
-        raise TimeoutError(f"Capability process did not stop: {self.pid}")
+        pid = self.pid
+        _force_stop(pid)
+        self._reap_if_dead()
+        self.status = ProcessStatus.FAILED
+        self._close_channel()
+        raise TimeoutError(f"Capability process did not stop: {pid}")
 
     def revoke(self, handle: str) -> dict[str, Any]:
         """Invalidate one handle in the ledger. The process drops it on its next read."""
@@ -291,5 +320,6 @@ class CapabilityProcess:
         grants = getattr(self.activation, "resource_context", None)
         if grants is None:
             return
+        process_id = self.activation.process_id
         for grant in grants.grants:
-            self._pool.authorize(grant.handle)
+            self._pool.authorize(grant.handle, process_id)

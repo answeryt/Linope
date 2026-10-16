@@ -18,7 +18,7 @@ from kernel.process.process_manager.replica_layout.layout import (
 from kernel.process.process_manager.replica_layout.registry import load_layout
 
 from kernel.process.process_manager.supervisor import CapabilityProcess
-from kernel.process.communication.directory import selected_channel
+from kernel.communication.directory import selected_channel
 from kernel.resource.compile import compile_declaration
 from kernel.resource.pool import ResourcePool
 from kernel.process.process_manager.ledger_contracts import ReconcileStore
@@ -91,6 +91,7 @@ class ProcessReconciler:
                 definition=definition,
                 grants=self.pool.grants_for(process_id),
                 process_id=process_id,
+                settings=dict(declaration.settings),
                 environment=environment,
                 host_policy=host_policy or HostExecutionPolicy(),
                 thread_policy=thread_policy or ThreadPolicy(),
@@ -147,6 +148,8 @@ class ProcessReconciler:
         _configure_layout(layout, settings, replica_count)
         running = _running_replicas(store, definition.instance_id)
         replica_plan = layout.plan_replicas(definition.instance_id, running)
+        for replica in replica_plan.to_stop:
+            store.set_desired(replica.process_id, "stop")
         started: list[CapabilityProcess] = []
         try:
             for spec in replica_plan.to_start:

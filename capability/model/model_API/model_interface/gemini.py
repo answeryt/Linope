@@ -30,6 +30,24 @@ def _param_leaf(folder: str, filename: str) -> Any:
     return module
 
 
+def _vendor_role(role: object) -> str:
+    return _param_leaf_sibling("roles.py").vendor_role(role)
+
+
+def _param_leaf_sibling(filename: str) -> Any:
+    cached = _PARAM_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    path = Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _PARAM_CACHE[filename] = module
+    return module
+
+
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
     limits = _param_leaf("context_limits", "context_limits.py")
     request = dict(payload)
@@ -52,6 +70,7 @@ async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
 
 
 def _gemini_role(role: object) -> str:
+    role = _vendor_role(role)
     if role == "assistant":
         return "model"
     if role == "model":
@@ -72,6 +91,23 @@ def _parts(content: Any) -> list[Any]:
             parts.append({"text": part})
             continue
         if isinstance(part, dict):
+            if part.get("type") == "tool-call":
+                arguments = part.get("arguments")
+                if isinstance(arguments, str):
+                    import json
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {"raw": arguments}
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                parts.append({
+                    "function_call": {
+                        "name": str(part.get("name") or ""),
+                        "args": arguments,
+                    }
+                })
+                continue
             if "text" in part or "inline_data" in part or "file_data" in part:
                 parts.append(part)
                 continue
@@ -106,6 +142,20 @@ def _parts(content: Any) -> list[Any]:
     return parts
 
 
+def _gemini_message_parts(item: dict[str, Any]) -> list[Any]:
+    """A tool result is a function response. A model step keeps function calls in parts."""
+    if item.get("role") == "tool":
+        output = item.get("content")
+        response = output if isinstance(output, dict) else {"output": output}
+        return [{
+            "function_response": {
+                "name": str(item.get("name") or ""),
+                "response": response,
+            }
+        }]
+    return _parts(item.get("content"))
+
+
 def format_messages(messages: Any) -> list[dict[str, Any]]:
     if messages is None:
         return []
@@ -136,7 +186,7 @@ def format_messages(messages: Any) -> list[dict[str, Any]]:
             result.append(
                 {
                     "role": _gemini_role(item.get("role", "user")),
-                    "parts": _parts(item.get("content")),
+                    "parts": _gemini_message_parts(item),
                 }
             )
             continue
@@ -150,6 +200,62 @@ def parse_response(result: Any) -> str | None:
     if isinstance(text, str) and text:
         return text
     return None
+
+
+def parse_response_turn(result: Any) -> dict[str, Any] | None:
+    text = parse_response(result)
+    calls = _function_calls(result)
+    from capability.model.model_runtime.usage import read_usage
+
+    usage = read_usage(getattr(result, "usage_metadata", None))
+    if text is None and not usage and not calls:
+        return None
+    blocks: list[dict[str, Any]] = []
+    if text:
+        blocks.append({"type": "text", "text": text})
+    blocks.extend(calls)
+    payload: dict[str, Any] = {
+        "type": "model_turn",
+        "blocks": blocks,
+        "finish_reason": "stop",
+    }
+    if usage:
+        payload["usage"] = usage
+    return payload
+
+
+def _function_calls(result: Any) -> list[dict[str, Any]]:
+    """Read Gemini function calls when the response carries them."""
+    found: list[dict[str, Any]] = []
+    candidates = getattr(result, "candidates", None) or ()
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or ():
+            call = getattr(part, "function_call", None)
+            if call is None:
+                continue
+            found.append(
+                {
+                    "type": "tool-call",
+                    "id": str(getattr(call, "id", "") or ""),
+                    "name": str(getattr(call, "name", "") or ""),
+                    "arguments": getattr(call, "args", {}) or {},
+                }
+            )
+    return found
+
+
+def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = []
+    text = getattr(chunk, "text", None)
+    if isinstance(text, str) and text:
+        parts.append({"type": "text-delta", "text": text})
+    from capability.model.model_runtime.usage import read_usage, usage_part
+
+    part = usage_part(read_usage(getattr(chunk, "usage_metadata", None)))
+    if part is not None:
+        parts.append(part)
+    return parts
 
 
 def parse_stream_chunk(chunk: Any) -> str:

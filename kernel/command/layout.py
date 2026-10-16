@@ -4,21 +4,31 @@ from __future__ import annotations
 
 import sys
 
-from kernel.command.parser import USAGE, resource_store_path
-from kernel.command.protocol import CommandSpec
-from kernel.process.process_manager.replica_layout.registry import (
-    layout_names,
-    load_layout,
-)
+from kernel.command.convention import UsageError, guard, parse
+from kernel.process.process_manager.replica_layout.registry import load_layout
 from kernel.process.ledger import open_store
 
+USAGE = "用法: linope layout use <名称> | linope layout off"
 
+
+@guard(USAGE)
 def run(argv: list[str]) -> int:
-    rest, store_path = resource_store_path(argv)
-    if len(rest) != 1:
-        raise SystemExit(USAGE)
-    name = rest[0]
-    store = open_store(store_path)
+    if not argv:
+        raise UsageError(USAGE)
+    action, rest = argv[0], argv[1:]
+    if action == "off":
+        return _select(["off", *rest])
+    if action == "use":
+        return _select(rest)
+    raise UsageError(USAGE)
+
+
+def _select(argv: list[str]) -> int:
+    invocation = parse(argv, flags={}, usage=USAGE)
+    if len(invocation.position) != 1:
+        raise UsageError(USAGE)
+    name = invocation.position[0]
+    store = open_store(invocation.store)
     try:
         if name == "off":
             store.select_layout(None, {})
@@ -36,20 +46,3 @@ def run(argv: list[str]) -> int:
         return 0
     finally:
         store.close()
-
-
-def list_layouts(argv: list[str]) -> int:
-    _rest, store_path = resource_store_path(argv)
-    store = open_store(store_path)
-    try:
-        selected, _settings = store.selected_layout()
-        for name in layout_names():
-            print(f"* {name}" if name == selected else name)
-        if selected is None:
-            print("????????????")
-        return 0
-    finally:
-        store.close()
-
-
-SPEC = CommandSpec(name="layout", run=run, aliases=(("layouts", list_layouts),))
