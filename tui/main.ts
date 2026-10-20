@@ -14,7 +14,17 @@ import {
   type EditorState
 } from './editor.js'
 import { startTerminalSession, type TerminalLink } from './link/session.js'
-import { helpText, historyRoom, pushEvent, renderScreen, scrollLimit, displayWidth, type Turn } from './screen.js'
+import {
+  helpText,
+  historyRoom,
+  noteProcessText,
+  pushEvent,
+  renderScreen,
+  scrollLimit,
+  displayWidth,
+  type LiveProcess,
+  type Turn
+} from './screen.js'
 import { fg, reset, theme } from './theme.js'
 import { takeKey, type Key } from './keys.js'
 
@@ -25,7 +35,8 @@ let link: TerminalLink | null = null
 let scroll = 0
 let editor: EditorState = createEditor()
 let cwd = process.cwd()
-let sessionName = 'linope'
+let clerk: '在' | '离开' = '在'
+let processes: LiveProcess[] = []
 
 const windowSize = () => {
   if (typeof process.stdout.getWindowSize === 'function') {
@@ -45,12 +56,12 @@ const columns = () => Math.max(24, process.stdout.columns || windowSize()[0] || 
 const termRows = () => Math.max(12, process.stdout.rows || windowSize()[1] || 24)
 
 const screenState = () => ({
+  clerk,
   columns: columns(),
   cwd,
-  model: 'linope',
+  processes,
   rows: termRows(),
   scroll,
-  session: sessionName,
   status,
   turns
 })
@@ -337,8 +348,13 @@ link = startTerminalSession(event => {
     cwd = next.cwd
   }
 
-  if (next.session) {
-    sessionName = next.session
+  if (event.type === 'text') {
+    processes = noteProcessText(processes, event.text)
+  }
+
+  if (event.type === 'status' && event.text === '离开') {
+    clerk = '离开'
+    processes = []
   }
 
   if (next.status) {

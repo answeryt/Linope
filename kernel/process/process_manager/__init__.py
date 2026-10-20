@@ -2,7 +2,7 @@
 
 from kernel.process.process_creat.activation import ProcessActivation
 from kernel.process.process_manager.lifecycle import ProcessStatus
-from kernel.process.process_manager.supervisor import (
+from kernel.process.process_manager.capability_process import (
     CapabilityProcess,
 )
 

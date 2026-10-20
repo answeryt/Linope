@@ -1,8 +1,4 @@
-"""The one place that wires the ledger, the pool and the reconciler together.
-
-Everything here is a replaceable callable, so tests and other hosts inject
-their own without touching the assembler.
-"""
+"""Wires a service to declaration loading and the reconciler."""
 
 from __future__ import annotations
 
@@ -13,18 +9,6 @@ from typing import Any
 from kernel.process.profile import Change
 from kernel.services.contracts import Service
 from kernel.services.spec import LaunchOptions, ServiceSpec
-
-
-def _open_store(locator: Any = None) -> Any:
-    from kernel.process.ledger import open_store
-
-    return open_store(locator)
-
-
-def _pool(store: Any) -> Any:
-    from kernel.resource.pool import ResourcePool
-
-    return ResourcePool(store)
 
 
 def _reconciler(pool: Any) -> Any:
@@ -43,8 +27,6 @@ def _load_declaration(capability: str, changes: Sequence[Change]) -> tuple[Any, 
 class ServiceHost:
     """Infrastructure a service is assembled on."""
 
-    open_store: Callable[..., Any] = field(default=_open_store)
-    pool: Callable[[Any], Any] = field(default=_pool)
     reconciler: Callable[[Any], Any] = field(default=_reconciler)
     load_declaration: Callable[[str, Sequence[Change]], tuple[Any, Any]] = field(
         default=_load_declaration
@@ -56,18 +38,7 @@ def launch_session(
     options: LaunchOptions | None = None,
     host: ServiceHost | None = None,
 ) -> Service:
-    """Start the processes named by a blueprint. Closing the handle stops them."""
+    """Start the processes named by a blueprint."""
     from kernel.services.assembly import ServiceAssembler
 
     return ServiceAssembler(host or ServiceHost()).open(spec, options or LaunchOptions())
-
-
-def open_service(
-    name: str,
-    options: LaunchOptions | None = None,
-    host: ServiceHost | None = None,
-) -> Service:
-    """Attach to processes already bound to ``name``. Closing does not stop them."""
-    from kernel.services.bound import open_bound
-
-    return open_bound(name, options, host)

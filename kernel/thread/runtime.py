@@ -6,12 +6,10 @@ import asyncio
 import contextvars
 import inspect
 import os
-import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from kernel.load_balancing.inflight import InflightLimit
 from kernel.load_balancing.workers import WorkerPool
 from kernel.thread.contracts import ClaimedRequest, ThreadInbox, ThreadPolicy
 from kernel.thread.limiter import AsyncTaskLimiter
@@ -26,9 +24,6 @@ class ThreadRuntime:
         self._task_limiter = AsyncTaskLimiter(policy.max_concurrent_tasks)
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._wait_for_sync_shutdown = True
-        self._inflight: InflightLimit | None = None
-        self._on_sample: Callable[[float, int | None], None] | None = None
-        self._active = 0
 
     async def run(
         self,
@@ -37,22 +32,12 @@ class ThreadRuntime:
         inbox: ThreadInbox,
         adapter: Any | None,
         should_stop: Callable[[], bool | Awaitable[bool]],
-        staff_ceiling: Callable[[], int | None] | None = None,
-        inflight_ceiling: Callable[[], int | None] | None = None,
-        on_sample: Callable[[float, int | None], None] | None = None,
     ) -> None:
         """Run until the process asks for a cooperative stop."""
 
         pending: set[asyncio.Task[None]] = set()
         self._wait_for_sync_shutdown = True
-        self._on_sample = on_sample
-        self._thread_safe = bool(getattr(adapter, "sync_thread_safe", False))
         self._workers = WorkerPool(self._sync_worker_count(adapter))
-        if _adapter_is_async(adapter):
-            self._inflight = InflightLimit(
-                minimum=self.policy.min_concurrent_tasks,
-                maximum=self.policy.max_concurrent_tasks,
-            )
         try:
             stopping = False
             while not stopping:
@@ -60,7 +45,6 @@ class ThreadRuntime:
                     stopping = True
                     break
 
-                self._apply_ceilings(staff_ceiling, inflight_ceiling)
                 self._discard_finished(pending)
                 if len(pending) >= self._admit_limit():
                     await self._wait_for_one(pending)
@@ -95,11 +79,6 @@ class ThreadRuntime:
         request: ClaimedRequest,
     ) -> None:
         async with self._task_limiter.slot():
-            self._active += 1
-            started = time.monotonic()
-            from kernel.command.live_stream import bind_stream_keys, reset_stream_keys, stream_keys_for
-
-            token = bind_stream_keys(stream_keys_for(request.body, request.request_id))
             try:
                 lock = self._session_lock(request.body)
                 if lock is None:
@@ -107,15 +86,12 @@ class ThreadRuntime:
                 else:
                     async with lock:
                         reply = await self._dispatch(adapter, request.body)
-                elapsed = time.monotonic() - started
-                allowance = None
-                if self._inflight is not None:
-                    allowance = self._inflight.sample(elapsed, self._active)
-                if self._on_sample is not None:
-                    self._on_sample(elapsed, allowance)
-            finally:
-                reset_stream_keys(token)
-                self._active -= 1
+            except Exception as error:
+                reply = {
+                    "event": "error",
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                }
             reply["request_id"] = request.request_id
             await asyncio.to_thread(
                 inbox.complete,
@@ -172,26 +148,7 @@ class ThreadRuntime:
         return min(1, self.policy.max_sync_workers)
 
     def _admit_limit(self) -> int:
-        if self._inflight is None:
-            return self.policy.max_concurrent_tasks
-        return self._inflight.current
-
-    def _apply_ceilings(
-        self,
-        staff_ceiling: Callable[[], int | None] | None,
-        inflight_ceiling: Callable[[], int | None] | None,
-    ) -> None:
-        if staff_ceiling is not None and self._workers is not None:
-            ceiling = staff_ceiling()
-            if ceiling is not None:
-                allowed = ceiling if self._thread_safe else min(1, ceiling)
-                if self._workers.max_workers != allowed:
-                    self._workers.set_max_workers(allowed)
-        if inflight_ceiling is not None and self._inflight is not None:
-            ceiling = inflight_ceiling()
-            if ceiling is not None and ceiling != self._inflight.maximum:
-                self._inflight.set_maximum(ceiling)
-                self._task_limiter.expand_to(ceiling)
+        return self.policy.max_concurrent_tasks
 
     def _session_lock(self, body: dict[str, Any]) -> asyncio.Lock | None:
         if not self.policy.session_affinity:

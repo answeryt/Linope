@@ -81,3 +81,7 @@ class LaunchOptions:
     env_file: str = ""
     env_file_keys: tuple[str, ...] = ()
     cwd: str | None = None
+    shared: tuple[str, ...] = ()
+    once: bool = False
+    chosen: tuple[str, ...] = ()
+    ledger_path: str | None = None

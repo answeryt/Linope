@@ -6,3 +6,8 @@ from kernel.command import main
 def test_marker_commands_are_not_accepted() -> None:
     assert main(["service", "start", "agent", "svc"]) == 2
     assert main(["load", "tools.read", "cap", "tool", "{}"]) == 2
+
+
+def test_process_start_is_a_command() -> None:
+    assert main(["process"]) == 2
+    assert main(["process", "start"]) == 2

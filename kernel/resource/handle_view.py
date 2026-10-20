@@ -1,8 +1,4 @@
-"""Handles granted to one capability process.
-
-This is the process view of leased facilities. It is not the context
-facility, whose lease lives under ``kernel.resource.context``.
-"""
+"""Handles granted to one capability process."""
 
 from __future__ import annotations
 
@@ -13,9 +9,9 @@ from typing import Any
 from kernel.resource.definition import (
     ResourceDefinition,
     ResourceGrant,
-    ResourceKind,
     validate_grants,
 )
+from kernel.resource.resource_contract import kind_name
 
 
 @dataclass(frozen=True)
@@ -72,16 +68,11 @@ class ResourceContext:
     def from_payload(cls, payload: dict[str, Any]) -> "ResourceContext":
         grants = []
         for item in payload.get("grants") or ():
-            try:
-                kind = ResourceKind(str(item["kind"]))
-            except ValueError:
-                continue
             grants.append(
                 ResourceGrant(
                     resource_id="",
-                    kind=kind,
+                    kind=kind_name(item["kind"]),
                     handle=str(item["handle"]),
-                    limits=dict(item.get("limits") or {}),
                     call_params=dict(item.get("call_params") or {}),
                 )
             )

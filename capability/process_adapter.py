@@ -93,9 +93,10 @@ class ProcessAdapter:
             self._room = None
 
 
-def create_adapter() -> ProcessAdapter:
-    """Build the forwarder from capability modules already imported here."""
-    return ProcessAdapter(_loaded_plugin_modules())
+def create_adapter(modules: list[Any] | None = None) -> ProcessAdapter:
+    """Build the forwarder from the modules this process just loaded."""
+    chosen = list(modules) if modules is not None else _loaded_plugin_modules()
+    return ProcessAdapter(chosen)
 
 
 def _find_load(modules: list[Any]) -> Any | None:

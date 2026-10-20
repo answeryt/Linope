@@ -4,26 +4,25 @@ from __future__ import annotations
 
 import sys
 
-from kernel.command.capability import run as capability
-from kernel.command.channel import run as channel
-from kernel.command.env import run as env
-from kernel.command.layout import run as layout
-from kernel.command.process import run as process
-from kernel.command.resource import run as resource
-from kernel.command.service import run as service
-from kernel.command.store import run as store
-from kernel.command.terminal import run as terminal
+from kernel.command.file.create import run as create
+from kernel.command.file.env import run as load_env
+from kernel.command.process.clerk import run as session
+from kernel.command.process.process import run as process
+from kernel.command.process.talk import run as talk
+from kernel.command.screen.resource import run as resource
 
 COMMANDS = {
-    "capability": capability,
-    "channel": channel,
-    "env": env,
-    "layout": layout,
+    "ask": talk,
+    "create": create,
+    "list": talk,
+    "load": load_env,
+    "ping": talk,
     "process": process,
     "resource": resource,
-    "service": service,
-    "store": store,
-    "terminal": terminal,
+    "session": session,
+    "show": talk,
+    "terminal": session,
+    "trace": talk,
 }
 
 
@@ -35,15 +34,15 @@ def command_table() -> dict:
 def usage() -> str:
     """One line for every object command."""
     lines = (
-        "linope service create|status|bind|unbind|delete|call",
-        "linope process start|list|status|stop|scale|share|workers",
-        "linope resource serve|file",
-        "linope capability load|call|chain|group|chord",
-        "linope store current|use|check|init|migrate",
-        "linope channel use|off",
-        "linope layout use|off",
-        "linope env init|use",
+        "linope create <路径> [-- 名字=值]",
+        "linope load env <路径>",
+        "linope process start <能力>",
+        "linope process list",
+        "linope process show <进程号>",
+        "linope process trace <进程号>",
+        "linope resource serve",
         "linope terminal",
+        "linope session",
     )
     return "用法:\n" + "\n".join(lines)
 
@@ -51,12 +50,18 @@ def usage() -> str:
 def main(argv: list[str] | None = None) -> int:
     """Dispatch one CLI invocation. A usage error exits 2."""
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "linope":
+        args = args[1:]
     if not args:
         print(usage(), file=sys.stderr)
         return 2
     if args[0] in {"help", "--help", "-h"}:
         print(usage())
         return 0
+    if args[0] == "load" and args[1:2] != ["env"]:
+        from kernel.command.process.talk import run as speak
+
+        return speak(args[1:])
     command = COMMANDS.get(args[0])
     if command is None:
         print(usage(), file=sys.stderr)

@@ -1,101 +1,79 @@
-"""Turn a spec into member processes through the existing creation entry.
-
-The assembler does not plan replicas, pick processes or judge liveness. It
-asks the blueprint for members, asks the reconciler to launch each one, and
-closes what it opened if any member fails.
-"""
+"""Turn a spec into a service handle."""
 
 from __future__ import annotations
 
-from typing import Any
-
+from kernel.process.resource_record import ProcessResourceBook, RecordStatus
 from kernel.services.handle import ServiceHandle
 from kernel.services.host import ServiceHost
 from kernel.services.registry import load_blueprint
-from kernel.services.spec import LaunchOptions, MemberPlan, ServicePlan, ServiceSpec
+from kernel.services.spec import LaunchOptions, ServicePlan, ServiceSpec
 
 
 class ServiceAssembler:
-    """Spec -> plan -> launched members -> handle."""
+    """Spec -> plan -> handle."""
 
     def __init__(self, host: ServiceHost) -> None:
         self.host = host
 
     def open(self, spec: ServiceSpec, options: LaunchOptions) -> ServiceHandle:
         plan = load_blueprint(spec.kind).plan(spec)
-        prepared = _declarations(self.host, plan)
-        store = self.host.open_store(options.store_locator)
-        try:
-            _share(store, plan.shared)
-            opened = self._launch_members(prepared, options, store)
-        except BaseException:
-            _close_quietly(store)
-            raise
-        return ServiceHandle(plan, opened, store)
-
-    def _launch_members(
-        self,
-        prepared: tuple[tuple[MemberPlan, Any, Any], ...],
-        options: LaunchOptions,
-        store: Any,
-    ) -> tuple[tuple[MemberPlan, tuple[Any, ...]], ...]:
-        reconciler = self.host.reconciler(self.host.pool(store))
-        opened: list[tuple[MemberPlan, tuple[Any, ...]]] = []
-        try:
-            for member, declaration, definition in prepared:
-                processes = tuple(
-                    reconciler.launch(
-                        declaration,
-                        definition=definition,
-                        thread_policy=options.thread_policy,
-                        replica_count=member.replica_count,
-                        env_file=options.env_file,
-                        env_file_keys=options.env_file_keys,
-                        cwd=options.cwd,
-                        host_policy=options.host_policy,
-                    )
-                )
-                if not processes:
-                    raise RuntimeError(f"没有拉起能力进程: {member.capability}")
-                opened.append((member, processes))
-        except BaseException:
-            for _member, processes in opened:
-                for process in processes:
-                    _stop_quietly(process)
-            raise
-        return tuple(opened)
+        opened = _start_members(self.host, plan, options)
+        return ServiceHandle(plan, opened)
 
 
-def _declarations(
-    host: ServiceHost,
-    plan: ServicePlan,
-) -> tuple[tuple[MemberPlan, Any, Any], ...]:
-    """Ask every member for its declaration before any ledger is opened."""
-    return tuple(
-        (member, *host.load_declaration(member.capability, member.changes))
-        for member in plan.members
-    )
+def _start_members(host: ServiceHost, plan: ServicePlan, options: LaunchOptions):
+    """Create one resource account for every member process."""
+    from pathlib import Path
 
+    from kernel.process.ledger import ProcessLedger
+    from kernel.resource.lease import ResourceLeaseManager
+    from kernel.resource.pool import ResourcePool
 
-def _share(store: Any, shared: tuple[str, ...]) -> None:
-    """Add the blueprint's shared names. The person's own choices stay."""
-    if not shared:
-        return
-    current = tuple(store.shared_capabilities())
-    missing = tuple(name for name in shared if name not in current)
-    if missing:
-        store.share_capabilities(current + missing)
-
-
-def _stop_quietly(process: Any) -> None:
+    pool = ResourcePool(ResourceLeaseManager())
+    ledger_path = options.ledger_path or str(Path.cwd() / ".linope" / "processes.json")
+    ledger = ProcessLedger(ledger_path)
+    book = ProcessResourceBook(ledger)
+    _reap_dead(book)
+    reconciler = host.reconciler(pool)
+    reconciler.book = book
+    reconciler.pool.book = book
+    opened = []
     try:
-        process.stop()
-    except Exception:
-        pass
+        for member in plan.members:
+            declaration, definition = host.load_declaration(
+                member.capability,
+                member.changes,
+            )
+            from kernel.process.declaration import append_chosen
+
+            declaration = append_chosen(declaration, options.chosen)
+            processes = reconciler.launch(
+                declaration,
+                definition=definition,
+                shared=options.shared,
+                replica_count=member.replica_count,
+                env_file=options.env_file,
+                env_file_keys=options.env_file_keys,
+                cwd=options.cwd,
+                host_policy=options.host_policy,
+                thread_policy=options.thread_policy,
+            )
+            opened.append((member, processes))
+    except BaseException:
+        for _member, processes in opened:
+            for process in processes:
+                process.stop()
+        raise
+    return tuple(opened)
 
 
-def _close_quietly(store: Any) -> None:
-    try:
-        store.close()
-    except Exception:
-        pass
+def _reap_dead(book: ProcessResourceBook) -> None:
+    """Close accounts whose operating-system process is already gone."""
+    from kernel.process.process_manager.liveness import process_matches
+
+    for record in book.records():
+        if record.status != RecordStatus.READY or record.pid <= 0:
+            continue
+        if process_matches(record.pid, record.started or None):
+            continue
+        book.close(record.process_id)

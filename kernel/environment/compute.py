@@ -61,7 +61,7 @@ class ComputeDoor:
             and timeout_seconds > self.max_command_seconds
         ):
             raise ValueError("命令超过这间屋子允许的最长时间")
-        from kernel.resource.workspace.mount.mode import DANGER_FULL_ACCESS, confines
+        from kernel.environment.mount import DANGER_FULL_ACCESS, confines
 
         command = tuple(str(part) for part in argv)
         mode = self.filesystem.access_mode

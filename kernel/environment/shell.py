@@ -90,11 +90,7 @@ class ProcessEnvironment:
         os.chdir(self.cwd)
         if not self.inherit_parent_env:
             os.environ.clear()
-        if self.env_file_keys:
-            _read_env_file(self.env_file, self.env_file_keys)
         os.environ.update(self.public_env())
-        for key in self.env_file_keys:
-            os.environ.pop(key, None)
 
     def public_env(self) -> dict[str, str]:
         """Variables safe to write into the startup package."""

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 
 @dataclass
 class Receipt:
-    """A request ticket that does not retain the process supervisor."""
+    """A request ticket that does not retain the capability process."""
 
     request_id: str
     process_id: str
@@ -29,15 +28,3 @@ class Receipt:
     ) -> dict[str, Any]:
         return self._wait(self, timeout, caller_id=caller_id)
 
-
-def wait_first(
-    receipts: Sequence[Receipt],
-    timeout: float = 10.0,
-) -> tuple[Receipt, ...]:
-    """Return receipts that have completed, or the first batch to arrive."""
-    deadline = time.monotonic() + timeout
-    while True:
-        ready = tuple(item for item in receipts if item.ready())
-        if ready or time.monotonic() >= deadline:
-            return ready
-        time.sleep(0.02)

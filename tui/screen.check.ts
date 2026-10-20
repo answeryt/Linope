@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { parseEvent } from './link/events.ts'
-import { displayWidth, pushEvent, renderScreen, type Turn } from './screen.ts'
+import { displayWidth, noteProcessText, pushEvent, renderScreen, type Turn } from './screen.ts'
 
 const wide = displayWidth('一致性')
 assert.equal(wide, 6)
@@ -11,11 +11,11 @@ const turns: Turn[] = [
   { role: 'assistant', text: `开始${'中'.repeat(400)}结束` }
 ]
 const state = {
+  clerk: '在' as const,
   columns: 30,
   cwd: 'D:/other/Linope',
-  model: 'linope',
+  processes: [{ activity: '在等' as const, capability: 'tools.bash', id: 'abc' }],
   rows: 16,
-  session: 'file:.linope/resources.json · 已配置',
   status: 'ready' as const,
   turns
 }
@@ -44,5 +44,16 @@ const session = parseEvent(
   })
 )
 assert.equal(session?.type, 'session')
+
+const noted = noteProcessText(
+  [],
+  'process_id=1110cc5c pid=50040 capability=tools.bash'
+)
+assert.equal(noted[0]?.capability, 'tools.bash')
+assert.equal(noted[0]?.activity, '在等')
+const listed = noteProcessText(noted, 'process_id=1110cc5c pid=50040 activity=working status=ready')
+assert.equal(listed[0]?.activity, '在忙')
+assert.equal(renderScreen({ ...state, columns: 80 }).includes('管家'), true)
+assert.equal(renderScreen({ ...state, columns: 80 }).includes('tools.bash 在等'), true)
 
 console.log('tui screen checks passed')

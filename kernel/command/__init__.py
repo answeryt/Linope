@@ -15,7 +15,7 @@ def __getattr__(name: str):
 
         return main
     if name == "parse_start":
-        from kernel.command.start import parse_start
+        from kernel.command.process.start import parse_start
 
         return parse_start
     raise AttributeError(name)

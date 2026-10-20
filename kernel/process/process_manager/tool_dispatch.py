@@ -18,8 +18,6 @@ def tool_capability(name: str) -> str:
 def tool_request(name: str, arguments: Any, *, call_id: str = "", task_id: str = "") -> dict[str, Any]:
     """The process message for one tool step. The call id stays on the envelope."""
     body = arguments if isinstance(arguments, dict) else {}
-    if _mcp(name):
-        body = {"name": name, "arguments": body}
     return {
         "operation": "load",
         "kind": "tool",
@@ -53,8 +51,3 @@ def declared_tool_schema(capability: str) -> list[dict[str, Any]]:
         if isinstance(schemas, list):
             found.extend(item for item in schemas if isinstance(item, dict))
     return found
-
-
-def _mcp(name: str) -> bool:
-    value = str(name)
-    return value == "mcp" or value.startswith("mcp.") or "mcp_tool" in value

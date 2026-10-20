@@ -105,7 +105,6 @@ def brave_search(query: str, limit: int = 5) -> str:
                 "position": index,
             }
         )
-    _charge(url.encode("utf-8"), raw)
     return _ok(web)
 
 
@@ -163,12 +162,6 @@ def _limit(value: Any) -> int:
     except (TypeError, ValueError):
         number = 5
     return min(max(number, 1), 10)
-
-
-def _charge(sent: bytes, received: bytes) -> None:
-    from kernel.resource.account.recorded import record_network_current
-
-    record_network_current(sent=len(sent), received=len(received))
 
 
 def _ok(web: list[dict[str, Any]]) -> str:

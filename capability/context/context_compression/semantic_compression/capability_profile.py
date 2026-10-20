@@ -20,6 +20,6 @@ def capability_profile(capability_id, changes):
     return ProcessDeclaration(
         capability=capability_id,
         resources=(
-            ResourceClaim(kind=ResourceKind.CONTEXT, identity={"id": capability_id}),
+            ResourceClaim(kind=ResourceKind.MEMORY, identity={"scope": capability_id}),
         ),
     )

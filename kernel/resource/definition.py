@@ -8,12 +8,13 @@ from typing import Any
 
 
 class ResourceKind(StrEnum):
-    CONTEXT = "context"
+    """The first five kinds. Later kinds live in the contract registry."""
+
     MEMORY = "memory"
-    WORKSPACE = "workspace"
     TOOL = "tool"
+    SANDBOX = "sandbox"
+    MODEL = "model"
     NETWORK = "network"
-    COMMUNICATION = "communication"
 
 
 class ResourceShareMode(StrEnum):
@@ -25,10 +26,9 @@ class ResourceShareMode(StrEnum):
 class ResourceDefinition:
     """A capability's declaration of one resource kind it needs."""
 
-    kind: ResourceKind
+    kind: str
     required: bool = True
     share_mode: ResourceShareMode = ResourceShareMode.EXCLUSIVE
-    limits: dict[str, int | float | str] = field(default_factory=dict)
     resource_id: str = ""
 
 
@@ -37,19 +37,18 @@ class ResourceGrant:
     """A grant bound to a process. The child sees only the handle view."""
 
     resource_id: str
-    kind: ResourceKind
+    kind: str
     handle: str
-    limits: dict[str, int | float | str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     call_params: dict[str, Any] = field(default_factory=dict)
     share_mode: ResourceShareMode = ResourceShareMode.EXCLUSIVE
 
     def process_payload(self) -> dict[str, Any]:
         """Serializable view handed to the capability process."""
+        kind = getattr(self.kind, "value", self.kind)
         return {
             "handle": self.handle,
-            "kind": self.kind.value,
-            "limits": dict(self.limits),
+            "kind": str(kind),
             "call_params": dict(self.call_params),
         }
 
@@ -82,12 +81,12 @@ def _validate_by_kind(
     for requirement in requirements:
         if requirement.required and requirement.kind not in granted:
             raise ValueError(
-                f"Missing required resource grant: {requirement.kind.value}"
+                f"Missing required resource grant: {_kind_text(requirement.kind)}"
             )
     allowed = {requirement.kind for requirement in requirements}
     unknown = granted - allowed
     if unknown:
-        names = ", ".join(sorted(kind.value for kind in unknown))
+        names = ", ".join(sorted(_kind_text(kind) for kind in unknown))
         raise ValueError(f"Capability received undeclared resources: {names}")
 
 
@@ -109,7 +108,7 @@ def _validate_by_resource_id(
         if grant.kind != requirement.kind:
             raise TypeError(
                 f"Resource {requirement.resource_id!r} expects "
-                f"{requirement.kind.value}, got {grant.kind.value}"
+                f"{_kind_text(requirement.kind)}, got {_kind_text(grant.kind)}"
             )
     known = {requirement.resource_id for requirement in requirements}
     unknown = set(by_id) - known
@@ -117,3 +116,7 @@ def _validate_by_resource_id(
         raise ValueError(
             f"Capability received undeclared resources: {', '.join(sorted(unknown))}"
         )
+
+
+def _kind_text(kind: object) -> str:
+    return str(getattr(kind, "value", kind))

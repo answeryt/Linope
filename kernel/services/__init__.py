@@ -1,7 +1,6 @@
 """Services name groups of processes. A service does not own their lifetime.
 
-Only the small face is exported. Processes, receipts, the pool and the
-ledger never leave this package.
+Only the small face is exported. Processes and receipts stay in this package.
 """
 
 from __future__ import annotations
@@ -15,15 +14,13 @@ __all__ = [
     "ServiceSpec",
     "Ticket",
     "launch_session",
-    "open_service",
-    "register_service_kind",
     "service_kinds",
 ]
 
 _CONTRACTS = {"Member", "Service", "ServiceRequest", "Ticket"}
 _SPEC = {"LaunchOptions", "ServiceSpec"}
-_HOST = {"ServiceHost", "launch_session", "open_service"}
-_REGISTRY = {"register_service_kind", "service_kinds"}
+_HOST = {"ServiceHost", "launch_session"}
+_REGISTRY = {"service_kinds"}
 
 
 def __getattr__(name: str):

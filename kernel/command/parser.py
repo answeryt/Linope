@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from kernel.process.profile import Change
-from kernel.resource.store.locator import default_store_locator
 
 _GLOBAL = {
-    "resource-store": "str",
     "env-file": "str",
     "env": "repeat",
     "json": "bool",
@@ -49,8 +47,8 @@ def split_body(argv: list[str]) -> tuple[list[str], str | None]:
 def parse_flags(
     argv: list[str],
     flags: dict[str, str],
-) -> tuple[tuple[str, ...], dict[str, object], str, str, tuple[str, ...], bool]:
-    """Read positionals, declared options, and the global ledger/env/json options."""
+) -> tuple[tuple[str, ...], dict[str, object], str, tuple[str, ...], bool]:
+    """Read positionals, declared options, and the global env/json options."""
     known = dict(_GLOBAL)
     known.update(flags)
     position: list[str] = []
@@ -93,7 +91,6 @@ def parse_flags(
                 cast.append(raw)
             continue
         values[name] = _coerce(name, kind, raw)
-    store = values.pop("resource-store")
     env_file = values.pop("env-file")
     env_values = values.pop("env")
     as_json = bool(values.pop("json"))
@@ -103,7 +100,6 @@ def parse_flags(
     return (
         tuple(position),
         values,
-        str(store or default_store_locator()),
         str(env_file or ""),
         keys,
         as_json,

@@ -23,9 +23,19 @@ const repoRoot = () => {
 const pythonCommand = () => process.env.LINOPE_PYTHON?.trim() || process.env.PYTHON?.trim() || 'python'
 
 export function startTerminalSession(onEvent: (event: DisplayEvent) => void): TerminalLink {
-  const child: ChildProcessWithoutNullStreams = spawn(
+  let stderr = ''
+  const emitStderr = () => {
+    const text = stderr.trim()
+
+    stderr = ''
+
+    if (text) {
+      onEvent({ text, type: 'error' })
+    }
+  }
+  const proc: ChildProcessWithoutNullStreams = spawn(
     pythonCommand(),
-    ['-m', 'kernel.command', 'terminal', '--display', 'json'],
+    ['-u', '-m', 'kernel.command', 'session'],
     {
       cwd: repoRoot(),
       env: {
@@ -37,44 +47,55 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
       windowsHide: true
     }
   )
-  let stderr = ''
 
-  const emitStderr = () => {
-    const text = stderr.trim()
-
-    stderr = ''
-
-    if (text) {
-      onEvent({ text, type: 'error' })
-    }
-  }
-
-  createInterface({ input: child.stdout }).on('line', line => {
+  createInterface({ input: proc.stdout }).on('line', line => {
     const event = parseEvent(line)
 
     if (event) {
       onEvent(event)
+    } else if (line.trim()) {
+      onEvent({ text: line, type: 'text' })
     }
   })
-  child.stderr.setEncoding('utf8')
-  child.stderr.on('data', chunk => {
+  proc.stderr.setEncoding('utf8')
+  proc.stderr.on('data', chunk => {
     stderr += chunk
 
     if (stderr.includes('\n')) {
       emitStderr()
     }
   })
-  child.on('close', () => {
+  onEvent({
+    cwd: repoRoot(),
+    env: '',
+    store: '',
+    text: '',
+    type: 'session'
+  })
+  proc.on('close', () => {
     emitStderr()
+    onEvent({ text: '离开', type: 'status' })
     onEvent({ type: 'done' })
   })
 
   return {
     send(text: string) {
-      child.stdin.write(`${JSON.stringify({ text, type: 'input' })}\n`)
+      if (proc.exitCode !== null || proc.killed || !proc.stdin.writable) {
+        onEvent({ text: '管家已经离开', type: 'error' })
+        onEvent({ type: 'done' })
+        return
+      }
+
+      proc.stdin.write(`${text.trim()}\n`)
     },
     stop() {
-      child.kill()
+      if (proc.exitCode === null && !proc.killed) {
+        try {
+          proc.stdin.write('exit\n')
+        } catch {
+          proc.kill()
+        }
+      }
     }
   }
 }

@@ -1,1 +1,0 @@
-"""gRPC peer channel."""

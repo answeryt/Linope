@@ -2,30 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from kernel.resource.definition import ResourceDefinition, ResourceKind
+from kernel.resource.definition import ResourceDefinition
+from kernel.resource.resource_contract import kind_name, require
 
 
 @dataclass(frozen=True)
 class ResourceClaim:
     """One resource the developer asks the pool to bind."""
 
-    kind: ResourceKind
+    kind: str
     identity: dict[str, Any] = field(default_factory=dict)
-    limits: dict[str, int | float | str] = field(default_factory=dict)
     call_params: dict[str, Any] = field(default_factory=dict)
-    share_requested: bool = False
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "ResourceClaim":
         return cls(
-            kind=ResourceKind(str(payload["kind"])),
+            kind=str(payload["kind"]),
             identity=dict(payload.get("identity") or {}),
-            limits=dict(payload.get("limits") or {}),
             call_params=dict(payload.get("call_params") or {}),
-            share_requested=bool(payload.get("share_requested", False)),
         )
 
 
@@ -57,3 +54,40 @@ class ProcessDeclaration:
             ),
             settings=dict(payload.get("settings") or {}),
         )
+
+
+def append_chosen(
+    declaration: ProcessDeclaration,
+    chosen: tuple[str, ...],
+) -> ProcessDeclaration:
+    """Add resources the profile did not already claim.
+
+    A kind that is already on the declaration stays as the profile wrote it.
+    """
+    if not chosen:
+        return declaration
+    existing = {kind_name(item.kind) for item in declaration.resources}
+    added: list[ResourceClaim] = []
+    for raw in chosen:
+        claim = _chosen_claim(raw, existing)
+        added.append(claim)
+        existing.add(kind_name(claim.kind))
+    return replace(declaration, resources=(*declaration.resources, *added))
+
+
+def _chosen_claim(raw: str, existing: set[str]) -> ResourceClaim:
+    kind, sep, value = str(raw).partition("=")
+    name = kind_name(kind.strip())
+    identity_value = value.strip()
+    if not sep or not name or not identity_value:
+        raise ValueError("还缺身份")
+    if name in existing:
+        raise ValueError(f"不能改默认资源: {name}")
+    contract = require(name)
+    if len(contract.required_identity_keys) != 1:
+        missing = ", ".join(contract.required_identity_keys)
+        raise ValueError(f"{name} 还缺身份: {missing}")
+    return ResourceClaim(
+        kind=name,
+        identity={contract.required_identity_keys[0]: identity_value},
+    )

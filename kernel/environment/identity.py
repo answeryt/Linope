@@ -9,11 +9,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-from kernel.resource.workspace.mount.mode import MODES, check_mode
+from kernel.environment.mount import MODES, check_mode
 
 SENSITIVE_NAME = re.compile(r"KEY|PASSWORD|SECRET|TOKEN", re.IGNORECASE)
 ACCESS_MODES = MODES
-_WIDER = {"read-only": "workspace-write"}
 
 
 def sensitive_name(name: str) -> bool:
@@ -32,7 +31,6 @@ class IdentityDoor:
     process_id: str
     capability_id: str
     access_mode: str = "workspace-write"
-    widened_once: bool = False
     secret_file: str = ""
     secret_names: tuple[str, ...] = ()
 
@@ -66,23 +64,13 @@ class IdentityDoor:
             if key and not sensitive_name(str(key)) and str(key) not in hidden
         }
 
-    def approve_wider(self, approver: str) -> "IdentityDoor":
-        """Widen one step, once. A peer process cannot approve this."""
-        if self.widened_once:
-            raise ValueError("已经放宽过一次")
-        nxt = _WIDER.get(self.access_mode)
-        if nxt is None:
-            raise ValueError("不能再放宽")
-        if approver not in {"user", "policy"}:
-            raise ValueError("只能由用户或策略放宽")
-        return replace(self, access_mode=nxt, widened_once=True)
-
     def payload(self) -> dict[str, Any]:
         return {
             "process_id": self.process_id,
             "capability_id": self.capability_id,
             "access_mode": self.access_mode,
-            "widened_once": self.widened_once,
+            "secret_file": self.secret_file,
+            "secret_names": list(self.secret_names),
         }
 
     @classmethod
@@ -91,8 +79,16 @@ class IdentityDoor:
             process_id=str(payload["process_id"]),
             capability_id=str(payload["capability_id"]),
             access_mode=str(payload.get("access_mode", "workspace-write")),
-            widened_once=bool(payload.get("widened_once", False)),
+            secret_file=str(payload.get("secret_file", "")),
+            secret_names=tuple(str(name) for name in payload.get("secret_names", ())),
         )
+
+
+def copy_named_secrets(source: str, names: tuple[str, ...], dest: Path) -> None:
+    """Write one file that contains only the named secrets."""
+    lines = [f"{name}={_read_named_secret(source, name)}" for name in names]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def _read_named_secret(path: str, name: str) -> str:

@@ -1,1 +1,0 @@
-"""Copies chosen by name."""

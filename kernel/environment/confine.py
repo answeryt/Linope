@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from kernel.resource.workspace.mount.mode import DANGER_FULL_ACCESS
+from kernel.environment.mount import DANGER_FULL_ACCESS
 
 
 _ROOT = Path(__file__).resolve().parents[2]

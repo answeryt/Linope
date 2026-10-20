@@ -23,9 +23,6 @@ class ProcessActivation:
     environment: ProcessEnvironment | None = None
     host_policy: HostExecutionPolicy = field(default_factory=HostExecutionPolicy)
     thread_policy: ThreadPolicy = field(default_factory=ThreadPolicy)
-    communication: dict[str, Any] = field(
-        default_factory=lambda: {"name": "ledger", "settings": {}}
-    )
     settings: dict[str, Any] = field(default_factory=dict)
     resource_context: ResourceContext = field(init=False)
 
@@ -62,15 +59,11 @@ class ProcessActivation:
         shell = self.environment
         if shell is None:
             raise RuntimeError("process environment was not prepared")
-        channel_name = str(self.communication.get("name") or "ledger")
-        channel_settings = dict(self.communication.get("settings") or {})
         room = KernelEnvironment.build(
             shell=shell,
             policy=self.host_policy,
             max_concurrent_tasks=self.thread_policy.max_concurrent_tasks,
             max_sync_workers=self.thread_policy.max_sync_workers,
-            channel_name=channel_name,
-            channel_settings=channel_settings,
             module_paths=self.definition.module_paths,
             grants=self.grants,
         )
@@ -84,8 +77,4 @@ class ProcessActivation:
             "room": room.payload(),
             "host_policy": self.host_policy.payload(),
             "thread_policy": self.thread_policy.payload(),
-            "communication": {
-                "name": channel_name,
-                "settings": channel_settings,
-            },
         }

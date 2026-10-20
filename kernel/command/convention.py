@@ -16,7 +16,6 @@ class Invocation:
 
     position: tuple[str, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
-    store: str = ""
     env_file: str = ""
     env_keys: tuple[str, ...] = ()
     json: bool = False
@@ -35,7 +34,6 @@ class Line:
     changes: tuple[tuple[str, str], ...] = ()
     count: int | None = None
     members: tuple[str, ...] = ()
-    store: str = ""
     env_file: str = ""
     env_keys: tuple[str, ...] = ()
     mode: str = ""
@@ -47,11 +45,10 @@ def parse(argv: list[str], *, flags: dict[str, str], usage: str) -> Invocation:
     """Parse one subcommand. ``usage`` is printed by the caller when this fails."""
     del usage
     head, body = split_body(list(argv))
-    position, options, store, env_file, env_keys, as_json = parse_flags(head, flags)
+    position, options, env_file, env_keys, as_json = parse_flags(head, flags)
     return Invocation(
         position=position,
         options=options,
-        store=store,
         env_file=env_file,
         env_keys=env_keys,
         json=as_json,

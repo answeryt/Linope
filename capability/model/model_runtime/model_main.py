@@ -78,7 +78,7 @@ def _forward_display(part: Any) -> None:
     text = part.get("text")
     if not text:
         return
-    from kernel.command.live_stream import publish_text
+    from kernel.command.screen.live_stream import publish_text
 
     publish_text(str(text))
 
@@ -139,9 +139,7 @@ async def load_named_card_async(
         messages=messages,
         **{**dict(call_params or {}), **extras},
     )
-    collected = await _collect(runtime, card_id, result)
-    _remember_context(card_id, call_params, messages, collected)
-    return collected
+    return await _collect(runtime, card_id, result)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -164,73 +162,6 @@ async def _async_main(args: argparse.Namespace, runtime: ModuleType) -> int:
     )
     await _emit(runtime.load_interface(args.card), result)
     return 0
-
-
-def _remember_context(
-    card_id: str,
-    call_params: dict[str, Any] | None,
-    messages: list[Any],
-    result: Any,
-) -> None:
-    """Write this call's window occupancy onto the bound process, if there is one."""
-    from kernel.resource.account.bind import current_store
-    from kernel.resource.account.recorded import record_context
-
-    store = current_store()
-    if store is None or not isinstance(result, dict) or result.get("type") != "model_turn":
-        return
-    from capability.model.model_API.model_paramaters.context_limits.context_limits import (
-        resolve_default_context_length,
-    )
-    from capability.model.model_API.model_paramaters.tokens.tokens import (
-        estimate_text_tokens_rough,
-    )
-    from capability.model.model_runtime.call_model import load_card
-    from kernel.environment import current_room
-
-    room = current_room()
-    process_id = str(getattr(getattr(room, "shell", None), "process_id", "") or "")
-    if not process_id:
-        return
-    try:
-        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        output_text = _turn_text(result) or ""
-        if "output" in usage:
-            output_tokens = int(usage["output"])
-        else:
-            output_tokens = estimate_text_tokens_rough(output_text)
-        if "input" in usage:
-            input_tokens = int(usage["input"])
-        else:
-            input_tokens = estimate_text_tokens_rough(_input_text(messages))
-        card = load_card(card_id)
-        model = str((call_params or {}).get("model") or card.get("model") or "")
-        record_context(
-            store,
-            process_id,
-            occupied=input_tokens + output_tokens,
-            ceiling=resolve_default_context_length(model),
-            output_tokens=output_tokens,
-        )
-    except Exception:
-        # The reply is already formed. A ledger problem must not discard it.
-        return
-
-
-def _input_text(messages: list[Any]) -> str:
-    parts: list[str] = []
-    for message in messages or []:
-        if isinstance(message, str):
-            parts.append(message)
-            continue
-        if not isinstance(message, dict):
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            parts.append(content)
-        elif content is not None:
-            parts.append(str(content))
-    return "\n".join(parts)
 
 
 def _prompt_text(body: str) -> str:

@@ -94,7 +94,6 @@ def firecrawl_search(query: str, limit: int = 5) -> str:
     else:
         rows = []
     web = _rows(rows)
-    _charge(json.dumps(body).encode("utf-8"), raw)
     return _ok(web)
 
 
@@ -184,12 +183,6 @@ def _position(value: Any, fallback: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
-
-
-def _charge(sent: bytes, received: bytes) -> None:
-    from kernel.resource.account.recorded import record_network_current
-
-    record_network_current(sent=len(sent), received=len(received))
 
 
 def _ok(web: list[dict[str, Any]]) -> str:

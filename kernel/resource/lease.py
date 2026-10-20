@@ -97,7 +97,7 @@ class ResourceLeaseManager:
                 if entity is None:
                     entity = ResourceEntity(
                         resource_id=grant.resource_id,
-                        kind=grant.kind.value,
+                        kind=str(getattr(grant.kind, "value", grant.kind)),
                         identity=dict(grant.metadata.get("identity") or {}),
                     )
                     self._entities[grant.resource_id] = entity

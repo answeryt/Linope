@@ -10,8 +10,9 @@ from typing import Any, Protocol
 
 from kernel.resource.compile import CompiledResource
 from kernel.resource.handle_view import ResourceContext
-from kernel.resource.definition import ResourceGrant, ResourceKind
+from kernel.resource.definition import ResourceGrant
 from kernel.resource.lease import HandleRevocation, ResourceEntity
+from kernel.resource.resource_contract import close_entity, kind_name, open_entity
 
 PoolListener = Callable[[dict[str, Any]], None]
 
@@ -48,16 +49,16 @@ class ResourcePoolStore(Protocol):
 class RecordingLoader:
     """Remember that an entity is loaded without fetching real weights or tools."""
 
-    def load(self, kind: ResourceKind, identity: dict[str, Any]) -> dict[str, Any]:
+    def load(self, kind: str, identity: dict[str, Any]) -> dict[str, Any]:
         return {
             "loaded": True,
-            "kind": kind.value,
+            "kind": kind_name(kind),
             "identity": dict(identity),
         }
 
     def unload(
         self,
-        kind: ResourceKind,
+        kind: str,
         identity: dict[str, Any],
         state: dict[str, Any] | None,
     ) -> None:
@@ -78,6 +79,7 @@ class ResourcePool:
         self._listener = listener
         self._lock = threading.Lock()
         self._grants_for_process: dict[str, tuple[ResourceGrant, ...]] = {}
+        self.book = None
 
     def bind(
         self,
@@ -126,7 +128,7 @@ class ResourcePool:
         return unloaded
 
     def authorize(self, handle: str, process_id: str) -> None:
-        """Check that this process still holds the handle."""
+        """The lease is the only place that refuses a handle."""
         with self._lock:
             self.store.authorize(handle, process_id)
 
@@ -152,14 +154,13 @@ class ResourcePool:
         entity: ResourceEntity,
         grants: tuple[ResourceGrant, ...],
     ) -> None:
-        kind = ResourceKind(entity.kind)
         handle = next(
             grant.handle
             for grant in grants
             if grant.resource_id == entity.resource_id
         )
         try:
-            state = self.loader.load(kind, entity.identity)
+            state = open_entity(entity.kind, entity.identity, self.loader)
         except BaseException as error:
             self.notify(
                 "resource_load_failed",
@@ -174,7 +175,7 @@ class ResourcePool:
             process_id=process_id,
             resource_id=entity.resource_id,
             handle=handle,
-            kind=entity.kind,
+            kind=kind_name(entity.kind),
         )
 
     def _take_release(self, process_id: str) -> tuple[ResourceEntity, ...]:
@@ -185,16 +186,7 @@ class ResourcePool:
             self._unload_entity(entity)
 
     def _unload_entity(self, entity: ResourceEntity) -> None:
-        try:
-            kind = ResourceKind(entity.kind)
-        except ValueError:
-            self.store.mark_unloaded(entity.resource_id)
-            return
-        self.loader.unload(
-            kind,
-            entity.identity,
-            entity.state,
-        )
+        close_entity(entity.kind, entity.identity, entity.state, self.loader)
         self.store.mark_unloaded(entity.resource_id)
         self.notify("resource_unloaded", resource_id=entity.resource_id)
 
@@ -204,7 +196,6 @@ def _grant_for(compiled: CompiledResource) -> ResourceGrant:
         resource_id=compiled.resource_id,
         kind=compiled.kind,
         handle=secrets.token_hex(16),
-        limits=dict(compiled.limits),
         call_params=dict(compiled.call_params),
         share_mode=compiled.share_mode,
         metadata={

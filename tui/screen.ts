@@ -10,13 +10,19 @@ export type Turn = {
   text: string
 }
 
+export type LiveProcess = {
+  id: string
+  capability: string
+  activity: '在等' | '在忙'
+}
+
 export type ScreenState = {
   columns: number
   cwd: string
-  model: string
+  clerk: '在' | '离开'
+  processes: LiveProcess[]
   rows: number
   scroll?: number
-  session: string
   status: 'ready' | 'running'
   turns: Turn[]
 }
@@ -192,13 +198,108 @@ const field = (label: string, value: string, width: number) => {
   }
 }
 
-const infoLines = (state: ScreenState, width: number) => {
-  const model = field('model', state.model, width)
-  const cwd = field('cwd', state.cwd, width)
-  const session = field('session', state.session, width)
-  const help = { text: paint(theme.muted, '/help'), width: 5 }
+const activityWord = (raw: string): LiveProcess['activity'] | '离开' => {
+  if (raw === 'working' || raw === '在忙') {
+    return '在忙'
+  }
 
-  return [model, cwd, session, help]
+  if (raw === 'sleeping' || raw === '在等') {
+    return '在等'
+  }
+
+  return '离开'
+}
+
+export function noteProcessText(current: LiveProcess[], text: string): LiveProcess[] {
+  const next = current.map(item => ({ ...item }))
+  const started = /^process_id=(\S+)\s+pid=\S+\s+capability=(\S+)/.exec(text.trim())
+
+  if (started) {
+    const id = started[1] ?? ''
+    const found = next.find(item => item.id === id)
+
+    if (found) {
+      found.capability = started[2] ?? found.capability
+      found.activity = '在等'
+    } else {
+      next.push({ activity: '在等', capability: started[2] ?? id, id })
+    }
+
+    return next
+  }
+
+  const listed = /^process_id=(\S+)\s+pid=\S+\s+activity=(\S+)/.exec(text.trim())
+
+  if (listed) {
+    const id = listed[1] ?? ''
+    const activity = activityWord(listed[2] ?? '')
+
+    if (activity === '离开' || text.includes('status=closed')) {
+      return next.filter(item => item.id !== id)
+    }
+
+    const found = next.find(item => item.id === id)
+
+    if (found) {
+      found.activity = activity
+    } else {
+      next.push({ activity, capability: id.slice(0, 8), id })
+    }
+
+    return next
+  }
+
+  if (!text.trim().startsWith('{')) {
+    return current
+  }
+
+  try {
+    const payload = JSON.parse(text) as { facts?: { activity?: string; capability_id?: string; process_id?: string } }
+    const facts = payload.facts
+
+    if (!facts?.process_id) {
+      return current
+    }
+
+    const activity = activityWord(facts.activity ?? '')
+
+    if (activity === '离开') {
+      return next.filter(item => item.id !== facts.process_id)
+    }
+
+    const found = next.find(item => item.id === facts.process_id)
+
+    if (found) {
+      found.activity = activity
+      if (facts.capability_id) {
+        found.capability = facts.capability_id
+      }
+    } else {
+      next.push({
+        activity,
+        capability: facts.capability_id || facts.process_id.slice(0, 8),
+        id: facts.process_id
+      })
+    }
+
+    return next
+  } catch {
+    return current
+  }
+}
+
+const infoLines = (state: ScreenState, width: number) => {
+  const alive = state.processes
+  const recent = alive.slice(-3)
+  const names = recent.length
+    ? recent.map(item => `${item.capability} ${item.activity}`).join('、')
+    : '没有'
+  const clerk = field('管家', state.clerk, width)
+  const count = field('活着', String(alive.length), width)
+  const processes = field('进程', names, width)
+  const project = field('项目', state.cwd, width)
+
+  return [clerk, count, processes, project]
 }
 
 const panel = (state: ScreenState, width: number): string[] => {
@@ -253,7 +354,7 @@ const transcript = (state: ScreenState, width: number): string[] => {
 
 const statusLine = (state: ScreenState, width: number) => {
   const maxText = Math.max(8, width - 6)
-  const full = `${state.status} │ ${state.model} │ ${state.cwd}`
+  const full = `${state.status} │ ${state.clerk === '在' ? '管家在' : '管家离开'} │ /help`
   const text = ` ${clip(full, maxText)} `
   const fillWidth = Math.max(2, width - text.length)
   const left = Math.floor(fillWidth / 2)
@@ -299,7 +400,7 @@ export const helpText = [
   '← / →               移动输入光标',
   'Home / End         移动光标；查看历史时回到顶部或底部',
   'PageUp / PageDown  查看更早或更新的输出',
-  '其它每一行都发给 Linope 终端，例如 process list'
+  '其它每一行都发给 Linope 终端，例如 process list、create 文件.md'
 ].join('\n')
 
 export function pushEvent(

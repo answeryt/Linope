@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from kernel.environment.identity import check_access_mode
-from kernel.resource.workspace.mount.mode import writes
-from kernel.resource.workspace.mount.view import admit_path, private_temp
+from kernel.environment.mount import admit_path, private_temp, writes
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from kernel.resource.definition import ResourceKind, ResourceShareMode
+from kernel.resource.definition import ResourceShareMode
+from kernel.resource.resource_contract import kind_name, validate_claim
 
 
 class ResourceDeclaration(Protocol):
@@ -23,24 +24,23 @@ class ResourceDeclaration(Protocol):
 class CompiledResource:
     """One entity binding produced from a claim. Handles are minted later."""
 
-    kind: ResourceKind
+    kind: str
     resource_id: str
     identity: dict[str, Any]
-    limits: dict[str, int | float | str]
     call_params: dict[str, Any]
     share_mode: ResourceShareMode
     share_granted: bool
 
 
 def entity_key(
-    kind: ResourceKind,
+    kind: str,
     identity: dict[str, Any],
     *,
     process_id: str | None = None,
 ) -> str:
     """Hash kind and identity. Call params never enter the key."""
     body: dict[str, Any] = {
-        "kind": kind.value,
+        "kind": kind_name(kind),
         "identity": identity,
     }
     if process_id is not None:
@@ -59,51 +59,59 @@ def compile_declaration(
     declaration: ResourceDeclaration,
     process_id: str,
     *,
-    shared: bool = False,
+    shared: tuple[str, ...] = (),
 ) -> tuple[CompiledResource, ...]:
-    """Resolve claims into entity keys. Sharing follows the capability list."""
+    """Resolve claims into entity keys.
+
+    ``shared`` names the kinds this launch actually shares. A kind that is
+    only allowed to be shared still stays exclusive until it is named.
+    """
     requirements = declaration.resource_definitions()
     claims_by_kind = {}
     for claim in declaration.resources:
-        if claim.kind in claims_by_kind:
-            raise ValueError(f"Duplicate resource claim for {claim.kind.value}")
-        claims_by_kind[claim.kind] = claim
+        name = kind_name(claim.kind)
+        if name in claims_by_kind:
+            raise ValueError(f"Duplicate resource claim for {name}")
+        claims_by_kind[name] = claim
 
-    required = {item.kind for item in requirements if item.required}
+    required = {kind_name(item.kind) for item in requirements if item.required}
     missing = required - set(claims_by_kind)
     if missing:
-        names = ", ".join(sorted(kind.value for kind in missing))
+        names = ", ".join(sorted(missing))
         raise ValueError(f"Declaration is missing required resources: {names}")
 
-    allowed = {item.kind for item in requirements}
+    allowed = {kind_name(item.kind) for item in requirements}
     unknown = set(claims_by_kind) - allowed
     if unknown:
-        names = ", ".join(sorted(kind.value for kind in unknown))
+        names = ", ".join(sorted(unknown))
         raise ValueError(f"Capability received undeclared resources: {names}")
 
+    shared_names = {kind_name(item) for item in shared}
     compiled: list[CompiledResource] = []
     for requirement in requirements:
-        claim = claims_by_kind.get(requirement.kind)
+        name = kind_name(requirement.kind)
+        claim = claims_by_kind.get(name)
         if claim is None:
             continue
-        if shared:
+        sharing = name in shared_names
+        validate_claim(name, dict(claim.identity), shared=sharing)
+        if sharing:
             share_mode = ResourceShareMode.SHARED
             share_granted = True
-            resource_id = entity_key(requirement.kind, claim.identity)
+            resource_id = entity_key(name, claim.identity)
         else:
             share_mode = ResourceShareMode.EXCLUSIVE
             share_granted = False
             resource_id = entity_key(
-                requirement.kind,
+                name,
                 claim.identity,
                 process_id=process_id,
             )
         compiled.append(
             CompiledResource(
-                kind=requirement.kind,
+                kind=name,
                 resource_id=resource_id,
                 identity=dict(claim.identity),
-                limits=dict(claim.limits),
                 call_params=dict(claim.call_params),
                 share_mode=share_mode,
                 share_granted=share_granted,
