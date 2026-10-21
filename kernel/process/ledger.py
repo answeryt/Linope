@@ -13,7 +13,6 @@ from typing import Any
 
 
 _RECORD_KEYS = {
-    "process_id",
     "capability_id",
     "status",
     "claims",
@@ -53,7 +52,20 @@ class ProcessLedger:
         if not self.path.is_file():
             return []
         body = json.loads(self.path.read_text(encoding="utf-8"))
-        return [_check_record(item) for item in body.get("records") or ()]
+        found = []
+        for item in body.get("records") or ():
+            if not isinstance(item, dict):
+                continue
+            cleaned = {key: value for key, value in item.items() if key != "process_id"}
+            try:
+                pid = int(cleaned.get("pid") or 0)
+            except (TypeError, ValueError):
+                continue
+            if pid <= 0:
+                continue
+            cleaned["pid"] = pid
+            found.append(_check_record(cleaned))
+        return found
 
 
 def _check_record(item: dict[str, Any]) -> dict[str, Any]:
@@ -72,7 +84,6 @@ def _check_record(item: dict[str, Any]) -> dict[str, Any]:
             )
         leases.append(dict(lease))
     return {
-        "process_id": item["process_id"],
         "capability_id": item["capability_id"],
         "status": item["status"],
         "claims": [dict(claim) for claim in item["claims"]],

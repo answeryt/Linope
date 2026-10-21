@@ -22,7 +22,8 @@ def test_two_starts_return_before_the_window_closes(tmp_path: Path, capsys, monk
         == 0
     )
     output = capsys.readouterr().out
-    assert output.count("process_id=") >= 4
+    assert output.count("pid=") >= 4
+    assert "process_id=" not in output
     assert output.count('{"type": "done"}') >= 4
     assert "tools.read" in output
     assert "tools.glob" in output
@@ -50,8 +51,8 @@ def test_a_one_shot_start_still_waits(monkeypatch) -> None:
 
     monkeypatch.setattr("kernel.command.process.start.hold", hold)
     monkeypatch.setattr(
-        "kernel.command.process.start.launch_session",
-        lambda spec, options: object(),
+        "kernel.command.process.start.open_capability",
+        lambda options: object(),
     )
     assert start_capability(["tools.read"]) == 0
     assert waited["yes"] is True

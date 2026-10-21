@@ -27,13 +27,13 @@ class ResourcePoolStore(Protocol):
     def acquire(self, context: ResourceContext) -> Any:
         ...
 
-    def take_pending_loads(self, process_id: str) -> tuple[ResourceEntity, ...]:
+    def take_pending_loads(self, pid: int) -> tuple[ResourceEntity, ...]:
         ...
 
-    def release(self, process_id: str) -> tuple[ResourceEntity, ...]:
+    def release(self, pid: int) -> tuple[ResourceEntity, ...]:
         ...
 
-    def authorize(self, handle: str, process_id: str) -> None:
+    def authorize(self, handle: str, pid: int) -> None:
         ...
 
     def revoke(self, handle: str) -> HandleRevocation:
@@ -78,18 +78,18 @@ class ResourcePool:
         self.loader = loader or RecordingLoader()
         self._listener = listener
         self._lock = threading.Lock()
-        self._grants_for_process: dict[str, tuple[ResourceGrant, ...]] = {}
+        self._grants_for_process: dict[int, tuple[ResourceGrant, ...]] = {}
         self.book = None
 
     def bind(
         self,
-        process_id: str,
+        pid: int,
         capability_id: str,
         compiled: tuple[CompiledResource, ...],
     ) -> tuple[ResourceGrant, ...]:
         grants = tuple(_grant_for(item) for item in compiled)
         context = ResourceContext(
-            process_id=process_id,
+            pid=pid,
             capability_id=capability_id,
             grants=grants,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -98,10 +98,10 @@ class ResourcePool:
         with self._lock:
             try:
                 self.store.acquire(context)
-                self._grants_for_process[process_id] = grants
-                pending = self.store.take_pending_loads(process_id)
+                self._grants_for_process[pid] = grants
+                pending = self.store.take_pending_loads(pid)
             except BaseException as exc:
-                unloaded = self._take_release(process_id)
+                unloaded = self._take_release(pid)
                 error = exc
             else:
                 unloaded = ()
@@ -110,27 +110,27 @@ class ResourcePool:
             raise error
         try:
             for entity in pending:
-                self._load_entity(process_id, entity, grants)
+                self._load_entity(pid, entity, grants)
         except BaseException:
             with self._lock:
-                unloaded = self._take_release(process_id)
+                unloaded = self._take_release(pid)
             self._unload_all(unloaded)
             raise
         return grants
 
-    def grants_for(self, process_id: str) -> tuple[ResourceGrant, ...]:
-        return self._grants_for_process[process_id]
+    def grants_for(self, pid: int) -> tuple[ResourceGrant, ...]:
+        return self._grants_for_process[pid]
 
-    def release(self, process_id: str) -> tuple[ResourceEntity, ...]:
+    def release(self, pid: int) -> tuple[ResourceEntity, ...]:
         with self._lock:
-            unloaded = self._take_release(process_id)
+            unloaded = self._take_release(pid)
         self._unload_all(unloaded)
         return unloaded
 
-    def authorize(self, handle: str, process_id: str) -> None:
+    def authorize(self, handle: str, pid: int) -> None:
         """The lease is the only place that refuses a handle."""
         with self._lock:
-            self.store.authorize(handle, process_id)
+            self.store.authorize(handle, pid)
 
     def revoke(self, handle: str) -> HandleRevocation:
         with self._lock:
@@ -139,7 +139,7 @@ class ResourcePool:
         self.notify(
             "handle_revoked",
             handle=handle,
-            process_id=revocation.process_id,
+            pid=revocation.pid,
             resource_id=revocation.resource_id,
         )
         return revocation
@@ -150,7 +150,7 @@ class ResourcePool:
 
     def _load_entity(
         self,
-        process_id: str,
+        pid: int,
         entity: ResourceEntity,
         grants: tuple[ResourceGrant, ...],
     ) -> None:
@@ -164,7 +164,7 @@ class ResourcePool:
         except BaseException as error:
             self.notify(
                 "resource_load_failed",
-                process_id=process_id,
+                pid=pid,
                 resource_id=entity.resource_id,
                 error=str(error),
             )
@@ -172,14 +172,14 @@ class ResourcePool:
         self.store.mark_loaded(entity.resource_id, state)
         self.notify(
             "resource_load_succeeded",
-            process_id=process_id,
+            pid=pid,
             resource_id=entity.resource_id,
             handle=handle,
             kind=kind_name(entity.kind),
         )
 
-    def _take_release(self, process_id: str) -> tuple[ResourceEntity, ...]:
-        return tuple(self.store.release(process_id))
+    def _take_release(self, pid: int) -> tuple[ResourceEntity, ...]:
+        return tuple(self.store.release(pid))
 
     def _unload_all(self, unloaded: tuple[ResourceEntity, ...]) -> None:
         for entity in unloaded:

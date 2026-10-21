@@ -89,11 +89,11 @@ def ddgs_search(query: str, limit: int = 5) -> str:
 
 
 def capability_profile(capability_id, changes):
-    """DuckDuckGo search leases duckduckgo.com. It does not receive a workspace."""
+    """DuckDuckGo search leases a tool and the ledger channel. It does not receive a workspace."""
     del changes
-    from kernel.process.profiles import tool_with_network
+    from kernel.process.profiles import tool_only
 
-    return tool_with_network(capability_id, ("duckduckgo.com",))
+    return tool_only(capability_id)
 
 
 def _limit(value: Any) -> int:

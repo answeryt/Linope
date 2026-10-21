@@ -82,10 +82,10 @@ class KernelEnvironment:
             Path(shell.cwd),
             package_paths=tuple(Path(path) for path in module_paths),
             access_mode=mode,
-            process_id=shell.process_id,
+            pid=shell.pid,
         )
         identity = IdentityDoor(
-            process_id=shell.process_id,
+            pid=shell.pid,
             capability_id=shell.capability_id,
             access_mode=mode,
             secret_file=shell.env_file,

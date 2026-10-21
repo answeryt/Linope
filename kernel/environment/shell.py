@@ -15,7 +15,7 @@ from kernel.environment.identity import sensitive_name
 class ProcessEnvironment:
     """Explicit OS execution inputs, separate from Agent Resource Context."""
 
-    process_id: str
+    pid: int
     capability_id: str
     cwd: str
     argv: tuple[str, ...] = ()
@@ -28,8 +28,8 @@ class ProcessEnvironment:
     stderr: str = "inherit"
 
     def __post_init__(self) -> None:
-        if not self.process_id.strip():
-            raise ValueError("process_id must not be empty")
+        if self.pid <= 0:
+            raise ValueError("pid must be a positive operating-system process id")
         if not self.capability_id.strip():
             raise ValueError("capability_id must not be empty")
         cwd = Path(self.cwd).expanduser().resolve()
@@ -64,7 +64,7 @@ class ProcessEnvironment:
     def current(
         cls,
         *,
-        process_id: str,
+        pid: int,
         capability_id: str,
         cwd: str | Path | None = None,
         env_file: str = "",
@@ -72,7 +72,7 @@ class ProcessEnvironment:
     ) -> "ProcessEnvironment":
         """Record an explicit environment. Secret values stay out of the startup package."""
         return cls(
-            process_id=process_id,
+            pid=pid,
             capability_id=capability_id,
             cwd=str(cwd or Path.cwd()),
             env_file=env_file,
@@ -102,7 +102,7 @@ class ProcessEnvironment:
 
     def payload(self) -> dict[str, Any]:
         return {
-            "process_id": self.process_id,
+            "pid": self.pid,
             "capability_id": self.capability_id,
             "cwd": self.cwd,
             "argv": list(self.argv),
@@ -118,7 +118,7 @@ class ProcessEnvironment:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "ProcessEnvironment":
         return cls(
-            process_id=str(payload["process_id"]),
+            pid=int(payload["pid"]),
             capability_id=str(payload["capability_id"]),
             cwd=str(payload["cwd"]),
             argv=tuple(str(value) for value in payload.get("argv", ())),

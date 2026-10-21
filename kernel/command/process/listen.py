@@ -15,15 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from kernel.command.convention import UsageError
-from kernel.resource.address import (
+from kernel.communication.address import (
     keep_memory_system,
     memory_contents,
     memory_grant,
     memory_messages,
     remember,
 )
-from kernel.services.contracts import ServiceRequest
-
 _PROMPT_SUFFIXES = {".txt", ".md", ".json"}
 
 PING_TIMEOUT = 1.0
@@ -49,13 +47,13 @@ def hold(service: Any, *, ping: bool = False, once: bool = False, lines: Any = N
         service.close()
 
 
-def ask_ping(service: Any, process_id: str | None = None, timeout: float = PING_TIMEOUT) -> dict[str, Any] | None:
+def ask_ping(service: Any, pid: str | int | None = None, timeout: float = PING_TIMEOUT) -> dict[str, Any] | None:
     """Ask one living process. A wrong sequence, id, or a silence is no answer."""
-    process = _choose(service, process_id)
+    process = _choose(service, pid)
     seq = _next_seq()
     question = {
         "operation": "ping",
-        "process_id": process.activation.process_id,
+        "pid": _pid_of(process),
         "seq": seq,
         "channel": process.channel_name(),
     }
@@ -64,7 +62,7 @@ def ask_ping(service: Any, process_id: str | None = None, timeout: float = PING_
         return None
     if reply.get("event") != "pong":
         return None
-    if reply.get("seq") != seq or reply.get("process_id") != question["process_id"]:
+    if reply.get("seq") != seq or int(reply.get("pid") or 0) != question["pid"]:
         return None
     return reply
 
@@ -75,7 +73,7 @@ def _startup_ping(service: Any, timeout: float) -> bool:
         time.sleep(timeout)
         return False
     for process in processes:
-        reply = ask_ping(service, process.activation.process_id, timeout)
+        reply = ask_ping(service, _pid_of(process), timeout)
         if reply is None:
             return False
         print(reply, flush=True)
@@ -93,7 +91,7 @@ def _one_line(service: Any, raw: str, timeout: float, *, emit_done: bool = True)
         if parsed[0] == "list":
             _print_list(service)
         elif parsed[0] == "show":
-            _print_show(service, parsed[1])
+            _print_show(service, parsed[1], parsed[2] if len(parsed) > 2 else "")
         elif parsed[0] == "trace":
             _print_trace(service, parsed[1])
         elif parsed[0] == "ping":
@@ -125,13 +123,29 @@ def _one_line(service: Any, raw: str, timeout: float, *, emit_done: bool = True)
     return handed
 
 
-def _load(service: Any, kind: str, body: Any, process_id: str | None) -> Any:
-    process = _choose(service, process_id)
+def _load(
+    service: Any,
+    kind: str,
+    body: Any,
+    pid: str | int | None,
+    *,
+    keep: bool = True,
+) -> Any:
+    process = _choose(service, pid)
     if _remember_prompt(process, body):
         return None
+    if kind == "message" and isinstance(body, str) and _pages(service, process):
+        from kernel.communication.follow import turn
+
+        return turn(service, process, body)
     sent = _question_with_memory(process, body)
-    message = ServiceRequest(kind=kind, body=sent, operation="load").message()
-    message["process_id"] = process.activation.process_id
+    _maybe_relieve(process)
+    message = {
+        "operation": "load",
+        "kind": kind,
+        "body": sent,
+        "pid": _pid_of(process),
+    }
     _note(process, "self")
     try:
         reply = process.ask(message, timeout=None, on_notice=_show_notice)
@@ -139,25 +153,33 @@ def _load(service: Any, kind: str, body: Any, process_id: str | None) -> Any:
         if getattr(process, "is_alive", False):
             _note(process, "sleeping")
     result = _result(reply)
-    _keep_output(process, kind, body, result)
+    if keep:
+        _keep_output(process, kind, body, result)
     return result
 
 
-def _ask(service: Any, process_id: str, task: str) -> Any:
+def _pages(service: Any, process: Any) -> bool:
+    """A window that can start processes talks to a model with memory through pages."""
+    grants = getattr(getattr(process, "activation", None), "grants", ()) or ()
+    return memory_grant(grants) is not None and callable(getattr(service, "launch", None))
+
+
+def _ask(service: Any, pid: str | int, task: str) -> Any:
     """Hand one task to the named process. The sender's memory stays here."""
-    receiver = _choose(service, process_id)
+    receiver = _choose(service, pid)
     sender = _sender(service, receiver)
-    sender_id = sender.activation.process_id
-    receiver_id = receiver.activation.process_id
+    sender_id = str(_pid_of(sender))
+    receiver_id = str(_pid_of(receiver))
+    _maybe_relieve(receiver)
     _note(sender, "with", receiver_id, "task")
     _note(receiver, "with", sender_id, "task")
     try:
-        message = ServiceRequest(
-            kind="message",
-            body=_task_body(receiver, task),
-            operation="load",
-        ).message()
-        message["process_id"] = receiver_id
+        message = {
+            "operation": "load",
+            "kind": "message",
+            "body": _task_body(receiver, task),
+            "pid": _pid_of(receiver),
+        }
         reply = receiver.ask(message, timeout=None, on_notice=_show_notice)
     finally:
         if getattr(sender, "is_alive", False):
@@ -171,13 +193,20 @@ def _ask(service: Any, process_id: str, task: str) -> Any:
 
 def _remember_prompt(process: Any, body: Any) -> bool:
     """A prompt file is copied into memory and is not sent to the model."""
-    path = _prompt_file(body)
-    if path is None:
+    loaded = _prompt_load(body)
+    if loaded is None:
         return False
+    path, place = loaded
     grants = getattr(process.activation, "grants", ()) or ()
     if memory_grant(grants) is None:
         raise RuntimeError("这个进程没有记忆")
-    keep_memory_system(process._pool, grants, path.read_text(encoding="utf-8"))
+    keep_memory_system(
+        process._pool,
+        grants,
+        path.read_text(encoding="utf-8"),
+        name=str(path),
+        place=place,
+    )
     return True
 
 
@@ -232,35 +261,68 @@ def _note(process: Any, activity: str, counterpart: str = "", way: str = "") -> 
     log = _activity(process)
     if log is None:
         return
-    log.append(process.activation.process_id, activity, counterpart, way)
+    log.append(_pid_of(process), activity, counterpart, way)
+
+
+def _maybe_relieve(process: Any) -> None:
+    """Add one helper before this handoff when pressure says so."""
+    book = getattr(process, "_book", None)
+    if book is None:
+        return
+    record = book.get(_pid_of(process))
+    if record is None:
+        return
+    from kernel.calculate.measure import measure
+    from kernel.load_balancing.relieve import relieve
+
+    log = _activity(process)
+    activity = "sleeping"
+    if log is not None:
+        latest = log.latest(_pid_of(process))
+        if latest is not None:
+            activity = str(latest.get("activity") or "sleeping")
+    pressure = measure(
+        pool=getattr(process, "_pool", None),
+        record=record,
+        book=book,
+        activity=activity,
+    )
+    relieve(book, record.pid, pressure, delegating=True)
 
 
 def _sender(service: Any, receiver: Any) -> Any:
     """The one other living process. A task needs exactly one sender."""
-    receiver_id = receiver.activation.process_id
+    receiver_id = _pid_of(receiver)
     others = [
         process
         for process in _processes(service)
         if getattr(process, "is_alive", False)
-        and process.activation.process_id != receiver_id
+        and _pid_of(process) != receiver_id
     ]
     if len(others) == 1:
         return others[0]
     raise UsageError("交任务时，除了对方，还要正好有一个还活着的进程")
 
 
-def _prompt_file(body: Any) -> Path | None:
+def _prompt_load(body: Any) -> tuple[Path, int | None] | None:
+    """A prompt file, optionally placed by a leading positive integer."""
     if not isinstance(body, str):
         return None
     raw = body.strip()
     if not raw or "\n" in raw or "\r" in raw:
         return None
-    path = Path(raw).expanduser()
+    place: int | None = None
+    path_text = raw
+    head, sep, tail = raw.partition(" ")
+    if sep and head.isdigit() and int(head) > 0 and tail.strip():
+        place = int(head)
+        path_text = tail.strip()
+    path = Path(path_text).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     if path.suffix.lower() not in _PROMPT_SUFFIXES or not path.is_file():
         return None
-    return path
+    return path, place
 
 
 class _Handed(Exception):
@@ -287,7 +349,8 @@ def _show(result: Any) -> None:
         print(result, flush=True)
 
 
-def _parse_line(line: str) -> tuple[Any, ...]:
+def parse_line(line: str) -> tuple[Any, ...]:
+    """Split one window line into its command, process id, and body."""
     if " -- " in line:
         head, body = line.split(" -- ", 1)
         argv = shlex.split(head, posix=True)
@@ -300,9 +363,9 @@ def _parse_line(line: str) -> tuple[Any, ...]:
             return ("list",)
         raise UsageError("用法: list")
     if argv and argv[0] == "show":
-        if len(argv) == 2 and content is None:
-            return ("show", argv[1])
-        raise UsageError("用法: show <完整进程号>")
+        if len(argv) >= 2 and content is None:
+            return ("show", argv[1], " ".join(argv[2:]))
+        raise UsageError("用法: show <完整进程号> [地址]")
     if argv and argv[0] == "trace":
         if len(argv) == 2 and content is None:
             return ("trace", argv[1])
@@ -320,6 +383,9 @@ def _parse_line(line: str) -> tuple[Any, ...]:
     return ("load", argv[1], _body(content), argv[2])
 
 
+_parse_line = parse_line
+
+
 def _body(text: str) -> Any:
     stripped = text.strip()
     if stripped.startswith("{") or stripped.startswith("["):
@@ -330,17 +396,38 @@ def _body(text: str) -> Any:
     return text
 
 
-def _choose(service: Any, process_id: str | None) -> Any:
+def _choose(service: Any, token: str | int | None) -> Any:
+    wanted = _parse_pid(token)
     alive = [process for process in _processes(service) if getattr(process, "is_alive", False)]
     matches = [
         process
         for process in alive
-        if process_id and process.activation.process_id == process_id
+        if wanted is not None and _pid_of(process) == wanted
     ]
     if len(matches) == 1:
         return matches[0]
-    living = "、".join(process.activation.process_id for process in alive) or "没有"
+    living = "、".join(str(_pid_of(process)) for process in alive) or "没有"
     raise UsageError(f"请写上完整进程号。还活着: {living}")
+
+
+def _pid_of(process: Any) -> int:
+    activation = getattr(process, "activation", None)
+    value = getattr(activation, "pid", None)
+    if value:
+        return int(value)
+    return int(getattr(process, "pid", 0) or 0)
+
+
+def _parse_pid(token: str | int | None) -> int | None:
+    if token is None or isinstance(token, bool):
+        return None
+    if isinstance(token, int):
+        return token if token > 0 else None
+    text = str(token).strip()
+    if not text.isdigit():
+        return None
+    value = int(text)
+    return value if value > 0 else None
 
 
 def _open_programs(service: Any) -> None:
@@ -353,7 +440,7 @@ def _open_programs(service: Any) -> None:
         opener()
         log = _activity(process)
         if log is not None:
-            log.append(process.activation.process_id, "sleeping")
+            log.append(_pid_of(process), "sleeping")
 
 
 def _print_list(service: Any) -> None:
@@ -362,21 +449,20 @@ def _print_list(service: Any) -> None:
         status = "" if record is None else record.status.value
         activity = _shown_activity(process, record)
         print(
-            f"process_id={process.activation.process_id} pid={process.pid} "
-            f"activity={activity} status={status}",
+            f"pid={_pid_of(process)} activity={activity} status={status}",
             flush=True,
         )
 
 
-def _print_show(service: Any, process_id: str) -> None:
+def _print_show(service: Any, pid: str, selector: str = "") -> None:
     import json
 
     from kernel.hypermedia.process_page import page_document, process_page
 
-    process = _by_id(service, process_id)
+    process = _by_id(service, pid)
     record = _record(process)
     if record is None:
-        raise UsageError(f"没有这个进程: {process_id}")
+        raise UsageError(f"没有这个进程: {pid}")
     activity = _shown_activity(process, record)
     counterpart, way = _with_fields(_latest(process), activity)
     page = process_page(
@@ -390,18 +476,19 @@ def _print_show(service: Any, process_id: str) -> None:
     contents = memory_contents(
         getattr(process, "_pool", None),
         getattr(process.activation, "grants", ()) or (),
+        selector,
     )
     if contents is not None:
         document["memory"] = contents
     print(json.dumps(document, ensure_ascii=False), flush=True)
 
 
-def _print_trace(service: Any, process_id: str) -> None:
+def _print_trace(service: Any, pid: str) -> None:
     import json
 
-    _by_id(service, process_id)
-    log = _activity(_by_id(service, process_id))
-    rows = () if log is None else log.for_process(process_id)
+    process = _by_id(service, pid)
+    log = _activity(process)
+    rows = () if log is None else log.for_process(_pid_of(process))
     for row in rows:
         print(json.dumps(row, ensure_ascii=False), flush=True)
 
@@ -421,25 +508,26 @@ def _latest(process: Any) -> dict[str, Any] | None:
     log = _activity(process)
     if log is None:
         return None
-    return log.latest(process.activation.process_id)
+    return log.latest(_pid_of(process))
 
 
 def _record(process: Any) -> Any:
     book = getattr(process, "_book", None)
     if book is None:
         return None
-    return book.get(process.activation.process_id)
+    return book.get(_pid_of(process))
 
 
-def _by_id(service: Any, process_id: str) -> Any:
+def _by_id(service: Any, token: str | int) -> Any:
+    wanted = _parse_pid(token)
     matches = [
         process
         for process in _processes(service)
-        if process.activation.process_id == process_id
+        if wanted is not None and _pid_of(process) == wanted
     ]
     if len(matches) == 1:
         return matches[0]
-    living = "、".join(process.activation.process_id for process in _processes(service)) or "没有"
+    living = "、".join(str(_pid_of(process)) for process in _processes(service)) or "没有"
     raise UsageError(f"请写上完整进程号。还活着: {living}")
 
 
@@ -466,16 +554,16 @@ def _live_shares(service: Any, process: Any) -> tuple[str, ...]:
     memory_id = _shared_memory_id(record)
     if not memory_id:
         return ()
-    process_id = process.activation.process_id
+    pid = _pid_of(process)
     found: list[str] = []
     for other in _processes(service):
         if not getattr(other, "is_alive", False):
             continue
-        other_id = other.activation.process_id
-        if other_id == process_id:
+        other_id = _pid_of(other)
+        if other_id == pid:
             continue
         if _shared_memory_id(_record(other)) == memory_id:
-            found.append(other_id)
+            found.append(str(other_id))
     return tuple(found)
 
 
@@ -485,12 +573,12 @@ def _saved_shares(book: Any, record: Any) -> tuple[str, ...]:
         return ()
     found: list[str] = []
     for other in book.records():
-        if other.process_id == record.process_id:
+        if other.pid == record.pid:
             continue
         if str(getattr(other.status, "value", other.status)) == "closed":
             continue
         if _shared_memory_id(other) == memory_id:
-            found.append(other.process_id)
+            found.append(str(other.pid))
     return tuple(found)
 
 
@@ -516,10 +604,18 @@ def _processes(service: Any) -> list[Any]:
     return found
 
 
+def _capability_of(process: Any) -> str:
+    activation = getattr(process, "activation", None)
+    definition = getattr(activation, "definition", None)
+    if definition is not None:
+        return str(getattr(definition, "instance_id", "") or "")
+    return str(getattr(process, "capability", "") or "")
+
+
 def _member_lines(service: Any) -> list[str]:
     return [
-        f"process_id={member.process_id} pid={member.pid} capability={member.capability}"
-        for member in service.members()
+        f"pid={_pid_of(process)} capability={_capability_of(process)}"
+        for process in _processes(service)
     ]
 
 
@@ -534,25 +630,26 @@ def saved_list() -> int:
     book = _saved_book()
     log = _saved_log()
     for record in book.records():
-        latest = None if log is None else log.latest(record.process_id)
+        latest = None if log is None else log.latest(record.pid)
         activity = _saved_activity(record, latest)
         print(
-            f"process_id={record.process_id} pid={record.pid} "
+            f"pid={record.pid} "
             f"activity={activity} status={record.status.value}",
             flush=True,
         )
     return 0
 
 
-def saved_show(process_id: str) -> int:
+def saved_show(token: str) -> int:
     """Print the current page for one saved account."""
     from kernel.hypermedia.process_page import page_document, process_page
 
     book = _saved_book()
-    record = book.get(process_id)
+    pid = _parse_pid(token)
+    record = None if pid is None else book.get(pid)
     if record is None:
-        raise UsageError(f"没有这个进程: {process_id}")
-    latest = _saved_log().latest(process_id)
+        raise UsageError(f"没有这个进程: {token}")
+    latest = _saved_log().latest(record.pid)
     activity = _saved_activity(record, latest)
     counterpart, way = _with_fields(latest, activity)
     page = process_page(record, activity, counterpart, way, _saved_shares(book, record))
@@ -560,12 +657,13 @@ def saved_show(process_id: str) -> int:
     return 0
 
 
-def saved_trace(process_id: str) -> int:
+def saved_trace(token: str) -> int:
     """Print the activity trail for one saved account."""
     book = _saved_book()
-    if book.get(process_id) is None:
-        raise UsageError(f"没有这个进程: {process_id}")
-    for row in _saved_log().for_process(process_id):
+    pid = _parse_pid(token)
+    if pid is None or book.get(pid) is None:
+        raise UsageError(f"没有这个进程: {token}")
+    for row in _saved_log().for_process(pid):
         print(json.dumps(row, ensure_ascii=False), flush=True)
     return 0
 

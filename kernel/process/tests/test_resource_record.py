@@ -40,16 +40,17 @@ def test_one_process_has_one_record_and_its_handles(tmp_path: Path) -> None:
     process = reconciler.start(
         _declaration(ResourceClaim(kind="tool", identity={"id": "files"})),
         definition=_definition(),
+        pid=101,
     )
-    process_id = process.activation.process_id
-    record = book.get(process_id)
+    pid = process.pid
+    record = book.get(pid)
     assert record is not None
     assert record.status == RecordStatus.READY
-    assert book.handles_for(process_id) == tuple(
+    assert book.handles_for(pid) == tuple(
         grant.handle for grant in process.activation.grants
     )
     saved = ProcessLedger(tmp_path / "ledger.json").read()
-    assert saved[0]["process_id"] == process_id
+    assert saved[0]["pid"] == pid
     assert "limits" not in saved[0]
 
 
@@ -58,15 +59,17 @@ def test_another_process_cannot_use_the_handle(tmp_path: Path) -> None:
     first = reconciler.start(
         _declaration(ResourceClaim(kind="tool", identity={"id": "files"})),
         definition=_definition(),
+        pid=102,
     )
     second = reconciler.start(
         _declaration(ResourceClaim(kind="tool", identity={"id": "files"})),
         definition=_definition(),
+        pid=103,
     )
     handle = first.activation.grants[0].handle
     with pytest.raises(PermissionError):
-        pool.authorize(handle, second.activation.process_id)
-    pool.authorize(handle, first.activation.process_id)
+        pool.authorize(handle, second.pid)
+    pool.authorize(handle, first.pid)
 
 
 def test_share_is_only_the_named_kind(tmp_path: Path) -> None:
@@ -75,13 +78,24 @@ def test_share_is_only_the_named_kind(tmp_path: Path) -> None:
         ResourceClaim(kind="model", identity={"provider": "openai", "id": "gpt-4o"}),
         ResourceClaim(kind="memory", identity={"scope": "chat"}),
     )
-    shared = reconciler.launch(
-        declaration,
-        definition=_definition(),
-        shared=("model",),
-        replica_count=2,
+    shared = (
+        reconciler.start(
+            declaration,
+            definition=_definition(),
+            shared=("model",),
+            pid=104,
+        ),
+        reconciler.start(
+            declaration,
+            definition=_definition(),
+            shared=("model",),
+            pid=105,
+        ),
     )
-    separate = reconciler.launch(declaration, definition=_definition(), replica_count=2)
+    separate = (
+        reconciler.start(declaration, definition=_definition(), pid=106),
+        reconciler.start(declaration, definition=_definition(), pid=107),
+    )
     assert shared[0].activation.grants[0].resource_id == shared[1].activation.grants[0].resource_id
     assert shared[0].activation.grants[1].resource_id != shared[1].activation.grants[1].resource_id
     assert (
@@ -100,8 +114,9 @@ def test_startup_failure_discards_the_record(tmp_path: Path) -> None:
         reconciler.start(
             _declaration(ResourceClaim(kind="model", identity={"id": "gpt-4o"})),
             definition=_definition(),
+            pid=108,
         )
-    assert book.get(next(iter(book._records), "")) is None
+    assert book.records() == ()
     assert ProcessLedger(tmp_path / "ledger.json").read() == []
 
 
@@ -110,12 +125,13 @@ def test_once_closes_the_record_and_a_call_adds_no_line(tmp_path: Path) -> None:
     process = reconciler.start(
         _declaration(ResourceClaim(kind="network", identity={"channel": "ledger"})),
         definition=_definition(),
+        pid=109,
     )
-    before = len(book.get(process.activation.process_id).leases)
+    before = len(book.get(process.pid).leases)
     process.submit({"operation": "ping"})
-    assert len(book.get(process.activation.process_id).leases) == before
+    assert len(book.get(process.pid).leases) == before
     process.stop()
-    assert book.get(process.activation.process_id).status == RecordStatus.CLOSED
+    assert book.get(process.pid).status == RecordStatus.CLOSED
 
 
 def test_reaper_closes_a_dead_process(tmp_path: Path) -> None:
@@ -123,11 +139,12 @@ def test_reaper_closes_a_dead_process(tmp_path: Path) -> None:
     process = reconciler.start(
         _declaration(ResourceClaim(kind="tool", identity={"id": "files"})),
         definition=_definition(),
+        pid=110,
     )
-    process_id = process.activation.process_id
-    reaper = ProcessReaper(lambda: book.close(process_id))
+    pid = process.pid
+    reaper = ProcessReaper(lambda: book.close(pid))
     assert reaper.reap_if_dead({"status": "running", "pid": None, "identity": None})
-    assert book.get(process_id).status == RecordStatus.CLOSED
+    assert book.get(pid).status == RecordStatus.CLOSED
 
 
 def test_reaping_a_saved_book_does_not_need_a_live_service(tmp_path: Path) -> None:
@@ -135,12 +152,13 @@ def test_reaping_a_saved_book_does_not_need_a_live_service(tmp_path: Path) -> No
     process = reconciler.start(
         _declaration(ResourceClaim(kind="tool", identity={"id": "files"})),
         definition=_definition(),
+        pid=111,
     )
     process.stop()
-    from kernel.services.assembly import _reap_dead
+    from kernel.process.process_manager.liveness import reap_dead
 
-    _reap_dead(book)
-    assert book.get(process.activation.process_id).status == RecordStatus.CLOSED
+    reap_dead(book)
+    assert book.get(process.pid).status == RecordStatus.CLOSED
 
 
 def test_a_new_kind_registers_without_a_pool_change(tmp_path: Path) -> None:
@@ -150,9 +168,10 @@ def test_a_new_kind_registers_without_a_pool_change(tmp_path: Path) -> None:
         process = reconciler.start(
             _declaration(ResourceClaim(kind="widget", identity={"name": "one"})),
             definition=_definition(),
+            pid=112,
         )
         assert process.activation.grants[0].kind == "widget"
-        pool.authorize(process.activation.grants[0].handle, process.activation.process_id)
+        pool.authorize(process.activation.grants[0].handle, process.pid)
     finally:
         unregister("widget")
     with pytest.raises(ValueError, match="不认识的资源"):
@@ -160,14 +179,15 @@ def test_a_new_kind_registers_without_a_pool_change(tmp_path: Path) -> None:
 
 
 def test_memory_scope_is_the_only_address_space(tmp_path: Path) -> None:
-    from kernel.resource.address import admit, address_scope
+    from kernel.communication.address import admit, address_scope
 
     _book_unused, _pool, reconciler = _book(tmp_path)
     process = reconciler.start(
         _declaration(ResourceClaim(kind="memory", identity={"scope": "chat"})),
         definition=_definition(),
+        pid=113,
     )
-    record = _book_unused.get(process.activation.process_id)
+    record = _book_unused.get(process.pid)
     assert address_scope(record.leases) == "chat"
     admit(record.leases, "chat")
     with pytest.raises(PermissionError):
@@ -179,13 +199,12 @@ def test_memory_scope_is_the_only_address_space(tmp_path: Path) -> None:
         ledger.write(
             [
                 {
-                    "process_id": "p",
                     "capability_id": "c",
                     "status": "ready",
                     "claims": [],
                     "leases": [],
                     "room": {},
-                    "pid": 0,
+                    "pid": 9,
                     "started": "",
                     "reply": "the model said hello",
                 }

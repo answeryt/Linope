@@ -12,8 +12,8 @@ class ThreadPolicy:
     """Process-local concurrency limits.
 
     ``max_concurrent_tasks`` limits both async and sync requests.  The sync
-    executor has its own limit because async requests do not need an OS worker
-    thread while waiting for I/O.
+    worker pool has its own limit because async requests do not need an OS
+    worker thread while waiting for I/O.
     """
 
     max_concurrent_tasks: int = 1
@@ -65,21 +65,6 @@ class ThreadPolicy:
             poll_interval_seconds=float(raw.get("poll_interval_seconds", 0.05)),
             session_affinity=bool(raw.get("session_affinity", False)),
         )
-
-
-@dataclass(frozen=True)
-class ThreadSpec:
-    """An internal execution slot, never a public process identity."""
-
-    name: str
-    index: int
-
-
-@dataclass(frozen=True)
-class ThreadPlan:
-    """The sync execution slots allowed by one process policy."""
-
-    desired: tuple[ThreadSpec, ...]
 
 
 @dataclass(frozen=True)

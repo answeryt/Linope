@@ -184,24 +184,96 @@ def _resource_handle(value: str) -> str | None:
 def _read_prompt_file(href: str) -> str:
     from kernel.environment import current_room
     from kernel.environment.file_io import door_for
-    from kernel.process.ledger import FileResourceStore
-    from kernel.resource.store.locator import default_store_locator, local_path
 
     handle = _resource_handle(href)
     if handle is None:
         raise ValueError("没有这条链接")
-    locator = default_store_locator()
-    if not str(locator).startswith(("file:", "local:")):
+    locator = _store_locator()
+    if not locator.startswith(("file:", "local:")):
         raise ValueError("提示词地址只从本地账本读取")
-    store = FileResourceStore(local_path(locator), reap=False)
-    try:
-        found = store.link_at(handle)
-    finally:
-        store.close()
-    if found is None:
+    address = _linked_address(_store_path(locator), handle)
+    if address is None:
         raise ValueError("没有这条链接")
-    page, _link = found
-    return door_for(current_room(), None).read_text(str(page.address))
+    return door_for(current_room(), None).read_text(address)
+
+
+def _store_locator() -> str:
+    """The project resource ledger. An environment value wins over the saved path."""
+    import os
+
+    raw = os.environ.get("LINOPE_RESOURCE_STORE", "").strip()
+    if not raw:
+        raw = str(_project_config().get("resource_store") or "").strip()
+    if not raw:
+        raw = "file:.linope/resources.json"
+    return _normalize_locator(raw)
+
+
+def _normalize_locator(value: str) -> str:
+    import re
+
+    if re.match(r"^[A-Za-z][A-Za-z0-9+._-]*:", value) is not None and not (
+        len(value) >= 2 and value[1] == ":"
+    ):
+        return value
+    return f"file:{value}"
+
+
+def _project_config() -> dict[str, Any]:
+    import json
+
+    from kernel.process.process_creat.instances import repo_root
+
+    path = repo_root() / ".linope" / "config.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _store_path(locator: str) -> Path:
+    from kernel.process.process_creat.instances import repo_root
+
+    raw = locator.split(":", 1)[1]
+    if raw.startswith("//"):
+        raw = raw[2:]
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = repo_root() / path
+    return path
+
+
+def _linked_address(path: Path, handle: str) -> str | None:
+    """The file address saved beside this handle. Missing ledgers have no link."""
+    import json
+
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"无法读取本地存储 {path}: {exc}") from exc
+    pages = {}
+    if isinstance(payload, dict):
+        sections = payload.get("sections")
+        resource = sections.get("resource") if isinstance(sections, dict) else None
+        found = resource.get("pages") if isinstance(resource, dict) else None
+        if isinstance(found, dict):
+            pages = found
+    for item in pages.values():
+        if not isinstance(item, dict):
+            continue
+        link = item.get("link")
+        page = item.get("page")
+        if not isinstance(link, dict) or not isinstance(page, dict):
+            continue
+        if str(link.get("handle") or "") != handle:
+            continue
+        address = page.get("address")
+        if address:
+            return str(address)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

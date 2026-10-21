@@ -12,5 +12,5 @@ class ProcessHandle:
         self._process = process
 
     @property
-    def process_id(self) -> str:
-        return str(self._process.activation.process_id)
+    def pid(self) -> int:
+        return int(self._process.activation.pid)

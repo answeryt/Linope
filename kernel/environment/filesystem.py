@@ -94,7 +94,7 @@ class FilesystemView:
         *,
         package_paths: tuple[Path, ...] = (),
         access_mode: str = "workspace-write",
-        process_id: str = "",
+        pid: int = 0,
     ) -> "FilesystemView":
         mode = check_access_mode(access_mode)
         writable = writes(mode)
@@ -103,7 +103,7 @@ class FilesystemView:
             FilesystemRoot(name="workspace", path=str(root), writable=writable),
             FilesystemRoot(
                 name="temp",
-                path=private_temp(str(root), process_id),
+                path=private_temp(str(root), pid),
                 writable=writable,
             ),
         ]

@@ -28,15 +28,15 @@ def check_access_mode(mode: str) -> str:
 class IdentityDoor:
     """Process identity. Secret values stay in the env file and are read when used."""
 
-    process_id: str
+    pid: int
     capability_id: str
     access_mode: str = "workspace-write"
     secret_file: str = ""
     secret_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.process_id.strip():
-            raise ValueError("process_id must not be empty")
+        if self.pid <= 0:
+            raise ValueError("pid must be a positive operating-system process id")
         if not self.capability_id.strip():
             raise ValueError("capability_id must not be empty")
         object.__setattr__(self, "access_mode", check_access_mode(self.access_mode))
@@ -66,7 +66,7 @@ class IdentityDoor:
 
     def payload(self) -> dict[str, Any]:
         return {
-            "process_id": self.process_id,
+            "pid": self.pid,
             "capability_id": self.capability_id,
             "access_mode": self.access_mode,
             "secret_file": self.secret_file,
@@ -76,7 +76,7 @@ class IdentityDoor:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "IdentityDoor":
         return cls(
-            process_id=str(payload["process_id"]),
+            pid=int(payload["pid"]),
             capability_id=str(payload["capability_id"]),
             access_mode=str(payload.get("access_mode", "workspace-write")),
             secret_file=str(payload.get("secret_file", "")),

@@ -10,9 +10,19 @@ from kernel.hypermedia.uri import action_uri, content_uri, resource_uri
 
 _GET_RELATIONS = frozenset({"self", "content"})
 _PAGE_ACTIONS = frozenset({"pin", "swap", "admit"})
+# Each kind of page owns the relations it may carry over HTTP.
+RELATIONS: dict[str, frozenset[str]] = {
+    "file": frozenset({"self", "content", "pin", "swap", "admit"}),
+    "resource": frozenset({"self", "content", "pin", "swap", "admit"}),
+}
 
 
-def link_payload(link: Link, base_url: str) -> dict[str, str]:
+def link_payload(link: Link, base_url: str, *, resource_type: str = "file") -> dict[str, str]:
+    allowed = RELATIONS.get(resource_type)
+    if allowed is None:
+        raise ValueError(f"unsupported resource type: {resource_type}")
+    if link.relation not in allowed:
+        raise ValueError(f"unsupported {resource_type} relation: {link.relation}")
     if link.relation == "content":
         href = content_uri(link, base_url)
         media_type = "text/plain; charset=utf-8"
@@ -44,7 +54,7 @@ def representation_payload(
     if resource_id is not None:
         payload["id"] = resource_id
     payload["_links"] = {
-        link.relation: link_payload(link, base_url)
+        link.relation: link_payload(link, base_url, resource_type=resource_type)
         for link in representation.links
     }
     return payload

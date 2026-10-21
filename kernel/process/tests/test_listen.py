@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kernel.command.process.listen import ask_ping, hold
+from kernel.command.process.listen import _parse_line, ask_ping, hold
 from kernel.command.screen.live_stream import publish_text
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.ledger import ProcessLedger
@@ -15,7 +15,6 @@ from kernel.process.reconcile import ProcessReconciler
 from kernel.process.resource_record import ProcessResourceBook
 from kernel.resource.lease import ResourceLeaseManager
 from kernel.resource.pool import ResourcePool
-from kernel.services.contracts import Member
 
 
 class _Echo:
@@ -39,18 +38,6 @@ class _Service:
     def processes(self) -> tuple:
         return tuple(self._processes["capability"])
 
-    def members(self) -> tuple[Member, ...]:
-        return tuple(
-            Member(
-                role="capability",
-                capability="sample.capability",
-                process_id=process.activation.process_id,
-                pid=1,
-                alive=process.is_alive,
-            )
-            for process in self._processes["capability"]
-        )
-
     def close(self) -> None:
         self.closed = True
         for process in self._processes["capability"]:
@@ -62,6 +49,7 @@ def _process(
     *,
     plugin: Path | None = None,
     resources: tuple[ResourceClaim, ...] | None = None,
+    pid: int | None = None,
 ):
     ledger = ProcessLedger(tmp_path / "ledger.json")
     book = ProcessResourceBook(ledger)
@@ -75,6 +63,7 @@ def _process(
     process = ProcessReconciler(pool, book).start(
         ProcessDeclaration(capability="sample.capability", resources=claims),
         definition=definition,
+        pid=pid,
     )
     return book, process
 
@@ -134,14 +123,14 @@ def _pair(tmp_path: Path, plugin: Path, *, shared: tuple[str, ...] = ()):
     )
 
 
-def _activity_rows(tmp_path: Path, process_id: str) -> list[dict]:
+def _activity_rows(tmp_path: Path, pid: int) -> list[dict]:
     path = tmp_path / "activity.jsonl"
     return [
         item
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
         for item in [json.loads(line)]
-        if item.get("process_id") == process_id
+        if int(item.get("pid") or 0) == pid
     ]
 
 
@@ -151,7 +140,7 @@ def _assert_task_then_sleep(rows: list[dict], counterpart: str) -> None:
     assert "sleeping" in activities[with_at + 1 :]
     matched = rows[with_at]
     assert matched["way"] == "task"
-    assert matched["with"] == counterpart
+    assert str(matched["with"]) == str(counterpart)
 
 
 def _echo(tmp_path: Path) -> Path:
@@ -172,7 +161,7 @@ def _echo(tmp_path: Path) -> Path:
 def test_load_reaches_the_waiting_adapter(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
     service = _Service(process)
-    pid = process.activation.process_id
+    pid = process.pid
     assert hold(service, lines=[f"load message {pid} -- 你好"], timeout=5)
     assert service.closed
     output = capsys.readouterr().out
@@ -182,7 +171,7 @@ def test_load_reaches_the_waiting_adapter(tmp_path: Path, capsys) -> None:
 
 def test_tool_body_stays_a_mapping(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(_Service(process), lines=[f'load tool {pid} -- {{"query": "分布式"}}'], timeout=5)
     output = capsys.readouterr().out
     assert '"kind": "tool"' in output
@@ -192,18 +181,18 @@ def test_tool_body_stays_a_mapping(tmp_path: Path, capsys) -> None:
 def test_ping_comes_from_the_process_and_adds_no_lease(tmp_path: Path, capsys) -> None:
     book, process = _process(tmp_path)
     process.adapter = _Echo()
-    before = len(book.get(process.activation.process_id).leases)
-    reply = ask_ping(_Service(process), process.activation.process_id, timeout=0.05)
+    before = len(book.get(process.pid).leases)
+    reply = ask_ping(_Service(process), process.pid, timeout=1)
     assert reply is not None
     assert reply["event"] == "pong"
-    assert reply["process_id"] == process.activation.process_id
+    assert reply["pid"] == process.pid
     assert reply["channel"] == "ledger"
-    assert len(book.get(process.activation.process_id).leases) == before
+    assert len(book.get(process.pid).leases) == before
     capsys.readouterr()
 
 
 def test_wrong_sequence_is_not_an_answer(tmp_path: Path) -> None:
-    _book, process = _process(tmp_path)
+    _book, process = _process(tmp_path, pid=51001)
     process.adapter = _Echo()
 
     def wrong(message, timeout=1.0):
@@ -213,7 +202,7 @@ def test_wrong_sequence_is_not_an_answer(tmp_path: Path) -> None:
         return reply
 
     process.answer_ping = wrong
-    assert ask_ping(_Service(process), process.activation.process_id, timeout=0.05) is None
+    assert ask_ping(_Service(process), process.pid, timeout=0.05) is None
 
 
 def test_a_dead_process_does_not_answer(tmp_path: Path) -> None:
@@ -256,8 +245,8 @@ def test_load_without_an_id_is_refused(tmp_path: Path, capsys) -> None:
 
 def test_a_short_id_is_refused(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path)
-    pid = process.activation.process_id
-    hold(_Service(process), lines=[f"load message {pid[:8]} -- 你好"], timeout=5)
+    pid = str(process.pid)
+    hold(_Service(process), lines=[f"load message {pid[:-1]} -- 你好"], timeout=5)
     assert pid in capsys.readouterr().err
 
 
@@ -266,7 +255,7 @@ def test_full_id_reaches_only_that_process(tmp_path: Path, capsys) -> None:
     _other, second = _process(tmp_path, plugin=_echo(tmp_path))
     hold(
         _Service(first, second),
-        lines=[f"load message {first.activation.process_id} -- 你好"],
+        lines=[f"load message {first.pid} -- 你好"],
         timeout=5,
     )
     output = capsys.readouterr().out
@@ -279,13 +268,13 @@ def test_a_wrong_id_lists_the_living_ones(tmp_path: Path, capsys) -> None:
     _other, second = _process(tmp_path)
     hold(_Service(first, second), lines=["ping missing"], timeout=5)
     error = capsys.readouterr().err
-    assert first.activation.process_id in error
-    assert second.activation.process_id in error
+    assert str(first.pid) in error
+    assert str(second.pid) in error
 
 
 def test_once_closes_after_one_delivered_load(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         once=True,
@@ -302,7 +291,7 @@ def test_once_closes_after_one_delivered_load(tmp_path: Path, capsys) -> None:
 
 def test_ping_does_not_finish_a_once_process(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         once=True,
@@ -320,7 +309,7 @@ def test_ping_does_not_finish_a_once_process(tmp_path: Path, capsys) -> None:
 
 def test_a_wrong_id_does_not_finish_a_once_process(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         once=True,
@@ -332,7 +321,7 @@ def test_a_wrong_id_does_not_finish_a_once_process(tmp_path: Path, capsys) -> No
     )
     captured = capsys.readouterr()
     assert "seen:你好" in captured.out
-    assert pid in captured.err
+    assert str(pid) in captured.err
 
 
 def test_publish_text_uses_the_terminal_event(capsys) -> None:
@@ -342,7 +331,7 @@ def test_publish_text_uses_the_terminal_event(capsys) -> None:
 
 def test_same_window_can_list_show_and_trace(tmp_path: Path, capsys) -> None:
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         lines=[
@@ -354,7 +343,7 @@ def test_same_window_can_list_show_and_trace(tmp_path: Path, capsys) -> None:
         timeout=5,
     )
     output = capsys.readouterr().out
-    assert f"process_id={pid}" in output
+    assert f"pid={pid}" in output
     assert '"rel": "self"' in output
     assert '"activity": "self"' in output
     assert "sleeping" in output
@@ -377,8 +366,8 @@ def test_a_crashed_capability_does_not_stop_the_other(tmp_path: Path, capsys) ->
     hold(
         _Service(first, second),
         lines=[
-            f"load message {first.activation.process_id} -- 炸",
-            f"load message {second.activation.process_id} -- 你好",
+            f"load message {first.pid} -- 炸",
+            f"load message {second.pid} -- 你好",
         ],
         timeout=5,
     )
@@ -400,7 +389,7 @@ def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
             ResourceClaim(kind="memory", identity={"scope": "chat"}),
         ),
     )
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         lines=[
@@ -432,7 +421,7 @@ def test_show_prints_the_words_kept_in_memory(tmp_path: Path, capsys) -> None:
             ResourceClaim(kind="memory", identity={"scope": "chat"}),
         ),
     )
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         lines=[
@@ -444,17 +433,51 @@ def test_show_prints_the_words_kept_in_memory(tmp_path: Path, capsys) -> None:
     )
     output = capsys.readouterr().out
     page = next(json.loads(line) for line in output.splitlines() if '"facts"' in line)
-    assert page["memory"] == {
-        "system": "你是助手",
-        "turns": [
-            {"kind": "user", "content": "你好"},
-            {"kind": "model", "content": "模型答了"},
-        ],
-    }
+    assert page["memory"]["system"] == "你是助手"
+    dialogue = [
+        item for item in page["memory"]["items"] if item["kind"] != "system"
+    ]
+    assert [item["content"] for item in dialogue] == ["你好", "模型答了"]
+    assert [item["kind"] for item in dialogue] == ["user", "model"]
+    assert all(item["time"] for item in page["memory"]["items"])
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "你是助手" not in saved
     assert "你好" not in saved
 
+
+
+def test_later_prompt_files_stay_and_a_place_inserts(tmp_path: Path, capsys) -> None:
+    first = tmp_path / "one.md"
+    second = tmp_path / "two.md"
+    first.write_text("甲", encoding="utf-8")
+    second.write_text("乙", encoding="utf-8")
+    _book, process = _process(
+        tmp_path,
+        plugin=_recording_plugin(tmp_path),
+        resources=(
+            ResourceClaim(kind="network", identity={"channel": "ledger"}),
+            ResourceClaim(kind="memory", identity={"scope": "chat"}),
+        ),
+    )
+    pid = process.pid
+
+    def lines():
+        yield f"load message {pid} -- {first}"
+        yield f"load message {pid} -- {second}"
+        yield f"show {pid}"
+        first.write_text("甲改", encoding="utf-8")
+        yield f"load message {pid} -- {first}"
+        yield f"load message {pid} -- 1 {second}"
+        yield f"load message {pid} -- 问"
+
+    hold(_Service(process), lines=lines(), timeout=5)
+    output = capsys.readouterr().out
+    page = next(json.loads(line) for line in output.splitlines() if '"facts"' in line)
+    assert page["memory"]["system"] == "甲\n\n乙"
+    assert _contents(_calls(tmp_path)[0]["body"])[0] == "乙\n\n甲改"
+    saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
+    assert "甲" not in saved
+    assert "乙" not in saved
 
 
 def test_a_reply_slower_than_a_ping_is_kept(tmp_path: Path, capsys) -> None:
@@ -469,7 +492,7 @@ def test_a_reply_slower_than_a_ping_is_kept(tmp_path: Path, capsys) -> None:
         encoding="utf-8",
     )
     _book, process = _process(tmp_path, plugin=plugin)
-    pid = process.activation.process_id
+    pid = process.pid
     assert hold(_Service(process), lines=[f"load message {pid} -- 你好"])
     captured = capsys.readouterr()
     assert "seen:你好" in captured.out
@@ -488,7 +511,7 @@ def test_a_text_fragment_is_shown_before_the_reply(tmp_path: Path, capsys) -> No
         encoding="utf-8",
     )
     _book, process = _process(tmp_path, plugin=plugin)
-    pid = process.activation.process_id
+    pid = process.pid
     hold(_Service(process), lines=[f"load message {pid} -- 你好"], timeout=5)
     output = capsys.readouterr().out
     assert output.index("片段") < output.index("译完")
@@ -505,7 +528,7 @@ def test_an_exited_process_is_still_reported_gone(tmp_path: Path, capsys) -> Non
         encoding="utf-8",
     )
     _book, process = _process(tmp_path, plugin=crash)
-    pid = process.activation.process_id
+    pid = process.pid
     hold(_Service(process), lines=[f"load message {pid} -- 你好"], timeout=5)
     assert "这个进程没了" in capsys.readouterr().err
 
@@ -514,7 +537,7 @@ def test_a_prompt_file_without_memory_is_refused(tmp_path: Path, capsys) -> None
     prompt = tmp_path / "note.txt"
     prompt.write_text("你是助手", encoding="utf-8")
     _book, process = _process(tmp_path, plugin=_echo(tmp_path))
-    pid = process.activation.process_id
+    pid = process.pid
     hold(
         _Service(process),
         lines=[
@@ -533,8 +556,8 @@ def test_shared_memory_keeps_system_model_and_tool_output(tmp_path: Path, capsys
     prompt = tmp_path / "note.md"
     prompt.write_text("你是助手", encoding="utf-8")
     first, second = _pair(tmp_path, _recording_plugin(tmp_path), shared=("memory",))
-    first_id = first.activation.process_id
-    second_id = second.activation.process_id
+    first_id = first.pid
+    second_id = second.pid
     hold(
         _Service(first, second),
         lines=[
@@ -548,7 +571,7 @@ def test_shared_memory_keeps_system_model_and_tool_output(tmp_path: Path, capsys
     )
     output = capsys.readouterr().out
     page = next(json.loads(line) for line in output.splitlines() if '"links"' in line)
-    assert {"rel": "share", "resource": second_id} in page["links"]
+    assert {"rel": "share", "resource": str(second_id)} in page["links"]
     calls = _calls(tmp_path)
     assert calls[1]["kind"] == "tool"
     assert calls[1]["body"] == {"query": "查"}
@@ -565,8 +588,8 @@ def test_ask_hands_the_task_and_writes_the_result_back(tmp_path: Path, capsys) -
     receiver_prompt = tmp_path / "receiver.md"
     receiver_prompt.write_text("对方规矩", encoding="utf-8")
     sender, receiver = _pair(tmp_path, _recording_plugin(tmp_path))
-    sender_id = sender.activation.process_id
-    receiver_id = receiver.activation.process_id
+    sender_id = sender.pid
+    receiver_id = receiver.pid
     hold(
         _Service(sender, receiver),
         lines=[
@@ -587,3 +610,11 @@ def test_ask_hands_the_task_and_writes_the_result_back(tmp_path: Path, capsys) -
     _assert_task_then_sleep(_activity_rows(tmp_path, sender_id), receiver_id)
     _assert_task_then_sleep(_activity_rows(tmp_path, receiver_id), sender_id)
     capsys.readouterr()
+
+
+def test_show_accepts_an_address() -> None:
+    assert _parse_line("show abc message/3-7 artifact/1-2") == (
+        "show",
+        "abc",
+        "message/3-7 artifact/1-2",
+    )

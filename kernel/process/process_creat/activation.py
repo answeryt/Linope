@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,7 +18,7 @@ class ProcessActivation:
 
     definition: CapabilityDefinition
     grants: tuple[ResourceGrant, ...] = ()
-    process_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    pid: int = 0
     environment: ProcessEnvironment | None = None
     host_policy: HostExecutionPolicy = field(default_factory=HostExecutionPolicy)
     thread_policy: ThreadPolicy = field(default_factory=ThreadPolicy)
@@ -27,11 +26,13 @@ class ProcessActivation:
     resource_context: ResourceContext = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.pid <= 0:
+            raise ValueError("pid must be a positive operating-system process id")
         object.__setattr__(
             self,
             "resource_context",
             ResourceContext.create(
-                process_id=self.process_id,
+                pid=self.pid,
                 capability_id=self.definition.instance_id,
                 requirements=self.definition.resource_requirements,
                 grants=self.grants,
@@ -43,12 +44,12 @@ class ProcessActivation:
                 self,
                 "environment",
                 ProcessEnvironment.current(
-                    process_id=self.process_id,
+                    pid=self.pid,
                     capability_id=self.definition.instance_id,
                 ),
             )
         elif (
-            self.environment.process_id != self.process_id
+            self.environment.pid != self.pid
             or self.environment.capability_id != self.definition.instance_id
         ):
             raise ValueError(
@@ -68,7 +69,7 @@ class ProcessActivation:
             grants=self.grants,
         )
         return {
-            "process_id": self.process_id,
+            "pid": self.pid,
             "instance_id": self.definition.instance_id,
             "module_paths": self.definition.module_paths,
             "entrypoint": self.definition.entrypoint,

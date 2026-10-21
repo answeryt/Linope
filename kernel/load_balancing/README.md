@@ -1,9 +1,11 @@
 # load_balancing
 
-This package only selects among already-running processes for one capability
-or one shared resource.
+请求点的是资源种类和身份，不点进程号，也不点线程。
 
-It does not create processes, change process counts, grow thread pools, track a
-second busy table, or perform automatic scale-in/scale-out. The process
-reconciler owns explicit replica counts, and the thread runtime owns its fixed
-startup policy.
+账本上已经有的提示用来分单：谁还握着同一份资源的租约、句柄上的限额、上下文用了多少、信箱里正在等和正在干的有几单，以及这家最近的往返时间。这些提示不另记一份忙闲表。带档位、依赖、服务或最晚开始时间的请求，要已经预定，这里才把它放进进程信箱。
+
+进程和进程平级。还有空的那几家里挑一家，把单放进它的信箱。一家都没有，就开第一个进程。都满了，插件又允许几个人一起改，就在这个进程里再加一个平级线程。不允许一起改，或者线程已经到上限，就再开一个平级进程，让它去租同一份身份的资源。没点名共享时，不能把单分到另一份进程上。
+
+线程和线程平级。线程不写进账本地址。谁闲着谁来领。模型不等待线程，它加减的是同时等回信的单数。
+
+均衡器自己不拿租约。新进程仍由现有的调和器拉起。闲着、而且多于最少份数的进程才会被要求停下。正在干活的不硬关。

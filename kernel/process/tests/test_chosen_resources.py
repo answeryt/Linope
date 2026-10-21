@@ -41,6 +41,7 @@ def test_with_adds_memory_beside_the_model_defaults(tmp_path: Path) -> None:
             instance_id="model.openai_chat_model",
             module_paths=(),
         ),
+        pid=301,
     )
     kinds = [kind_name(grant.kind) for grant in process.activation.grants]
     assert kinds == ["model", "network", "memory"]

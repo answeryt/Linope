@@ -33,14 +33,16 @@ class CapabilityProcess:
         resource_pool: ResourcePool | None = None,
         lease_manager: ResourceLeaseManager | None = None,
         book: ProcessResourceBook | None = None,
+        child: subprocess.Popen[str] | None = None,
     ) -> None:
         self.activation = activation
         self.status = ProcessStatus.CREATED
         self._book = book
         self._stopped = False
-        self._child: subprocess.Popen[str] | None = None
+        self._child = child
         self._lines: queue.Queue[str] | None = None
-        self._os_pid = 0
+        self._os_pid = int(activation.pid)
+        self._ready = False
         self._secret_copy = ""
         self.adapter: Any | None = None
         if resource_pool is not None:
@@ -56,12 +58,7 @@ class CapabilityProcess:
 
     @property
     def pid(self) -> int:
-        if self._os_pid:
-            return self._os_pid
-        child = self._child
-        if child is not None and child.pid:
-            return int(child.pid)
-        return 0
+        return int(self.activation.pid)
 
     @property
     def handle(self):
@@ -81,44 +78,46 @@ class CapabilityProcess:
         return ""
 
     def open_program(self, timeout: float = _READY_TIMEOUT) -> None:
-        """Start this capability in its own program and wait until it is ready."""
-        if self._stopped or self._child is not None:
+        """Wait until a program that is already running is ready.
+
+        The operating-system process is created before this account exists.
+        Calling this again does not start a second program.
+        """
+        if self._stopped or self._ready:
+            return
+        child = self._child
+        if child is None:
             return
         payload = self._child_payload()
-        child = subprocess.Popen(
-            [sys.executable, "-m", "kernel.process.process_runtime"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            env=_child_env(self._secret_names()),
-            cwd=str(_repo_root()),
-        )
-        self._child = child
-        assert child.stdin is not None
-        child.stdin.write(json.dumps({"activation": payload}, ensure_ascii=False) + "\n")
-        child.stdin.flush()
+        if child.stdin is None:
+            self._abandon_child(child)
+            raise RuntimeError("这个能力的程序没有准备好")
+        try:
+            child.stdin.write(json.dumps({"activation": payload}, ensure_ascii=False) + "\n")
+            child.stdin.flush()
+        except OSError as exc:
+            self._abandon_child(child)
+            raise RuntimeError("这个能力的程序没有准备好") from exc
         ready = _read_line(child, timeout)
         if not ready:
-            self._mark_dead()
+            self._abandon_child(child)
             raise RuntimeError("这个能力的程序没有准备好")
         try:
             reply = json.loads(ready)
         except json.JSONDecodeError as exc:
-            self._mark_dead()
+            self._abandon_child(child)
             raise RuntimeError("这个能力的程序没有准备好") from exc
         if reply.get("event") != "ready":
-            self._mark_dead()
+            self._abandon_child(child)
             raise RuntimeError(str(reply.get("error") or "这个能力的程序没有准备好"))
-        self._os_pid = int(child.pid or 0)
+        self._ready = True
+        self._os_pid = int(self.activation.pid)
         self.status = ProcessStatus.RUNNING
         if self._book is not None:
             from kernel.process.process_manager.liveness import process_identity
 
             self._book.note_os(
-                self.activation.process_id,
-                self._os_pid,
+                self.activation.pid,
                 process_identity(self._os_pid) or "",
             )
 
@@ -176,12 +175,12 @@ class CapabilityProcess:
     def answer_ping(self, message: dict[str, Any], timeout: float = 1.0) -> dict[str, Any] | None:
         """Reply only when this process is the one being asked. Otherwise wait and stay quiet."""
         started = time.monotonic()
-        target = str(message.get("process_id") or self.activation.process_id)
+        target = int(message.get("pid") or self.activation.pid)
         asked = str(message.get("channel") or "")
         mine = self.channel_name()
         if (
             not self.is_alive
-            or target != self.activation.process_id
+            or target != int(self.activation.pid)
             or (asked and mine and asked != mine)
         ):
             remaining = timeout - (time.monotonic() - started)
@@ -190,7 +189,7 @@ class CapabilityProcess:
             return None
         return {
             "event": "pong",
-            "process_id": self.activation.process_id,
+            "pid": self.activation.pid,
             "seq": message.get("seq"),
             "channel": mine,
         }
@@ -206,7 +205,7 @@ class CapabilityProcess:
             self._reply = _reply_for(message)
         return Receipt(
             request_id=request_id,
-            process_id=self.activation.process_id,
+            pid=self.activation.pid,
             _lookup=lambda _request_id: {"status": "done", "reply": self._reply},
             _wait=lambda _receipt, _timeout, caller_id=None: self._reply,
         )
@@ -244,11 +243,11 @@ class CapabilityProcess:
             from kernel.process.process_runtime.runtime import close_adapter
 
             close_adapter(adapter)
-        process_id = self.activation.process_id
+        pid = self.activation.pid
         if self._book is not None:
-            self._book.close(process_id)
+            self._book.close(pid)
         if self._pool is not None:
-            self._pool.release(process_id)
+            self._pool.release(pid)
 
     def revoke(self, handle: str) -> dict[str, object]:
         """Invalidate one handle through the resource pool."""
@@ -257,10 +256,14 @@ class CapabilityProcess:
         revocation = self._pool.revoke(handle)
         return {
             "handle": revocation.handle,
-            "process_id": revocation.process_id,
+            "pid": revocation.pid,
             "resource_id": revocation.resource_id,
         }
 
+    def _abandon_child(self, child: subprocess.Popen[str]) -> None:
+        self._child = None
+        if child.poll() is None:
+            child.kill()
 
     def _take_line(self, timeout: float | None) -> str | None:
         """The next stdout line. ``None`` means the wait ended and the process is still up."""
@@ -308,11 +311,11 @@ class CapabilityProcess:
         self._secret_copy = ""
         if secret:
             Path(secret).unlink(missing_ok=True)
-        process_id = self.activation.process_id
+        pid = self.activation.pid
         if self._book is not None:
-            self._book.close(process_id)
+            self._book.close(pid)
         if self._pool is not None:
-            self._pool.release(process_id)
+            self._pool.release(pid)
 
     def _secret_names(self) -> tuple[str, ...]:
         environment = self.activation.environment
@@ -328,7 +331,7 @@ class CapabilityProcess:
         from kernel.trace.activity import ActivityLog
 
         ActivityLog(Path(ledger.path).with_name("activity.jsonl")).append(
-            self.activation.process_id,
+            self.activation.pid,
             activity,
             counterpart,
             way,
@@ -336,6 +339,9 @@ class CapabilityProcess:
 
     def _child_payload(self) -> dict[str, Any]:
         payload = self.activation.payload()
+        ledger = None if self._book is None else getattr(self._book, "_ledger", None)
+        if ledger is not None:
+            payload["ledger_path"] = str(Path(ledger.path).resolve())
         environment = self.activation.environment
         names = self._secret_names()
         source = "" if environment is None else environment.env_file
@@ -344,7 +350,7 @@ class CapabilityProcess:
             if isinstance(shell, dict):
                 shell["inherit_parent_env"] = False
             return payload
-        dest = _repo_root() / ".linope" / "secrets" / self.activation.process_id
+        dest = _repo_root() / ".linope" / "secrets" / str(self.activation.pid)
         copy_named_secrets(source, names, dest)
         self._secret_copy = str(dest)
         shell = payload.get("environment")
@@ -402,6 +408,20 @@ def _child_env(secret_names: tuple[str, ...]) -> dict[str, str]:
     env["PYTHONPATH"] = root if not current else root + os.pathsep + current
     env["PYTHONIOENCODING"] = "utf-8"
     return env
+
+
+def spawn_runtime(secret_names: tuple[str, ...] = ()) -> subprocess.Popen[str]:
+    """Start the capability program and return it before any account is opened."""
+    return subprocess.Popen(
+        [sys.executable, "-m", "kernel.process.process_runtime"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        env=_child_env(secret_names),
+        cwd=str(_repo_root()),
+    )
 
 
 def _read_line(child: subprocess.Popen[str], timeout: float) -> str:

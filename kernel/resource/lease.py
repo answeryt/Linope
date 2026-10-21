@@ -24,7 +24,7 @@ class HandleStatus(StrEnum):
 @dataclass(frozen=True)
 class ResourceLease:
     lease_id: str
-    process_id: str
+    pid: int
     resource_id: str
     status: LeaseStatus = LeaseStatus.ACTIVE
     fencing_token: int = 0
@@ -45,7 +45,7 @@ class ResourceEntity:
 @dataclass(frozen=True)
 class HandleRevocation:
     handle: str
-    process_id: str
+    pid: int
     resource_id: str
     unloaded: tuple[ResourceEntity, ...] = ()
 
@@ -73,14 +73,14 @@ class ResourceLeaseManager:
         self._leases: dict[str, list[ResourceLease]] = {}
         self._entities: dict[str, ResourceEntity] = {}
         self._handles: dict[str, dict[str, Any]] = {}
-        self._pending_loads: dict[str, list[str]] = {}
+        self._pending_loads: dict[int, list[str]] = {}
 
-    def authorize(self, handle: str, process_id: str) -> None:
+    def authorize(self, handle: str, pid: int) -> None:
         """Reject a handle that is not this process's current token."""
         record = self._handles.get(handle)
         if record is None or record["status"] != HandleStatus.ACTIVE:
             raise PermissionError("旧凭证不能再写")
-        if str(record["process_id"]) != process_id:
+        if int(record["pid"]) != int(pid):
             raise PermissionError("这张句柄不属于这个进程")
         entity = self._entities[str(record["resource_id"])]
         if int(record["fencing_token"]) != int(entity.fencing_token):
@@ -119,7 +119,7 @@ class ResourceLeaseManager:
                     pending.append(grant.resource_id)
                 lease = ResourceLease(
                     lease_id=uuid.uuid4().hex,
-                    process_id=context.process_id,
+                    pid=context.pid,
                     resource_id=grant.resource_id,
                     fencing_token=token,
                     share_mode=grant.share_mode,
@@ -127,20 +127,20 @@ class ResourceLeaseManager:
                 self._leases.setdefault(grant.resource_id, []).append(lease)
                 self._handles[grant.handle] = {
                     "handle": grant.handle,
-                    "process_id": context.process_id,
+                    "pid": context.pid,
                     "resource_id": grant.resource_id,
                     "fencing_token": token,
                     "status": HandleStatus.ACTIVE,
                 }
                 leases.append(lease)
         except BaseException:
-            self.release(context.process_id)
+            self.release(context.pid)
             raise
-        self._pending_loads[context.process_id] = pending
+        self._pending_loads[context.pid] = pending
         return tuple(leases)
 
-    def take_pending_loads(self, process_id: str) -> tuple[ResourceEntity, ...]:
-        resource_ids = self._pending_loads.pop(process_id, [])
+    def take_pending_loads(self, pid: int) -> tuple[ResourceEntity, ...]:
+        resource_ids = self._pending_loads.pop(pid, [])
         return tuple(self._entities[resource_id] for resource_id in resource_ids)
 
     def mark_loaded(self, resource_id: str, state: dict[str, Any]) -> None:
@@ -158,12 +158,30 @@ class ResourceLeaseManager:
     def entity(self, resource_id: str) -> ResourceEntity | None:
         return self._entities.get(resource_id)
 
-    def release(self, process_id: str) -> tuple[ResourceEntity, ...]:
+    def memory_named(self, scope: str) -> ResourceEntity | None:
+        """The one loaded memory with this name. None when the pool has no such memory."""
+        wanted = str(scope or "").strip()
+        if not wanted:
+            return None
+        matches = [
+            entity
+            for entity in self._entities.values()
+            if str(entity.kind) == "memory"
+            and str((entity.identity or {}).get("scope") or "") == wanted
+            and entity.status == "loaded"
+        ]
+        if len(matches) > 1:
+            raise ValueError("这个名字对应多份记忆")
+        if not matches:
+            return None
+        return matches[0]
+
+    def release(self, pid: int) -> tuple[ResourceEntity, ...]:
         unloaded: list[ResourceEntity] = []
         for resource_id, active in list(self._leases.items()):
             kept: list[ResourceLease] = []
             for lease in active:
-                if lease.process_id == process_id and lease.status == LeaseStatus.ACTIVE:
+                if lease.pid == pid and lease.status == LeaseStatus.ACTIVE:
                     entity = self._entities[resource_id]
                     entity.refcount = max(0, entity.refcount - 1)
                     if entity.refcount == 0 and entity.status == "loaded":
@@ -176,11 +194,11 @@ class ResourceLeaseManager:
                 self._leases.pop(resource_id, None)
         for handle, record in self._handles.items():
             if (
-                record["process_id"] == process_id
+                record["pid"] == pid
                 and record["status"] == HandleStatus.ACTIVE
             ):
                 record["status"] = HandleStatus.RELEASED
-        self._pending_loads.pop(process_id, None)
+        self._pending_loads.pop(pid, None)
         return tuple(unloaded)
 
     def revoke(self, handle: str) -> HandleRevocation:
@@ -188,22 +206,22 @@ class ResourceLeaseManager:
         if record is None or record["status"] != HandleStatus.ACTIVE:
             raise KeyError(handle)
         record["status"] = HandleStatus.REVOKED
-        process_id = str(record["process_id"])
+        pid = str(record["pid"])
         resource_id = str(record["resource_id"])
-        unloaded = self._release_resource(process_id, resource_id)
+        unloaded = self._release_resource(pid, resource_id)
         return HandleRevocation(
             handle=handle,
-            process_id=process_id,
+            pid=pid,
             resource_id=resource_id,
             unloaded=tuple(unloaded),
         )
 
-    def active_for(self, process_id: str) -> tuple[ResourceLease, ...]:
+    def active_for(self, pid: int) -> tuple[ResourceLease, ...]:
         return tuple(
             lease
             for leases in self._leases.values()
             for lease in leases
-            if lease.process_id == process_id and lease.status == LeaseStatus.ACTIVE
+            if lease.pid == pid and lease.status == LeaseStatus.ACTIVE
         )
 
     def close(self) -> None:
@@ -211,14 +229,14 @@ class ResourceLeaseManager:
 
     def _release_resource(
         self,
-        process_id: str,
+        pid: int,
         resource_id: str,
     ) -> list[ResourceEntity]:
         active = self._leases.get(resource_id, [])
         kept: list[ResourceLease] = []
         unloaded: list[ResourceEntity] = []
         for lease in active:
-            if lease.process_id == process_id and lease.status == LeaseStatus.ACTIVE:
+            if lease.pid == pid and lease.status == LeaseStatus.ACTIVE:
                 entity = self._entities[resource_id]
                 entity.refcount = max(0, entity.refcount - 1)
                 if entity.refcount == 0 and entity.status == "loaded":

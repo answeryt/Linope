@@ -21,6 +21,18 @@ def process_matches(pid: int | None, identity: str | None) -> bool:
     return current == identity
 
 
+def reap_dead(book) -> None:
+    """Close accounts whose operating-system process is already gone."""
+    from kernel.process.resource_record import RecordStatus
+
+    for record in book.records():
+        if record.status != RecordStatus.READY or record.pid <= 0:
+            continue
+        if process_matches(record.pid, record.started or None):
+            continue
+        book.close(record.pid)
+
+
 def _inspect(pid: int | None) -> tuple[bool, str | None]:
     if pid is None or pid <= 0:
         return False, None

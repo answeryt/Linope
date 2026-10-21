@@ -8,6 +8,7 @@ capability only when the window leaves.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,6 @@ from kernel.command.process.listen import (
 from kernel.command.process.start import _parse_start_options, launch_options
 from kernel.command.window import bind_line, bind_window, reset_line, reset_window
 from kernel.process.profile import ProfileUnavailable
-from kernel.services.contracts import Member
 
 
 class _Batch:
@@ -37,7 +37,7 @@ class Clerk:
 
     def __init__(self) -> None:
         self._items: list[tuple[str, Any]] = []
-        self._once: set[str] = set()
+        self._once: set[int] = set()
         self._env_file = ""
         self._book: Any = None
         self._pool: Any = None
@@ -46,18 +46,6 @@ class Clerk:
 
     def processes(self) -> tuple[Any, ...]:
         return tuple(process for _name, process in self._items)
-
-    def members(self) -> tuple[Member, ...]:
-        return tuple(
-            Member(
-                role="capability",
-                capability=name,
-                process_id=process.activation.process_id,
-                pid=int(process.pid or 0),
-                alive=bool(process.is_alive),
-            )
-            for name, process in self._items
-        )
 
     def close(self) -> None:
         if self._closed:
@@ -109,7 +97,7 @@ class Clerk:
         _done()
         return False
 
-    def launch(self, argv: list[str]) -> None:
+    def launch(self, argv: list[str]) -> tuple[Any, ...]:
         parsed = _parse_start_options(argv)
         if not parsed[4] and self._env_file:
             parsed = (*parsed[:4], self._env_file, *parsed[5:])
@@ -118,9 +106,12 @@ class Clerk:
         from kernel.process.profile import load_declaration
 
         declaration, definition = load_declaration(parsed[0], parsed[1])
-        from kernel.process.declaration import append_chosen
+        from kernel.process.declaration import append_chosen, stamp_memory_space
 
-        declaration = append_chosen(declaration, options.chosen)
+        declaration = stamp_memory_space(
+            append_chosen(declaration, options.chosen),
+            parsed[1],
+        )
         started = self._reconciler.launch(
             declaration,
             definition=definition,
@@ -136,7 +127,7 @@ class Clerk:
         for process in started:
             self._items.append((parsed[0], process))
             if options.once:
-                self._once.add(process.activation.process_id)
+                self._once.add(int(process.pid))
             batch.append(process)
         try:
             _open_programs(_Batch(tuple(batch)))
@@ -146,13 +137,15 @@ class Clerk:
             raise
         for process in batch:
             print(
-                f"process_id={process.activation.process_id} pid={process.pid} capability={parsed[0]}",
+                f"pid={process.pid} capability={parsed[0]}",
                 flush=True,
             )
         if parsed[2] and not _startup_ping(_Batch(tuple(batch)), PING_TIMEOUT):
             print("这个进程没答", file=sys.stderr)
             for process in batch:
                 process.stop()
+            return ()
+        return tuple(batch)
 
     def _ensure(self, ledger_path: str | None) -> None:
         if self._reconciler is not None:
@@ -162,11 +155,11 @@ class Clerk:
         from kernel.process.resource_record import ProcessResourceBook
         from kernel.resource.lease import ResourceLeaseManager
         from kernel.resource.pool import ResourcePool
-        from kernel.services.assembly import _reap_dead
+        from kernel.process.process_manager.liveness import reap_dead
 
         path = ledger_path or str(Path.cwd() / ".linope" / "processes.json")
         book = ProcessResourceBook(ProcessLedger(path))
-        _reap_dead(book)
+        reap_dead(book)
         pool = ResourcePool(ResourceLeaseManager())
         self._book = book
         self._pool = pool
@@ -179,9 +172,13 @@ class Clerk:
     def close_once(self, text: str) -> None:
         for name, process in self._items:
             del name
-            process_id = process.activation.process_id
-            if process_id in self._once and process_id in text and process.is_alive:
+            pid = int(process.pid)
+            if pid in self._once and _line_names_pid(text, pid) and process.is_alive:
                 process.stop()
+
+
+def _line_names_pid(text: str, pid: int) -> bool:
+    return re.search(rf"(?<!\d){int(pid)}(?!\d)", text) is not None
 
 
 def serve(lines: Any = None) -> int:

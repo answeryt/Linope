@@ -10,11 +10,14 @@
 ```text
 一个进程内的 asyncio 事件循环
 ├── async 插件：直接 await
-└── sync 插件：进入受限 ThreadPoolExecutor
+└── sync 插件：进入已有的 WorkerPool
 ```
 
 异步模型调用在等待网络时不会占用 OS worker 线程。同步插件、阻塞式 SDK、
-文件操作和外部命令才会进入线程池。
+文件操作和外部命令才会进入线程池。人数写在这个进程的账本上
+（`worker_ceiling`、`inflight_ceiling`）。接到下一件活之前，运行时用已有的
+`set_max_workers` 和 `expand_to` 对齐这两个数。没标明可以多线程的同步插件
+仍然只有 1 个帮手。
 
 ## 资源和环境
 

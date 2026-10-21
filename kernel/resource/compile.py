@@ -36,15 +36,15 @@ def entity_key(
     kind: str,
     identity: dict[str, Any],
     *,
-    process_id: str | None = None,
+    pid: int | None = None,
 ) -> str:
     """Hash kind and identity. Call params never enter the key."""
     body: dict[str, Any] = {
         "kind": kind_name(kind),
         "identity": identity,
     }
-    if process_id is not None:
-        body["process_id"] = process_id
+    if pid is not None:
+        body["pid"] = pid
     encoded = json.dumps(
         body,
         sort_keys=True,
@@ -57,7 +57,7 @@ def entity_key(
 
 def compile_declaration(
     declaration: ResourceDeclaration,
-    process_id: str,
+    pid: int,
     *,
     shared: tuple[str, ...] = (),
 ) -> tuple[CompiledResource, ...]:
@@ -105,7 +105,7 @@ def compile_declaration(
             resource_id = entity_key(
                 name,
                 claim.identity,
-                process_id=process_id,
+                pid=pid,
             )
         compiled.append(
             CompiledResource(

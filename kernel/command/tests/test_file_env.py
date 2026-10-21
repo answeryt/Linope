@@ -48,6 +48,7 @@ def test_started_process_uses_that_env_file(tmp_path: Path) -> None:
             module_paths=(str(plugin),),
         ),
         env_file=str(env),
+        pid=401,
     )
     shell = process.activation.environment
     assert shell is not None
@@ -70,6 +71,7 @@ def test_the_capability_program_gets_only_its_own_secret(tmp_path: Path) -> None
             module_paths=(str(plugin),),
         ),
         env_file=str(env),
+        pid=402,
     )
     payload = process._child_payload()
     copied = Path(payload["environment"]["env_file"])

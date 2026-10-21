@@ -12,7 +12,7 @@ class Receipt:
     """A request ticket that does not retain the capability process."""
 
     request_id: str
-    process_id: str
+    pid: int
     _lookup: Callable[[str], dict[str, Any] | None]
     _wait: Callable[..., dict[str, Any]]
 

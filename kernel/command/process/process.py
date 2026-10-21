@@ -18,7 +18,7 @@ USAGE = (
     "用法: linope process start <能力> [--change 主题=值] [--count 份数] "
     "[--share 资源种类] [--with 种类=身份] [--once] [--ping]\n"
     "      linope process list\n"
-    "      linope process show <进程号>\n"
+    "      linope process show <进程号> [地址]\n"
     "      linope process trace <进程号>"
 )
 
@@ -49,8 +49,8 @@ def _in_window(window: object, argv: list[str]) -> bool:
     if argv[0] == "list" and len(argv) == 1:
         _print_list(window)
         return True
-    if argv[0] == "show" and len(argv) == 2:
-        _print_show(window, argv[1])
+    if argv[0] == "show" and len(argv) >= 2:
+        _print_show(window, argv[1], " ".join(argv[2:]))
         return True
     if argv[0] == "trace" and len(argv) == 2:
         _print_trace(window, argv[1])

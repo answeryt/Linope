@@ -105,11 +105,11 @@ def parallel_search(query: str, limit: int = 5) -> str:
 
 
 def capability_profile(capability_id, changes):
-    """Parallel leases its API host. It does not receive a workspace."""
+    """Parallel leases a tool and the ledger channel. It does not receive a workspace."""
     del changes
-    from kernel.process.profiles import tool_with_network
+    from kernel.process.profiles import tool_only
 
-    return tool_with_network(capability_id, ("api.parallel.ai",))
+    return tool_only(capability_id)
 
 
 def _excerpt(value: Any) -> str:

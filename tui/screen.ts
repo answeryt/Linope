@@ -212,7 +212,7 @@ const activityWord = (raw: string): LiveProcess['activity'] | '离开' => {
 
 export function noteProcessText(current: LiveProcess[], text: string): LiveProcess[] {
   const next = current.map(item => ({ ...item }))
-  const started = /^process_id=(\S+)\s+pid=\S+\s+capability=(\S+)/.exec(text.trim())
+  const started = /^pid=(\d+)\s+capability=(\S+)/.exec(text.trim())
 
   if (started) {
     const id = started[1] ?? ''
@@ -222,13 +222,13 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
       found.capability = started[2] ?? found.capability
       found.activity = '在等'
     } else {
-      next.push({ activity: '在等', capability: started[2] ?? id, id })
+      next.push({ activity: '在等', capability: started[2] ?? '', id })
     }
 
     return next
   }
 
-  const listed = /^process_id=(\S+)\s+pid=\S+\s+activity=(\S+)/.exec(text.trim())
+  const listed = /^pid=(\d+)\s+activity=(\S+)/.exec(text.trim())
 
   if (listed) {
     const id = listed[1] ?? ''
@@ -243,7 +243,7 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
     if (found) {
       found.activity = activity
     } else {
-      next.push({ activity, capability: id.slice(0, 8), id })
+      next.push({ activity, capability: '', id })
     }
 
     return next
@@ -254,31 +254,32 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
   }
 
   try {
-    const payload = JSON.parse(text) as { facts?: { activity?: string; capability_id?: string; process_id?: string } }
+    const payload = JSON.parse(text) as { facts?: { activity?: string; capability_id?: string; pid?: number | string } }
     const facts = payload.facts
+    const id = facts?.pid === undefined || facts.pid === null || facts.pid === '' ? '' : String(facts.pid)
 
-    if (!facts?.process_id) {
+    if (!id || id === '0') {
       return current
     }
 
-    const activity = activityWord(facts.activity ?? '')
+    const activity = activityWord(facts?.activity ?? '')
 
     if (activity === '离开') {
-      return next.filter(item => item.id !== facts.process_id)
+      return next.filter(item => item.id !== id)
     }
 
-    const found = next.find(item => item.id === facts.process_id)
+    const found = next.find(item => item.id === id)
 
     if (found) {
       found.activity = activity
-      if (facts.capability_id) {
+      if (facts?.capability_id) {
         found.capability = facts.capability_id
       }
     } else {
       next.push({
         activity,
-        capability: facts.capability_id || facts.process_id.slice(0, 8),
-        id: facts.process_id
+        capability: facts?.capability_id || '',
+        id
       })
     }
 

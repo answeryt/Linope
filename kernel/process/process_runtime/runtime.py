@@ -10,14 +10,14 @@ from typing import Any
 from kernel.environment import KernelEnvironment, bind_room
 from kernel.environment.policy import HostExecutionPolicy
 from kernel.environment.shell import ProcessEnvironment
-from kernel.thread.contracts import ThreadPolicy
+from kernel.thread.contracts import ClaimedRequest, ThreadPolicy
 
 
-def _load_modules(module_paths: tuple[str, ...], process_id: str = "") -> list[Any]:
+def _load_modules(module_paths: tuple[str, ...], pid: int = 0) -> list[Any]:
     loaded = []
     for index, raw_path in enumerate(module_paths):
         path = Path(raw_path)
-        name = f"capability_runtime_{process_id}_{index}_{path.stem}"
+        name = f"capability_runtime_{pid}_{index}_{path.stem}"
         spec = importlib.util.spec_from_file_location(name, path)
         if spec is None or spec.loader is None:
             raise ImportError(path)
@@ -51,7 +51,7 @@ def open_adapter(activation: dict[str, Any]) -> Any | None:
         room.apply()
         modules = _load_modules(
             tuple(activation["module_paths"]),
-            str(activation.get("process_id") or ""),
+            int(activation.get("pid") or 0),
         )
         adapter = _create_adapter(modules)
         if adapter is not None:
@@ -83,7 +83,7 @@ def serve_capability(activation: dict[str, Any], on_exit: Any | None = None) -> 
     finally:
         close_adapter(adapter)
         if on_exit is not None:
-            on_exit(str(activation["process_id"]))
+            on_exit(int(activation["pid"]))
 
 
 def serve_stdio(stdin: Any | None = None, stdout: Any | None = None) -> None:
@@ -115,47 +115,132 @@ def serve_stdio(stdin: Any | None = None, stdout: Any | None = None) -> None:
     except Exception as exc:
         _write_line(outgoing, {"event": "error", "error": str(exc)})
         return
-    _write_line(
-        outgoing,
-        {"event": "ready", "process_id": str(activation.get("process_id") or "")},
-    )
+    import asyncio
+    import threading
+
+    from kernel.thread.runtime import ThreadRuntime
+
+    pid = int(activation.get("pid") or 0)
+    write_lock = threading.Lock()
+
+    def write(payload: dict[str, Any]) -> None:
+        with write_lock:
+            _write_line(outgoing, payload)
+
+    write({"event": "ready", "pid": pid})
+    inbox = _LineInbox(incoming, write, pid)
+    policy = ThreadPolicy.from_payload(activation.get("thread_policy"))
     try:
-        for raw in incoming:
-            if not raw.strip():
-                continue
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                _write_line(outgoing, {"event": "error", "error": str(exc)})
-                continue
-            if not isinstance(message, dict):
-                _write_line(outgoing, {"event": "error", "error": "请求必须是一条记录"})
-                continue
-            _write_line(outgoing, _answer(adapter, activation, message))
+        asyncio.run(
+            ThreadRuntime(policy).run(
+                process_id=str(pid),
+                inbox=inbox,
+                adapter=adapter,
+                should_stop=inbox.closed,
+                ceilings=_ledger_ceilings(activation, policy),
+            )
+        )
     finally:
         close_adapter(adapter)
 
 
-def _answer(adapter: Any | None, activation: dict[str, Any], message: dict[str, Any]) -> dict[str, Any]:
-    process_id = str(activation.get("process_id") or "")
-    if str(message.get("process_id") or "") != process_id:
-        return {"event": "error", "error": "这不是这个能力的进程号"}
-    if message.get("operation") == "ping":
-        return {
-            "event": "pong",
-            "process_id": process_id,
-            "seq": message.get("seq"),
-            "channel": str(message.get("channel") or ""),
-        }
-    if adapter is None:
-        return {"event": "error", "error": "这个进程没有 load"}
-    import asyncio
+class _LineInbox:
+    """One stdin line is one claim. Replies go back out as lines."""
+
+    def __init__(self, incoming: Any, write: Any, pid: int) -> None:
+        self._incoming = incoming
+        self._write = write
+        self._pid = pid
+        self.eof = False
+
+    def claim(
+        self,
+        process_id: str,
+        worker_id: str,
+        lease_seconds: float,
+    ) -> ClaimedRequest | None:
+        del process_id, worker_id, lease_seconds
+        import json
+        import uuid
+
+        while not self.eof:
+            raw = self._incoming.readline()
+            if not raw:
+                self.eof = True
+                return None
+            if not str(raw).strip():
+                continue
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                self._write({"event": "error", "error": str(exc)})
+                continue
+            if not isinstance(message, dict):
+                self._write({"event": "error", "error": "请求必须是一条记录"})
+                continue
+            request_id = str(message.get("request_id") or uuid.uuid4().hex)
+            return ClaimedRequest(
+                request_id=request_id,
+                process_id=str(self._pid),
+                body=message,
+            )
+        return None
+
+    def complete(
+        self,
+        request_id: str,
+        reply: dict[str, Any],
+        claim_token: str | None = None,
+    ) -> None:
+        del request_id, claim_token
+        self._write(reply)
+
+    def lookup(self, request_id: str) -> dict[str, Any] | None:
+        del request_id
+        return None
+
+    def closed(self) -> bool:
+        return self.eof
+
+
+def ceilings_from_ledger(
+    path: str,
+    pid: int,
+    fallback: tuple[int, int],
+) -> tuple[int, int]:
+    """Read this process's worker and inflight ceilings from its ledger row."""
+    import json
+
+    from kernel.process.ledger import ProcessLedger
 
     try:
-        result = asyncio.run(adapter.handle_async(message))
-    except Exception as exc:
-        return {"event": "error", "error": str(exc)}
-    return {"event": "result", "result": result}
+        records = ProcessLedger(path).read()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return fallback
+    for record in records:
+        if int(record.get("pid") or 0) != int(pid):
+            continue
+        room = record.get("room") if isinstance(record.get("room"), dict) else {}
+        worker = room.get("worker_ceiling", fallback[0])
+        inflight = room.get("inflight_ceiling", fallback[1])
+        try:
+            return int(worker), int(inflight)
+        except (TypeError, ValueError):
+            return fallback
+    return fallback
+
+
+def _ledger_ceilings(activation: dict[str, Any], policy: ThreadPolicy) -> Any:
+    path = activation.get("ledger_path")
+    if not path:
+        return None
+    pid = int(activation.get("pid") or 0)
+    fallback = (policy.max_sync_workers, policy.max_concurrent_tasks)
+
+    def read() -> tuple[int, int]:
+        return ceilings_from_ledger(str(path), pid, fallback)
+
+    return read
 
 
 def _use_utf8(stream: Any) -> None:

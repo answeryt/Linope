@@ -47,11 +47,12 @@ assert.equal(session?.type, 'session')
 
 const noted = noteProcessText(
   [],
-  'process_id=1110cc5c pid=50040 capability=tools.bash'
+  'pid=50040 capability=tools.bash'
 )
+assert.equal(noted[0]?.id, '50040')
 assert.equal(noted[0]?.capability, 'tools.bash')
 assert.equal(noted[0]?.activity, '在等')
-const listed = noteProcessText(noted, 'process_id=1110cc5c pid=50040 activity=working status=ready')
+const listed = noteProcessText(noted, 'pid=50040 activity=working status=ready')
 assert.equal(listed[0]?.activity, '在忙')
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('管家'), true)
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('tools.bash 在等'), true)

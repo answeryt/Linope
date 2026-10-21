@@ -6,7 +6,7 @@
 
 种类登记在 [`resource_contract.py`](resource_contract.py)。现在有五种：
 
-- `memory`：上下文。身份是 `scope`。
+- `memory`：上下文。身份是 `scope`。地址映射在 `kernel/communication`，这里只留页面和句柄。
 - `tool`：一个工具或一条要保活的连接。身份是 `id`。
 - `sandbox`：沙箱或持久终端。身份是 `root`。
 - `model`：一家厂商的一个模型。身份是 `provider` 和 `id`。

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import replace
+from pathlib import Path
 
 from kernel.process.declaration import ProcessDeclaration
 from kernel.environment import HostExecutionPolicy, ProcessEnvironment
 from kernel.environment.shell import api_key_names
 from kernel.process.process_creat.activation import ProcessActivation
 from kernel.process.process_creat.instances import CapabilityDefinition, describe_instance
-from kernel.process.process_manager.capability_process import CapabilityProcess
+from kernel.process.process_manager.capability_process import CapabilityProcess, spawn_runtime
 from kernel.process.resource_record import (
     ProcessResourceBook,
     held_from_grant,
@@ -33,7 +33,7 @@ class ProcessReconciler:
         self,
         declaration: ProcessDeclaration,
         *,
-        process_id: str | None = None,
+        pid: int | None = None,
         environment: ProcessEnvironment | None = None,
         host_policy: HostExecutionPolicy | None = None,
         thread_policy: ThreadPolicy | None = None,
@@ -43,69 +43,95 @@ class ProcessReconciler:
         env_file_keys: tuple[str, ...] = (),
         cwd: str | None = None,
     ) -> CapabilityProcess:
-        process_id = process_id or uuid.uuid4().hex
         if definition is None:
             definition = describe_instance(declaration.capability)
+        chosen_file = ""
+        chosen_keys: tuple[str, ...] = ()
         if environment is None:
             chosen_file, chosen_keys = _env_selection(
                 definition,
                 env_file,
                 env_file_keys,
             )
-            if chosen_file or cwd:
+        elif environment.env_file_keys:
+            chosen_keys = tuple(environment.env_file_keys)
+        child = None
+        opened = False
+        bound = False
+        process: CapabilityProcess | None = None
+        pid_value = None if pid is None else int(pid)
+        try:
+            if pid_value is None:
+                child = spawn_runtime(chosen_keys)
+                pid_value = int(child.pid or 0)
+                if pid_value <= 0:
+                    raise RuntimeError("这个能力的程序没有进程号")
+            if environment is None and (chosen_file or cwd):
                 environment = ProcessEnvironment.current(
-                    process_id=process_id,
+                    pid=pid_value,
                     capability_id=definition.instance_id,
                     cwd=cwd or None,
                     env_file=chosen_file,
                     env_file_keys=chosen_keys,
                 )
-        definition = replace(
-            definition,
-            resource_requirements=declaration.resource_definitions(),
-        )
-        compiled = compile_declaration(declaration, process_id, shared=shared)
-        self.book.open(process_id, definition.instance_id)
-        try:
-            self.pool.bind(process_id, definition.instance_id, compiled)
-        except BaseException:
-            self.book.discard(process_id)
-            raise
-        try:
-            grants = self.pool.grants_for(process_id)
+            definition = replace(
+                definition,
+                resource_requirements=declaration.resource_definitions(),
+            )
+            compiled = compile_declaration(declaration, pid_value, shared=shared)
+            self.book.open(pid_value, definition.instance_id)
+            opened = True
+            self.pool.bind(pid_value, definition.instance_id, compiled)
+            bound = True
+            grants = self.pool.grants_for(pid_value)
+            thread_policy = thread_policy or ThreadPolicy()
             activation = ProcessActivation(
                 definition=definition,
                 grants=grants,
-                process_id=process_id,
+                pid=pid_value,
                 settings=dict(declaration.settings),
                 environment=environment,
                 host_policy=host_policy or HostExecutionPolicy(),
-                thread_policy=thread_policy or ThreadPolicy(),
+                thread_policy=thread_policy,
             )
+            room = _room_facts(grants, environment)
+            room["worker_ceiling"] = thread_policy.max_sync_workers
+            room["inflight_ceiling"] = thread_policy.max_concurrent_tasks
             self.book.attach(
-                process_id,
+                pid_value,
                 claims=tuple(
                     {"kind": kind_name(item.kind), "identity": dict(item.identity)}
                     for item in compiled
                 ),
-                leases=_held(grants, self.pool.store.active_for(process_id)),
-                room=_room_facts(grants, environment),
+                leases=_held(grants, self.pool.store.active_for(pid_value)),
+                room=room,
             )
-            return CapabilityProcess(
+            process = CapabilityProcess(
                 activation,
                 resource_pool=self.pool,
                 book=self.book,
+                child=child,
             )
+            if child is not None:
+                process.open_program()
+            return process
         except BaseException:
-            self.pool.release(process_id)
-            self.book.discard(process_id)
+            if process is not None and process._secret_copy:
+                Path(process._secret_copy).unlink(missing_ok=True)
+                process._secret_copy = ""
+            if child is not None and child.poll() is None:
+                child.kill()
+            if bound and pid_value is not None:
+                self.pool.release(pid_value)
+            if opened and pid_value is not None:
+                self.book.discard(pid_value)
             raise
 
     def launch(
         self,
         declaration: ProcessDeclaration,
         *,
-        process_id: str | None = None,
+        pid: int | None = None,
         environment: ProcessEnvironment | None = None,
         host_policy: HostExecutionPolicy | None = None,
         thread_policy: ThreadPolicy | None = None,
@@ -122,14 +148,14 @@ class ProcessReconciler:
         count = 1 if replica_count is None else int(replica_count)
         if count < 1:
             raise ValueError("份数至少为 1")
-        if process_id is not None and count != 1:
+        if pid is not None and count != 1:
             raise ValueError("指定进程号时只能启动一份")
         started: list[CapabilityProcess] = []
         for index in range(count):
             started.append(
                 self.start(
                     declaration,
-                    process_id=process_id if index == 0 else None,
+                    pid=pid if index == 0 else None,
                     environment=environment,
                     host_policy=host_policy,
                     thread_policy=thread_policy,

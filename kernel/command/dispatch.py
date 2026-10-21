@@ -10,6 +10,7 @@ from kernel.command.process.clerk import run as session
 from kernel.command.process.process import run as process
 from kernel.command.process.talk import run as talk
 from kernel.command.screen.resource import run as resource
+from kernel.command.service import run as service
 
 COMMANDS = {
     "ask": talk,
@@ -19,6 +20,7 @@ COMMANDS = {
     "ping": talk,
     "process": process,
     "resource": resource,
+    "service": service,
     "session": session,
     "show": talk,
     "terminal": session,
@@ -38,8 +40,9 @@ def usage() -> str:
         "linope load env <路径>",
         "linope process start <能力>",
         "linope process list",
-        "linope process show <进程号>",
+        "linope process show <进程号> [地址]",
         "linope process trace <进程号>",
+        "linope service start <进程号> [<进程号> ...]",
         "linope resource serve",
         "linope terminal",
         "linope session",

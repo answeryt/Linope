@@ -15,6 +15,9 @@ from kernel.thread.contracts import ClaimedRequest, ThreadInbox, ThreadPolicy
 from kernel.thread.limiter import AsyncTaskLimiter
 
 
+Ceilings = Callable[[], tuple[int, int]]
+
+
 class ThreadRuntime:
     """Schedule async handlers and bridge blocking handlers to a thread pool."""
 
@@ -24,6 +27,8 @@ class ThreadRuntime:
         self._task_limiter = AsyncTaskLimiter(policy.max_concurrent_tasks)
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._wait_for_sync_shutdown = True
+        self._process_id = ""
+        self._ceilings: Ceilings | None = None
 
     async def run(
         self,
@@ -32,12 +37,16 @@ class ThreadRuntime:
         inbox: ThreadInbox,
         adapter: Any | None,
         should_stop: Callable[[], bool | Awaitable[bool]],
+        ceilings: Ceilings | None = None,
     ) -> None:
         """Run until the process asks for a cooperative stop."""
 
         pending: set[asyncio.Task[None]] = set()
         self._wait_for_sync_shutdown = True
+        self._process_id = str(process_id)
+        self._ceilings = ceilings
         self._workers = WorkerPool(self._sync_worker_count(adapter))
+        claimed_once = False
         try:
             stopping = False
             while not stopping:
@@ -46,6 +55,8 @@ class ThreadRuntime:
                     break
 
                 self._discard_finished(pending)
+                if claimed_once:
+                    self._align(adapter)
                 if len(pending) >= self._admit_limit():
                     await self._wait_for_one(pending)
                     continue
@@ -57,9 +68,14 @@ class ThreadRuntime:
                     self.policy.claim_lease_seconds,
                 )
                 if request is None:
+                    if await _resolve(should_stop):
+                        stopping = True
+                        break
                     await asyncio.sleep(self.policy.poll_interval_seconds)
                     continue
 
+                claimed_once = True
+                self._align(adapter)
                 task = asyncio.create_task(
                     self._execute_request(inbox, adapter, request),
                     name=f"linope-request-{request.request_id}",
@@ -107,14 +123,19 @@ class ThreadRuntime:
     ) -> dict[str, Any]:
         operation = message.get("operation")
         if operation == "ping":
-            return {"event": "pong", "pid": os.getpid()}
+            pid = self._reply_pid()
+            if "pid" in message and int(message.get("pid") or 0) != pid:
+                return {"event": "error", "error": "这不是这个能力的进程号"}
+            return {
+                "event": "pong",
+                "pid": pid,
+                "seq": message.get("seq"),
+                "channel": str(message.get("channel") or ""),
+            }
         if adapter is None or not (
             hasattr(adapter, "handle") or hasattr(adapter, "handle_async")
         ):
-            return {
-                "event": "error",
-                "error": f"No adapter is registered for {operation!r}",
-            }
+            return {"event": "error", "error": "这个进程没有 load"}
 
         payload = {
             key: value for key, value in message.items() if key != "request_id"
@@ -140,15 +161,37 @@ class ThreadRuntime:
             }
         return {"event": "result", "result": result}
 
+    def _align(self, adapter: Any | None) -> None:
+        """Apply the ledger ceilings with the pool and limiter that already exist."""
+        if self._ceilings is None or self._workers is None:
+            return
+        worker, inflight = self._ceilings()
+        inflight = int(inflight)
+        if inflight >= 1:
+            self._task_limiter.expand_to(inflight)
+        allowed = self._worker_cap(adapter, int(worker))
+        if allowed != self._workers.max_workers:
+            self._workers.set_max_workers(allowed)
+
     def _sync_worker_count(self, adapter: Any | None) -> int:
+        return self._worker_cap(adapter, self.policy.max_sync_workers)
+
+    def _worker_cap(self, adapter: Any | None, requested: int) -> int:
         if adapter is None or _adapter_is_async(adapter):
             return 0
         if getattr(adapter, "sync_thread_safe", False):
-            return self.policy.max_sync_workers
-        return min(1, self.policy.max_sync_workers)
+            return max(0, int(requested))
+        return min(1, max(0, int(requested)))
 
     def _admit_limit(self) -> int:
-        return self.policy.max_concurrent_tasks
+        return self._task_limiter.capacity
+
+    def _reply_pid(self) -> int:
+        try:
+            pid = int(self._process_id)
+        except (TypeError, ValueError):
+            pid = 0
+        return pid if pid > 0 else os.getpid()
 
     def _session_lock(self, body: dict[str, Any]) -> asyncio.Lock | None:
         if not self.policy.session_affinity:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from typing import Any
 
 from kernel.command.convention import Invocation, UsageError, guard, parse
@@ -10,7 +11,6 @@ from kernel.command.process.listen import hold
 from kernel.command.parser import optional_count, parse_changes
 from kernel.environment import HostExecutionPolicy
 from kernel.process.profile import Change, ProfileUnavailable
-from kernel.services import LaunchOptions, ServiceSpec, launch_session
 from kernel.thread.contracts import ThreadPolicy
 
 START_FLAGS = {
@@ -37,9 +37,12 @@ def parse_start(argv: list[str] | None = None) -> tuple:
     return _options(parse(list(argv or []), flags=START_FLAGS, usage=START_USAGE))[:6]
 
 
-def _parse_start_options(argv: list[str] | None = None) -> tuple:
+def parse_start_options(argv: list[str] | None = None) -> tuple:
     """Parse one process start, including the thread and room options."""
     return _options(parse(list(argv or []), flags=START_FLAGS, usage=START_USAGE))
+
+
+_parse_start_options = parse_start_options
 
 
 def _options(invocation: Invocation) -> tuple:
@@ -93,8 +96,23 @@ def options_for(
     )
 
 
+@dataclass(frozen=True)
+class LaunchOptions:
+    """The room and policies for one launch."""
+
+    thread_policy: ThreadPolicy | None = None
+    host_policy: HostExecutionPolicy | None = None
+    env_file: str = ""
+    env_file_keys: tuple[str, ...] = ()
+    cwd: str | None = None
+    shared: tuple[str, ...] = ()
+    once: bool = False
+    chosen: tuple[str, ...] = ()
+    ledger_path: str | None = None
+
+
 def launch_options(options: tuple) -> LaunchOptions:
-    """Turn parsed start options into the room and policies of a service."""
+    """Turn parsed start options into the room and policies of a launch."""
     (
         _capability,
         _changes,
@@ -126,36 +144,74 @@ def launch_options(options: tuple) -> LaunchOptions:
     )
 
 
-def member_lines(service: Any) -> list[str]:
-    """One line per member, the same shape the command always printed."""
-    return [
-        f"process_id={member.process_id} pid={member.pid} capability={member.capability}"
-        for member in service.members()
-    ]
+class _Running:
+    """The processes one start opened. Closing stops each of them."""
+
+    def __init__(self, processes: tuple[Any, ...]) -> None:
+        self._processes = processes
+        self._closed = False
+
+    def processes(self) -> tuple[Any, ...]:
+        return self._processes
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for process in self._processes:
+            try:
+                process.stop()
+            except Exception:
+                pass
 
 
-def serve_until_closed(service: Any, *, ping: bool) -> bool:
-    """Print, optionally ping, then stay until every member has left."""
-    return hold(service, ping=ping, once=False)
+def open_capability(options: tuple) -> _Running:
+    """Start the capability named by parsed options."""
+    from pathlib import Path
+
+    from kernel.process.declaration import append_chosen, stamp_memory_space
+    from kernel.process.ledger import ProcessLedger
+    from kernel.process.process_manager.liveness import reap_dead
+    from kernel.process.profile import load_declaration
+    from kernel.process.reconcile import ProcessReconciler
+    from kernel.process.resource_record import ProcessResourceBook
+    from kernel.resource.lease import ResourceLeaseManager
+    from kernel.resource.pool import ResourcePool
+
+    launch = launch_options(options)
+    pool = ResourcePool(ResourceLeaseManager())
+    ledger_path = launch.ledger_path or str(Path.cwd() / ".linope" / "processes.json")
+    book = ProcessResourceBook(ProcessLedger(ledger_path))
+    reap_dead(book)
+    reconciler = ProcessReconciler(pool, book)
+    declaration, definition = load_declaration(options[0], options[1])
+    declaration = stamp_memory_space(
+        append_chosen(declaration, launch.chosen),
+        options[1],
+    )
+    processes = reconciler.launch(
+        declaration,
+        definition=definition,
+        shared=launch.shared,
+        replica_count=options[3],
+        env_file=launch.env_file,
+        env_file_keys=launch.env_file_keys,
+        cwd=launch.cwd,
+        host_policy=launch.host_policy,
+        thread_policy=launch.thread_policy,
+    )
+    return _Running(tuple(processes))
 
 
 def launch_capability(options: tuple) -> int:
-    """Open one capability service and hold it until it stops."""
+    """Open one capability and hold it until it stops."""
     try:
-        service = launch_session(
-            ServiceSpec(
-                kind="capability",
-                members=(options[0],),
-                changes=options[1],
-                replica_count=options[3],
-            ),
-            launch_options(options),
-        )
+        running = open_capability(options)
     except (ProfileUnavailable, ValueError, KeyError) as exc:
         print(exc, file=sys.stderr)
         return 1
     once = len(options) > 10 and bool(options[10])
-    return 0 if hold(service, ping=bool(options[2]), once=once) else 1
+    return 0 if hold(running, ping=bool(options[2]), once=once) else 1
 
 
 @guard(START_USAGE)

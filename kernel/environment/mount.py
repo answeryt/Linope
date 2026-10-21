@@ -54,11 +54,10 @@ def root_from(changes, fallback: str) -> str:
     return fallback
 
 
-def private_temp(root: str, process_id: str) -> str:
+def private_temp(root: str, pid: int = 0) -> str:
     """A temp directory that belongs to one peer, under the shared project root."""
     base = Path(root).expanduser()
-    name = process_id.strip()
-    path = base / ".linope-tmp" / name if name else base / ".linope-tmp"
+    path = base / ".linope-tmp" / str(pid) if pid > 0 else base / ".linope-tmp"
     return str(path)
 
 

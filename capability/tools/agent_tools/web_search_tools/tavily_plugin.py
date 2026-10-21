@@ -105,11 +105,11 @@ def tavily_search(query: str, limit: int = 5) -> str:
 
 
 def capability_profile(capability_id, changes):
-    """Tavily leases its API host. It does not receive a workspace."""
+    """Tavily leases a tool and the ledger channel. It does not receive a workspace."""
     del changes
-    from kernel.process.profiles import tool_with_network
+    from kernel.process.profiles import tool_only
 
-    return tool_with_network(capability_id, ("api.tavily.com",))
+    return tool_only(capability_id)
 
 
 def _post(url: str, body: dict[str, Any], headers: dict[str, str]):

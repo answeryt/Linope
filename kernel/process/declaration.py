@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from kernel.communication.address import CLASSES
 from kernel.resource.definition import ResourceDefinition
 from kernel.resource.resource_contract import kind_name, require
 
@@ -54,6 +55,28 @@ class ProcessDeclaration:
             ),
             settings=dict(payload.get("settings") or {}),
         )
+
+
+def stamp_memory_space(declaration: ProcessDeclaration, changes) -> ProcessDeclaration:
+    """Copy ``--change space=`` onto the memory claim before the lease is compiled."""
+    space = ""
+    for topic, raw in changes or ():
+        if topic == "space" and str(raw).strip():
+            space = str(raw).strip()
+    if not space:
+        return declaration
+    for part in space.replace(" ", "").split(","):
+        if part not in CLASSES:
+            raise ValueError(f"不认识的记忆类: {part or space}")
+    updated: list[ResourceClaim] = []
+    for claim in declaration.resources:
+        if kind_name(claim.kind) != "memory":
+            updated.append(claim)
+            continue
+        params = dict(claim.call_params)
+        params["space"] = space
+        updated.append(replace(claim, call_params=params))
+    return replace(declaration, resources=tuple(updated))
 
 
 def append_chosen(

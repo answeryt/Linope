@@ -18,7 +18,7 @@ from kernel.resource.resource_contract import kind_name
 class ResourceContext:
     """The process-scoped, serializable view of granted resources."""
 
-    process_id: str
+    pid: int
     capability_id: str
     grants: tuple[ResourceGrant, ...]
     created_at: str
@@ -28,7 +28,7 @@ class ResourceContext:
     def create(
         cls,
         *,
-        process_id: str,
+        pid: int,
         capability_id: str,
         requirements: tuple[ResourceDefinition, ...],
         grants: tuple[ResourceGrant, ...],
@@ -36,7 +36,7 @@ class ResourceContext:
     ) -> "ResourceContext":
         validate_grants(requirements, grants)
         return cls(
-            process_id=process_id,
+            pid=pid,
             capability_id=capability_id,
             grants=grants,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -45,7 +45,7 @@ class ResourceContext:
 
     def payload(self) -> dict[str, Any]:
         return {
-            "process_id": self.process_id,
+            "pid": self.pid,
             "capability_id": self.capability_id,
             "created_at": self.created_at,
             "grants": [grant.payload() for grant in self.grants],
@@ -77,7 +77,7 @@ class ResourceContext:
                 )
             )
         return cls(
-            process_id=str(payload["process_id"]),
+            pid=int(payload["pid"]),
             capability_id=str(payload["capability_id"]),
             grants=tuple(grants),
             created_at=str(payload["created_at"]),
