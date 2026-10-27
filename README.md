@@ -12,7 +12,7 @@ The kernel creates and reclaims these processes, checks permission, and passes r
 
 The same kernel can do different work when the model, tools, prompts, and permissions change. The kernel manages four agent resources: `memory`, `tool`, `sandbox`, and `network`. The CPU, disk, and network devices remain with the host operating system.
 
-[The technical report](linope_technical_report.md) explains why a capability is a process, why there is no parent-child process tree, and how memory and pages fit together.
+[The technical report](<linope-agent-kernel (2).pdf>) explains why a capability is a process, why there is no parent-child process tree, and how memory and pages fit together.
 
 The parts that have not yet been tested in a real environment are listed in [Current Status](status.md).
 

@@ -12,7 +12,7 @@ Linope 是一个 Agent 内核。模型、搜索、文件处理和上下文处理
 
 换模型、工具、提示词和权限，同一套内核可以做不同的事。内核管理四种 Agent 资源：`memory`、`tool`、`sandbox`、`network`。CPU、磁盘和网络设备仍由宿主操作系统管理。
 
-[技术报告](linope_technical_report.zh.md) 讲为什么能力是进程、为什么没有父子进程，以及 memory 和页面怎么配合。
+[技术报告](<linope-agent-kernel.pdf>) 讲为什么能力是进程、为什么没有父子进程，以及 memory 和页面怎么配合。
 
 哪些地方还没在真实环境里跑过，写在 [现状.md](现状.md)。
 
