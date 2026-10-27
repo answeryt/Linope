@@ -1,23 +1,11 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { resolve } from 'node:path'
 
 import { type DisplayEvent, parseEvent } from './events.js'
 
 export type TerminalLink = {
   send: (text: string) => void
   stop: () => void
-}
-
-const repoRoot = () => {
-  const fromLink = resolve(import.meta.dirname, '../..')
-
-  if (existsSync(resolve(fromLink, 'kernel', 'command', '__main__.py'))) {
-    return fromLink
-  }
-
-  return process.cwd()
 }
 
 const pythonCommand = () => process.env.LINOPE_PYTHON?.trim() || process.env.PYTHON?.trim() || 'python'
@@ -37,7 +25,7 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
     pythonCommand(),
     ['-u', '-m', 'kernel.command', 'session'],
     {
-      cwd: repoRoot(),
+      cwd: process.cwd(),
       env: {
         ...process.env,
         PYTHONIOENCODING: 'utf-8',
@@ -66,7 +54,7 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
     }
   })
   onEvent({
-    cwd: repoRoot(),
+    cwd: process.cwd(),
     env: '',
     store: '',
     text: '',

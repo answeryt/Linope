@@ -12,6 +12,12 @@ Linope 是一个 Agent 内核。模型、搜索、文件处理和上下文处理
 
 换模型、工具、提示词和权限，同一套内核可以做不同的事。内核管理四种 Agent 资源：`memory`、`tool`、`sandbox`、`network`。CPU、磁盘和网络设备仍由宿主操作系统管理。
 
+[技术报告](<linope-agent-kernel.pdf>) 讲为什么能力是进程、为什么没有父子进程，以及 memory 和页面怎么配合。
+
+哪些地方还没在真实环境里跑过，写在 [现状.md](现状.md)。
+
+如果你想学习 Linope 的命令行，请阅读[命令行文档](kernel/command/README.cn.md)。
+
 ## 快速开始
 
 需要 Python 3.11 或更高版本。Linope终端还需要 Node.js 20 或更高版本。
@@ -40,11 +46,59 @@ process start tools.ddgs
 
 模型进程只从 `capability/.env` 读取自己卡片上写明的密钥名，例如 `OPENAI_API_KEY`。
 
-## 了解设计
+## 配置模型和 API 地址
 
-[技术报告](linope_technical_report.zh.md) 讲为什么能力是进程、为什么没有父子进程，以及 memory 和页面怎么配合。
+本示例启动的是 `model.openai_chat_model`。它使用 OpenAI Chat 兼容接口。模型名称和 API 地址写在下面这份卡片里：
 
-哪些地方还没在真实环境里跑过，写在 [现状.md](现状.md)。
+```text
+capability/model/model_provider/openai_chat_model/openai_chat_model.json
+```
+
+主要修改这两个字段：
+
+```json
+{
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com"
+}
+```
+
+上面是当前项目的默认值。更换模型时，`model` 填服务商提供的模型 id，`base_url` 填对应的 API 访问地址，以服务商文档为准。`api_key_env` 是环境变量名，默认是 `OPENAI_API_KEY`，通常不用改。
+
+注意：当前项目的进程声明和实际调用分别会读取卡片 JSON 与对应插件里的 `CARD_CONFIG`。因此，修改模型名称或 `base_url` 时，请同步修改：
+
+```text
+capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py
+```
+
+也就是把这两个文件中的 `model`、`base_url` 和 `api_key_env` 保持一致。若使用 Responses 接口，则对应修改：
+
+```text
+capability/model/model_provider/openai_response_model/openai_response_model.json
+capability/model/model_provider/openai_response_model/openai_response_model_plugin.py
+```
+
+## 创建环境变量
+
+环境变量写在：
+
+```text
+capability/.env
+```
+
+如果这个文件不存在，就在仓库根目录下创建它。文件内容是一行一个变量，例如：
+
+```dotenv
+OPENAI_API_KEY=你的API密钥
+```
+
+变量名必须和模型卡片中的 `api_key_env` 一致。进入 Linope 终端后，先执行：
+
+```text
+load env capability/.env
+```
+
+然后再启动模型和工具进程。`.env` 里保存的是密钥，不要把真实密钥写进文档、提交到 Git，或发给其他人。
 
 各目录的说明：
 
@@ -52,5 +106,5 @@ process start tools.ddgs
 |---|---|
 | [kernel/README.cn.md](kernel/README.cn.md) | 进程、资源、调度和命令 |
 | [capability/README.cn.md](capability/README.cn.md) | 模型和工具插件 |
-| [tui/README.cn.md](tui/README.cn.md) | 蓝色终端 |
+| [tui/README.cn.md](tui/README.cn.md) | Linope终端 |
 | [example/README.md](example/README.md) | 一个模型和一个搜索进程 |

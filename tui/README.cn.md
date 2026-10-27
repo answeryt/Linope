@@ -72,7 +72,7 @@
 
 `theme.ts` 是这一套颜色：标志的蓝、边框、框底、正文、较淡的字、提示符和错误。`fg` 给文字上色，然后恢复默认。`fill` 给背景上色。`paint` 给前景上色，并把颜色留在后面的输出上。
 
-`link/session.ts` 是 `startTerminalSession`。它在仓库根目录启动 `python -u -m kernel.command session`，并强制 UTF-8。根目录是含有 `kernel/command/__main__.py` 的那一层。标准输出的每一行都交给 `parseEvent`。不是这些事件的一行，就按普通文字显示。标准错误凑齐一行后，作为一条错误送出。会话开始时先送一个 `session` 事件，里面带着当前目录。进程关掉时，画面先听到 `left`，再听到 `done`。`send` 写出去掉首尾空白的一行。进程已经不在时，画面听到 `The clerk has left`。`stop` 写出 `exit`；这一写失败就杀掉进程。
+`link/session.ts` 是 `startTerminalSession`。它在用户启动 `linope` 时的当前目录启动 `python -u -m kernel.command session`，并强制 UTF-8。解释器先用 `LINOPE_PYTHON`，再用 `PYTHON`，都没有时用 `python`。标准输出的每一行都交给 `parseEvent`。不是这些事件的一行，就按普通文字显示。标准错误凑齐一行后，作为一条错误送出。会话开始时先送一个 `session` 事件，里面带着当前目录。进程关掉时，画面先听到 `left`，再听到 `done`。`send` 写出去掉首尾空白的一行。进程已经不在时，画面听到 `The clerk has left`。`stop` 写出 `exit`；这一写失败就杀掉进程。
 
 `link/events.ts` 是 `parseEvent`。不是以 `{` 开头的一行，就不是事件。带 `type` 的 JSON 对象会变成 `done`、`image`、`session`、`text`、`text-delta`、`status` 或 `error` 中的一种。没有 `href` 的 `image`，以及解析不了的 JSON，会被丢掉。
 

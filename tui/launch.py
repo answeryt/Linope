@@ -29,10 +29,12 @@ def open_tui() -> int:
     if command is None:
         print("Node.js is required to open the Linope terminal.", file=sys.stderr)
         return 1
+    env = os.environ.copy()
+    env["LINOPE_PYTHON"] = sys.executable
     if os.name == "nt":
-        completed = subprocess.run(command)
+        completed = subprocess.run(command, env=env)
         return int(completed.returncode or 0)
-    os.execvp(command[0], command)
+    os.execvpe(command[0], command, env)
     return 1
 
 
