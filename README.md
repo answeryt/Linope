@@ -131,3 +131,7 @@ Directory notes:
 | [capability/README.md](capability/README.md) | Model and tool plugins |
 | [tui/README.md](tui/README.md) | Linope terminal |
 | [example/README.md](example/README.md) | One model process and one search process |
+
+If you find the design philosophy behind this project interesting or inspiring, please consider giving it a star, opening an issue, or submitting a PR.
+
+You’re also welcome to share the Linope project or its technical report on other platforms. Thank you for helping spread the word!
