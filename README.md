@@ -18,7 +18,7 @@ Linope is still under development, at version `0.0.1`. Commands, resource record
 
 ## Run
 
-Python 3.11 or newer is required. The blue terminal also requires Node.js 20 or newer.
+Python 3.11 or newer is required. Linope terminal also requires Node.js 20 or newer.
 
 ### Run from source
 
