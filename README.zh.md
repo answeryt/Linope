@@ -108,3 +108,6 @@ load env capability/.env
 | [capability/README.cn.md](capability/README.cn.md) | 模型和工具插件 |
 | [tui/README.cn.md](tui/README.cn.md) | Linope终端 |
 | [example/README.md](example/README.md) | 一个模型和一个搜索进程 |
+
+如果你觉得这个项目的设计思想有意思，对你有启发，欢迎satr，提交issue和PR。
+也欢迎且感谢大家在别的网站宣传Linope项目或者技术报告。
