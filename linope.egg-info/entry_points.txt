@@ -1,3 +1,0 @@
-[console_scripts]
-linope = tui.launch:main
-linope-install = tui.install:main
