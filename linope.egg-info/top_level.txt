@@ -1,3 +1,0 @@
-capability
-kernel
-tui
