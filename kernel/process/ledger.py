@@ -71,16 +71,16 @@ class ProcessLedger:
 def _check_record(item: dict[str, Any]) -> dict[str, Any]:
     extra = set(item) - _RECORD_KEYS
     if extra:
-        raise ValueError(f"记录里有不该保存的字段: {', '.join(sorted(extra))}")
+        raise ValueError(f"Record has fields that must not be saved: {', '.join(sorted(extra))}")
     missing = _RECORD_KEYS - set(item)
     if missing:
-        raise ValueError(f"记录还缺字段: {', '.join(sorted(missing))}")
+        raise ValueError(f"Record is missing fields: {', '.join(sorted(missing))}")
     leases = []
     for lease in item["leases"]:
         lease_extra = set(lease) - _LEASE_KEYS
         if lease_extra:
             raise ValueError(
-                f"记录里有不该保存的字段: {', '.join(sorted(lease_extra))}"
+                f"Record has fields that must not be saved: {', '.join(sorted(lease_extra))}"
             )
         leases.append(dict(lease))
     return {

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from kernel.command.convention import UsageError, guard
 
-USAGE = "用法: linope load env <路径>"
+USAGE = "usage: linope load env <path>"
 
 
 @guard(USAGE)
@@ -18,7 +18,7 @@ def run(argv: list[str]) -> int:
         path = Path.cwd() / path
     path = path.resolve()
     if not path.is_file():
-        raise UsageError(f"环境文件不存在: {path}")
+        raise UsageError(f"Env file does not exist: {path}")
     from kernel.command.window import current_window
 
     window = current_window()

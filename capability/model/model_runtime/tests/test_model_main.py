@@ -49,6 +49,30 @@ class ModelMainTest(unittest.TestCase):
         self.assertNotIn("base_url", kwargs)
         self.assertIn("pong", stdout.getvalue())
 
+    def test_permission_is_not_forwarded_to_the_model(self) -> None:
+        import asyncio
+
+        main = _load()
+        runtime = SimpleNamespace(
+            call_model=AsyncMock(return_value="ok"),
+            load_interface=lambda _card: SimpleNamespace(parse_response=lambda result: result),
+        )
+        with patch("capability.model.model_runtime.call_model.call_model", runtime.call_model):
+            with patch("capability.model.model_runtime.call_model.load_interface", runtime.load_interface):
+                result = asyncio.run(
+                    main.load_named_card_async(
+                        "openai_chat_model",
+                        "message",
+                        "hello",
+                        {"permission": "read-only", "capabilities": ["read"], "temperature": 0.2},
+                    )
+                )
+        self.assertEqual(result, "ok")
+        kwargs = runtime.call_model.await_args.kwargs
+        self.assertNotIn("permission", kwargs)
+        self.assertNotIn("capabilities", kwargs)
+        self.assertEqual(kwargs["temperature"], 0.2)
+
 
 if __name__ == "__main__":
     unittest.main()

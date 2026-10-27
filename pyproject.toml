@@ -14,5 +14,5 @@ linope = "tui.launch:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tui*", "kernel*", "capability*"]
+include = ["tui*", "kernel*", "capability*", "bindings*"]
 namespaces = true

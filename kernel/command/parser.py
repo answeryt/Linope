@@ -19,7 +19,7 @@ def env_key(raw: str) -> str:
     """Validate an environment key whose value lives in a file."""
     key = raw.strip()
     if not key or "=" in key or "\x00" in key:
-        raise UsageError("命令只写键名，值放在环境文件里")
+        raise UsageError("The command names the key only; the value stays in the env file")
     return key
 
 
@@ -28,10 +28,10 @@ def parse_changes(raw: list[str]) -> tuple[Change, ...]:
     parsed: list[Change] = []
     for item in raw:
         if "=" not in item:
-            raise UsageError("change 的写法是：--change 主题=值")
+            raise UsageError("change is written as --change topic=value")
         topic, value = item.split("=", 1)
         if not topic:
-            raise UsageError("change 的写法是：--change 主题=值")
+            raise UsageError("change is written as --change topic=value")
         parsed.append((topic, value))
     return tuple(parsed)
 
@@ -70,16 +70,16 @@ def parse_flags(
         name, inline = _split_flag(token)
         kind = known.get(name)
         if kind is None:
-            raise UsageError(f"不认识的选项: --{name}")
+            raise UsageError(f"Unknown option: --{name}")
         if kind == "bool":
             if inline is not None:
-                raise UsageError(f"--{name} 不带值")
+                raise UsageError(f"--{name} takes no value")
             values[name] = True
             index += 1
             continue
         if inline is None:
             if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
-                raise UsageError(f"--{name} 后面要写值")
+                raise UsageError(f"--{name} needs a value")
             raw = argv[index + 1]
             index += 2
         else:
@@ -96,7 +96,7 @@ def parse_flags(
     as_json = bool(values.pop("json"))
     keys = tuple(env_key(item) for item in env_values) if isinstance(env_values, list) else ()
     if keys and not env_file:
-        raise UsageError("还没指定环境文件，不能选择键")
+        raise UsageError("No env file given; cannot select keys")
     return (
         tuple(position),
         values,
@@ -118,7 +118,7 @@ def optional_count(raw: object) -> int | None:
         return None
     number = int(raw)
     if number < 1:
-        raise UsageError("份数至少为 1")
+        raise UsageError("Count must be at least 1")
     return number
 
 
@@ -135,10 +135,10 @@ def _coerce(name: str, kind: str, raw: str) -> object:
         try:
             return int(raw)
         except ValueError as exc:
-            raise UsageError(f"--{name} 后面要写整数") from exc
+            raise UsageError(f"--{name} needs an integer") from exc
     if kind == "float":
         try:
             return float(raw)
         except ValueError as exc:
-            raise UsageError(f"--{name} 后面要写数字") from exc
+            raise UsageError(f"--{name} needs a number") from exc
     return raw

@@ -86,9 +86,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('ask_user_question', body, **(call_params or {}))
 
 

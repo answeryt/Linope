@@ -1,38 +1,55 @@
 # thread
 
-`kernel/thread` 是一个能力进程内部的异步优先执行层。
+English | [中文](README.cn.md)
 
-它不创建新的 Agent、资源租约或公开通信地址。`process_id` 仍然是唯一的
-外部身份，线程和异步任务只在进程内部存在。
+`kernel/thread` runs work inside one capability process. Async plugins are awaited on the process's event loop. Sync plugins, blocking SDKs, file operations, and external commands go to a worker pool so the loop can keep moving.
 
-## 执行模型
+`process_id` is the identity outside the process. These scripts do not take a resource lease and do not read resource entity ids. The environment, resource handles, adapter, and `call_params` are the ones the process already prepared. Admission of the loop is [`run_runtime`](../scheduler/README.md) in `kernel/scheduler/threads.py`. The worker pool is [`kernel/load_balancing/workers.py`](../load_balancing/workers.py).
 
-```text
-一个进程内的 asyncio 事件循环
-├── async 插件：直接 await
-└── sync 插件：进入已有的 WorkerPool
-```
+## Scripts
 
-异步模型调用在等待网络时不会占用 OS worker 线程。同步插件、阻塞式 SDK、
-文件操作和外部命令才会进入线程池。人数写在这个进程的账本上
-（`worker_ceiling`、`inflight_ceiling`）。接到下一件活之前，运行时用已有的
-`set_max_workers` 和 `expand_to` 对齐这两个数。没标明可以多线程的同步插件
-仍然只有 1 个帮手。
+| Script | Role |
+|---|---|
+| `__init__.py` | Exports the public names when they are first used |
+| `contracts.py` | The limits, one claimed request, and the inbox the runtime calls |
+| `limiter.py` | How many requests may run at the same time |
+| `runtime.py` | Runs one request: await an async plugin, or hand a sync plugin to the pool |
 
-## 资源和环境
+`__init__.py` exports `ThreadPolicy`, `ClaimedRequest`, `ThreadInbox`, and `ThreadRuntime` through `__getattr__`. The first use imports the module that defines the name, so importing this package does not pull the runtime into the process import graph.
 
-线程共享进程已经初始化的环境、资源句柄、适配器和 `call_params`。线程不
-重复执行 `ProcessEnvironment.apply()`，不申请资源租约，也不直接访问资源
-实体编号。
+`contracts.py` is the shapes.
 
-## 请求语义
+`ThreadPolicy` is the set of numbers for one process. The defaults are one concurrent task and one sync worker. A value outside the allowed range is refused when the policy is built.
 
-请求必须先从进程信箱原子认领，再执行和完成。认领包含 `claim_token` 和租约
-时间；过期认领可以重新排队，旧执行单元不能覆盖新认领的结果。带调度字段的
-请求只有在已经预定、并且放置到这个进程之后才会被认领。
+| Field | Default | Meaning |
+|---|---|---|
+| `max_concurrent_tasks` | 1 | How many requests may be in progress at once, async and sync together |
+| `min_concurrent_tasks` | 1 | Stored with the policy. It must be at least 1 and no higher than the max. Admission in this directory uses the max and the ledger's inflight ceiling |
+| `max_sync_workers` | 1 | How many OS threads the sync pool may use |
+| `claim_lease_seconds` | 120 | Passed to `inbox.claim` as the lease time for one claim |
+| `shutdown_timeout_seconds` | 5 | How long to wait for in-progress requests when the process is stopping |
+| `poll_interval_seconds` | 0.05 | How long the loop sleeps when the inbox has nothing to claim |
+| `session_affinity` | false | When true, requests with the same `session_id` run one after another |
 
-## 停止语义
+`ClaimedRequest` is one request taken from the inbox: `request_id`, `process_id`, `body`, a new `claim_token`, and the `worker_id` that claimed it. `ThreadInbox` is the three calls the runtime uses. `claim` takes the next request for this process, or returns nothing. `complete` writes the reply back with that `claim_token`. `lookup` reads one request by id. The inbox implementation must make `claim` atomic for a process id. `ThreadAdapter` is the optional plugin shape: `handle` for a sync plugin.
 
-进程进入停止状态后，运行时停止认领新请求，取消可取消的异步任务，并等待
-同步线程自然结束或认领租约过期。所有可观察的在途请求处理完毕后，进程才
-关闭适配器并归还进程级资源。
+`limiter.py` is `AsyncTaskLimiter`. It is an asyncio semaphore. `slot` takes one place before a request runs and gives it back when the request finishes. `expand_to` raises the cap. A lower number does not shrink the semaphore. `available` is how many places are free right now. The runtime builds it with `max_concurrent_tasks`.
+
+`runtime.py` is `ThreadRuntime`. `run` hands the loop to `kernel.scheduler.threads.run_runtime`. That loop claims from the inbox, and calls back into this file to run each request, to align the caps, and to drain when the process asks to stop.
+
+One request goes through `_execute_request`. It takes a limiter slot, then `_dispatch`:
+
+| The message | What happens |
+|---|---|
+| `operation` is `ping` | Returns `pong` with this process's pid, the `seq`, and the `channel`. A `pid` in the message that is not this process is an error. |
+| The adapter is async | `handle_async`, or `handle` when that is missing, is awaited on the loop. Waiting on the network does not take an OS worker. |
+| The adapter is sync | `adapter.handle` runs on the `WorkerPool`. The pool must already be started. |
+| There is no adapter | Returns an error, `This process has no load`. |
+
+An async adapter is one with `is_async` set, or a coroutine `handle_async`. A sync adapter that is not marked `sync_thread_safe` gets at most one worker. An async adapter gets no sync workers.
+
+After the first claim, `_align` reads `worker_ceiling` and `inflight_ceiling` from the process ledger. The inflight number, when it is at least 1, raises the limiter through `expand_to`. The worker number is applied with `set_max_workers`, after the sync-plugin cap above.
+
+When `session_affinity` is on, requests that carry the same `session_id` share one lock, so the next one waits until the current one finishes.
+
+`_drain` waits up to `shutdown_timeout_seconds` for the requests already running. Whatever is still running after that is cancelled, and the sync pool is shut down without waiting.

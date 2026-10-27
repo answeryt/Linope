@@ -6,6 +6,7 @@ import sys
 
 from kernel.command.file.create import run as create
 from kernel.command.file.env import run as load_env
+from kernel.command.log import run as show_log
 from kernel.command.process.clerk import run as session
 from kernel.command.process.process import run as process
 from kernel.command.process.talk import run as talk
@@ -17,6 +18,7 @@ COMMANDS = {
     "create": create,
     "list": talk,
     "load": load_env,
+    "log": show_log,
     "ping": talk,
     "process": process,
     "resource": resource,
@@ -36,18 +38,20 @@ def command_table() -> dict:
 def usage() -> str:
     """One line for every object command."""
     lines = (
-        "linope create <路径> [-- 名字=值]",
-        "linope load env <路径>",
-        "linope process start <能力>",
+        "linope create <path> [-- name=value]",
+        "linope load env <path>",
+        "linope process start <capability>",
         "linope process list",
-        "linope process show <进程号> [地址]",
-        "linope process trace <进程号>",
-        "linope service start <进程号> [<进程号> ...]",
+        "linope process show <pid> [address]",
+        "linope process trace <pid>",
+        "linope service start <pid> [<pid> ...]",
+        "linope service load <service id> -- <body>",
         "linope resource serve",
+        "linope log [pid]",
         "linope terminal",
         "linope session",
     )
-    return "用法:\n" + "\n".join(lines)
+    return "usage:\n" + "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:

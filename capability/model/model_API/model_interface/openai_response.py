@@ -240,11 +240,41 @@ def parse_stream_chunk(chunk: Any) -> str:
     return ""
 
 
+def absorb_text(seen: str, piece: str) -> tuple[str, bool]:
+    """Keep one new fragment. A second copy of the whole text so far is not new."""
+    if piece and seen and piece == seen:
+        return seen, False
+    return seen + piece, True
+
+
+class _DropRepeatedText:
+    """Skip a delta that repeats the text this stream already produced."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._seen = ""
+
+    def __aiter__(self) -> _DropRepeatedText:
+        return self
+
+    async def __anext__(self) -> Any:
+        while True:
+            chunk = await anext(self._stream)
+            if getattr(chunk, "type", None) != "response.output_text.delta":
+                return chunk
+            piece = getattr(chunk, "delta", None) or getattr(chunk, "text", None) or ""
+            self._seen, keep = absorb_text(self._seen, str(piece))
+            if keep:
+                return chunk
+
+
 def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
     kind = getattr(chunk, "type", None)
-    if kind in {"response.output_text.delta", "response.output_text.done"}:
+    if kind == "response.output_text.delta":
         text = getattr(chunk, "delta", None) or getattr(chunk, "text", None)
         return [{"type": "text-delta", "text": str(text)}] if text else []
+    if kind == "response.output_text.done":
+        return []
     if kind == "response.function_call_arguments.delta":
         fragment = getattr(chunk, "delta", None) or ""
         return [
@@ -316,7 +346,7 @@ async def call_api(payload: dict[str, Any]) -> Any:
         items = request.get("input_items")
         if items is None:
             items = format_messages(request.get("messages") or [])
-        return await client.responses.create(
+        created = await client.responses.create(
             model=request["model"],
             input=items,
             stream=stream,
@@ -327,5 +357,8 @@ async def call_api(payload: dict[str, Any]) -> Any:
                 request.get("extra_body"),
             ),
         )
+        if stream:
+            return _DropRepeatedText(created)
+        return created
 
     return await _with_recovery(payload, send)

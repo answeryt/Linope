@@ -1,36 +1,41 @@
-# process：平级 OS Process Runtime
+# process: durable Process Runtime and replay
 
-## 词汇
+## Vocabulary
 
-- **Process**：一个 capability 的独立 OS 运行实例，由 `process_id` 寻址。
-- **ProcessDeclaration**：一次进程所需的 capability 和资源声明。
-- **ProcessActivation**：进程启动包，包含 capability、资源句柄、环境和线程策略。
-- **ProcessRuntime**：加载 capability adapter、绑定环境、消费 Channel、调用 ThreadRuntime。
-- **ProcessHandle**：调用方使用的 submit/wait/send 视图。
-- **ProcessMonitor**：无父子语义的启动、停止、存活检查和回收视图。
+- **Process**: A durable function that can be replayed from the journal, not an OS process.
+- **ProcessDefinition**: The stable name, version, and Python Process function.
+- **ProcessActivation**: Input that creates or resumes a Process.
+- **Journal**: Stores command results and errors by run id and command index.
+- **ProcessHandle**: A stable reference for querying or waiting on a child Process across restarts.
 
-## 结构
+## Structure
 
-```text
-ProcessDeclaration
-└── ProcessActivation
-    └── Peer Process
-        └── ThreadRuntime
+```
+Process
+├── Definition / Activation
+├── Process Runtime
+│   ├── Command Interpreter
+│   └── Replay
+├── Journal
+├── Lifecycle / State
+└── Durable Handle
 ```
 
-## 本层拥有
+## This layer owns
 
-- `ProcessDeclaration`
+- `ProcessDefinition`
 - `ProcessActivation`
 - `ProcessRuntime`
+- `Journal`
+- `Lifecycle`
+- `State`
 - `ProcessHandle`
-- `ProcessMonitor` / `ProcessReaper`
-- Process lifecycle and communication
 
-## 架构要求
+## Architecture requirements
 
-1. `process_id` 是唯一公开的 OS Process 身份。
-2. Process 只接收可序列化 Activation，不接收 live Agent 或 Thread。
-3. Process 内部使用 `kernel/thread` 执行异步任务和同步阻塞代码。
-4. ResourcePool 管理租约和句柄；Process Runtime 不拥有全局资源实体。
-5. Durable workflow/replay 如未来需要，应另建 `kernel/run` 或 `kernel/workflow`，不覆盖当前 OS Process 语义。
+1. A Process function replays from a fixed initial input and does not resume a live coroutine.
+2. Each Task, child, or wait writes the journal at a stable command index.
+3. A journal hit returns the old result; a miss is the only time a side effect runs.
+4. A name, version, or input change at the same command index must be rejected as nondeterministic.
+5. A Process expresses causality only through caused_by and does not form a parent-child agent tree.
+6. The Process Runtime depends only on the Store, Queue, Journal, and Executor injected by the host.

@@ -49,9 +49,9 @@ class IdentityDoor:
     def resolve_secret(self, name: str) -> str:
         """Read one named secret from the env file at use time."""
         if not name or "\x00" in name:
-            raise ValueError("密钥名字无效")
+            raise ValueError("Invalid secret name")
         if name not in self.secret_names:
-            raise RuntimeError(f"环境里没有这个密钥: {name}")
+            raise RuntimeError(f"Environment has no such secret: {name}")
         return _read_named_secret(self.secret_file, name)
 
     def scrub_env(self, source: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -94,11 +94,11 @@ def copy_named_secrets(source: str, names: tuple[str, ...], dest: Path) -> None:
 def _read_named_secret(path: str, name: str) -> str:
     """Read one KEY=VALUE line. The value is not kept on the identity door."""
     if not path:
-        raise RuntimeError(f"环境里没有这个密钥: {name}")
+        raise RuntimeError(f"Environment has no such secret: {name}")
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise RuntimeError(f"环境里没有这个密钥: {name}") from exc
+        raise RuntimeError(f"Environment has no such secret: {name}") from exc
     for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -110,4 +110,4 @@ def _read_named_secret(path: str, name: str) -> str:
         if cleaned:
             return cleaned
         break
-    raise RuntimeError(f"环境里没有这个密钥: {name}")
+    raise RuntimeError(f"Environment has no such secret: {name}")

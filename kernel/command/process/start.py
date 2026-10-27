@@ -27,8 +27,8 @@ START_FLAGS = {
     "with": "repeat",
 }
 START_USAGE = (
-    "用法: linope process start <能力> [--change 主题=值] [--count 份数] "
-    "[--share 资源种类] [--with 种类=身份] [--once] [--ping]"
+    "usage: linope process start <capability> [--change topic=value] [--count count] "
+    "[--share resource kind] [--with kind=identity] [--once] [--ping]"
 )
 
 

@@ -9,7 +9,6 @@ def test_resource_kinds_are_only_the_process_resources() -> None:
         "memory",
         "tool",
         "sandbox",
-        "model",
         "network",
     )
 

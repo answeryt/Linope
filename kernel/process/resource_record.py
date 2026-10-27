@@ -85,10 +85,10 @@ class ProcessResourceBook:
     def open(self, pid: int, capability_id: str) -> ProcessResourceRecord:
         pid = int(pid)
         if pid <= 0:
-            raise RuntimeError(f"这个进程号无效: {pid}")
+            raise RuntimeError(f"Invalid pid: {pid}")
         current = self._records.get(pid)
         if current is not None and current.status != RecordStatus.CLOSED:
-            raise RuntimeError(f"这个进程已经有记录: {pid}")
+            raise RuntimeError(f"This process already has a record: {pid}")
         self._forget_activity(pid)
         record = ProcessResourceRecord(
             pid=pid,
@@ -104,7 +104,7 @@ class ProcessResourceBook:
     def _require_open(self, pid: int) -> ProcessResourceRecord:
         record = self._records.get(int(pid))
         if record is None or record.status != RecordStatus.OPENING:
-            raise RuntimeError(f"这个进程没有打开的记录: {pid}")
+            raise RuntimeError(f"This process has no open record: {pid}")
         return record
 
     def attach(

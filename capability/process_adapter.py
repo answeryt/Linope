@@ -62,13 +62,13 @@ class ProcessAdapter:
     def handle(self, request: dict[str, Any]) -> Any:
         operation = request.get("operation")
         if operation != _LOAD:
-            raise ValueError(f"能力进程只接受 load，收到 {operation!r}")
+            raise ValueError(f"A capability process only accepts load, got {operation!r}")
         kind = request.get("kind")
         if not isinstance(kind, str) or not kind:
-            raise ValueError("load 必须带上资源种类")
+            raise ValueError("load must include a resource kind")
         loader = self._loader
         if loader is None:
-            raise LookupError("这个进程没有 load")
+            raise LookupError("This process has no load")
         return loader(kind, request.get("body"), self._call_params)
 
     async def handle_async(self, request: dict[str, Any]) -> Any:
@@ -78,10 +78,10 @@ class ProcessAdapter:
             return self.handle(request)
         operation = request.get("operation")
         if operation != _LOAD:
-            raise ValueError(f"能力进程只接受 load，收到 {operation!r}")
+            raise ValueError(f"A capability process only accepts load, got {operation!r}")
         kind = request.get("kind")
         if not isinstance(kind, str) or not kind:
-            raise ValueError("load 必须带上资源种类")
+            raise ValueError("load must include a resource kind")
         result = loader(kind, request.get("body"), self._call_params)
         return await result if inspect.isawaitable(result) else result
 

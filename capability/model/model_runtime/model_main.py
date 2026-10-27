@@ -39,7 +39,7 @@ def _message_request(body: Any) -> tuple[list[Any], dict[str, Any]]:
         if body.get("tool_choice") not in (None, "", "UNSET"):
             extras["tool_choice"] = body["tool_choice"]
         return list(body["messages"]), extras
-    raise TypeError("prompt 的内容必须是文本或消息")
+    raise TypeError("prompt content must be text or messages")
 
 
 async def _collect(runtime: ModuleType, card_id: str, result: Any) -> Any:
@@ -130,14 +130,17 @@ async def load_named_card_async(
 ) -> Any:
     """Load a prompt without creating a nested event loop per request."""
     if kind != "message":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     from capability.model.model_runtime import call_model as runtime
 
     messages, extras = _message_request(body)
+    forwarded = dict(call_params or {})
+    forwarded.pop("permission", None)
+    forwarded.pop("capabilities", None)
     result = await runtime.call_model(
         card_id,
         messages=messages,
-        **{**dict(call_params or {}), **extras},
+        **{**forwarded, **extras},
     )
     return await _collect(runtime, card_id, result)
 
@@ -187,13 +190,13 @@ def _read_prompt_file(href: str) -> str:
 
     handle = _resource_handle(href)
     if handle is None:
-        raise ValueError("没有这条链接")
+        raise ValueError("No such link")
     locator = _store_locator()
     if not locator.startswith(("file:", "local:")):
-        raise ValueError("提示词地址只从本地账本读取")
+        raise ValueError("Prompt addresses are read only from the local ledger")
     address = _linked_address(_store_path(locator), handle)
     if address is None:
-        raise ValueError("没有这条链接")
+        raise ValueError("No such link")
     return door_for(current_room(), None).read_text(address)
 
 
@@ -253,7 +256,7 @@ def _linked_address(path: Path, handle: str) -> str | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"无法读取本地存储 {path}: {exc}") from exc
+        raise RuntimeError(f"Cannot read local storage {path}: {exc}") from exc
     pages = {}
     if isinstance(payload, dict):
         sections = payload.get("sections")

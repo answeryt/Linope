@@ -14,14 +14,20 @@ import {
   type EditorState
 } from './editor.js'
 import { startTerminalSession, type TerminalLink } from './link/session.js'
+import { bindingFor, type Focus } from './focus.js'
 import {
   helpText,
-  historyRoom,
+  historyHit,
+  historyLayout,
   noteProcessText,
   pushEvent,
   renderScreen,
-  scrollLimit,
+  transcriptRows,
+  applyScroll,
+  followBottom,
+  retainScroll,
   displayWidth,
+  type HistoryScroll,
   type LiveProcess,
   type Turn
 } from './screen.js'
@@ -32,10 +38,11 @@ const turns: Turn[] = []
 let status: 'ready' | 'running' = 'ready'
 let busy = false
 let link: TerminalLink | null = null
-let scroll = 0
+let focus: Focus = 'input'
+let view: HistoryScroll = { scrollY: 0, follow: true }
 let editor: EditorState = createEditor()
 let cwd = process.cwd()
-let clerk: '在' | '离开' = '在'
+let clerk: 'here' | 'away' = 'here'
 let processes: LiveProcess[] = []
 
 const windowSize = () => {
@@ -60,8 +67,10 @@ const screenState = () => ({
   columns: columns(),
   cwd,
   processes,
+  focus,
   rows: termRows(),
-  scroll,
+  scrollY: view.scrollY,
+  follow: view.follow,
   status,
   turns
 })
@@ -70,6 +79,8 @@ let stopping = false
 let lastColumns = 0
 let lastRows = 0
 let resizeTimer: ReturnType<typeof setTimeout> | undefined
+let drawTimer: ReturnType<typeof setTimeout> | undefined
+const DRAW_WAIT_MS = 30
 
 const shutdown = (code: number) => {
   if (stopping) {
@@ -80,6 +91,10 @@ const shutdown = (code: number) => {
   if (resizeTimer) {
     clearTimeout(resizeTimer)
   }
+  if (drawTimer) {
+    clearTimeout(drawTimer)
+    drawTimer = undefined
+  }
 
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false)
@@ -87,7 +102,7 @@ const shutdown = (code: number) => {
 
   link?.stop()
   if (process.stdout.isTTY) {
-    process.stdout.write(`${reset}\x1b[?25h\x1b[?1049l`)
+    process.stdout.write(`${reset}\x1b[?25h\x1b[?1000l\x1b[?1006l\x1b[?1049l`)
   } else {
     process.stdout.write(`${reset}\x1b[?25h\n`)
   }
@@ -95,26 +110,29 @@ const shutdown = (code: number) => {
 }
 
 const draw = () => {
-  setWindowTitle()
+  if (drawTimer) {
+    clearTimeout(drawTimer)
+    drawTimer = undefined
+  }
+
   lastColumns = columns()
   lastRows = termRows()
-  scroll = Math.min(scroll, scrollLimit(screenState()))
-  const frame = renderScreen(screenState())
+  const { total, room } = metrics()
+  view = retainScroll(view, total, room)
+  const frame = renderScreen(screenState()).replaceAll('\n', '\x1b[K\n')
 
-  // Redraw the current full-screen buffer without appending another frame.
-  process.stdout.write(`\x1b[2J\x1b[H${frame}`)
+  // Cover the previous frame from the top. Each line erases its old tail, and
+  // the final erase drops rows the new frame no longer uses.
+  process.stdout.write(`\x1b[H${frame}\x1b[J`)
+  process.stdout.write(fg(focus === 'history' ? theme.muted : theme.accent, '❯ ') + editor.input)
 
-  if (status !== 'ready') {
+  if (focus === 'history') {
+    process.stdout.write('\x1b[?25l')
+
     return
   }
 
-  if (scroll > 0) {
-    process.stdout.write(fg(theme.muted, '  正在查看更早的输出，按 End 回到底部'))
-
-    return
-  }
-
-  process.stdout.write(fg(theme.accent, '❯ ') + editor.input)
+  process.stdout.write('\x1b[?25h')
   const suffix = Array.from(editor.input).slice(editor.cursor).join('')
   const suffixWidth = displayWidth(suffix)
   if (suffixWidth > 0) {
@@ -122,11 +140,30 @@ const draw = () => {
   }
 }
 
-const page = () => historyRoom(screenState())
+const drawSoon = () => {
+  if (drawTimer) {
+    return
+  }
 
-const moveScroll = (delta: number) => {
-  scroll = Math.min(scrollLimit(screenState()), Math.max(0, scroll + delta))
-  draw()
+  drawTimer = setTimeout(() => {
+    drawTimer = undefined
+    if (!stopping) {
+      draw()
+    }
+  }, DRAW_WAIT_MS)
+}
+
+const WHEEL_STEP = 3
+
+const metrics = () => {
+  const layout = historyLayout(screenState())
+
+  return { layout, total: transcriptRows(screenState()), room: layout.historyRows }
+}
+
+const stick = () => {
+  const { total, room } = metrics()
+  view = followBottom(total, room)
 }
 
 const submit = (line: string) => {
@@ -138,7 +175,6 @@ const submit = (line: string) => {
   if (text) {
     editor = recordSubmission(editor, text)
   }
-  scroll = 0
 
   if (!text) {
     draw()
@@ -155,6 +191,7 @@ const submit = (line: string) => {
 
   if (text === '/clear') {
     turns.length = 0
+    stick()
     draw()
 
     return
@@ -162,125 +199,141 @@ const submit = (line: string) => {
 
   if (text === '/help') {
     turns.push({ role: 'system', text: helpText })
+    stick()
     draw()
 
     return
   }
 
   turns.push({ role: 'user', text })
+  stick()
   busy = true
   status = 'running'
   draw()
   link?.send(text)
 }
 
-const onKey = (key: Key) => {
-  if (key.name === 'ctrl-c' || (key.name === 'ctrl-d' && !editor.input)) {
-    shutdown(0)
-
-    return
-  }
-
-  if (key.name === 'page up') {
-    moveScroll(page())
-
-    return
-  }
-
-  if (key.name === 'page down') {
-    moveScroll(-page())
-
-    return
-  }
-
-  if (busy || key.name === 'ignore') {
-    return
-  }
-
+const edit = (key: Key) => {
   if (key.name === 'up') {
     editor = historyUp(editor)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'down') {
     editor = historyDown(editor)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'left') {
     editor = moveCursor(editor, -1)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'right') {
     editor = moveCursor(editor, 1)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'home') {
-    if (scroll > 0) {
-      moveScroll(scrollLimit(screenState()))
-      return
-    }
     editor = moveCursorHome(editor)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'end') {
-    if (scroll > 0) {
-      scroll = 0
-      draw()
-      return
-    }
     editor = moveCursorEnd(editor)
-    scroll = 0
-    draw()
-
-    return
-  }
-
-  if (key.name === 'return') {
-    submit(editor.input)
 
     return
   }
 
   if (key.name === 'backspace') {
     editor = backspace(editor)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'delete') {
     editor = deleteForward(editor)
-    scroll = 0
-    draw()
 
     return
   }
 
   if (key.name === 'char' && key.text >= ' ') {
     editor = insertText(editor, key.text)
-    scroll = 0
-    draw()
   }
+}
+
+const onKey = (key: Key) => {
+  if (key.name === 'wheel-up' || key.name === 'wheel-down') {
+    const { layout, total, room } = metrics()
+
+    if (!historyHit(layout, key.row ?? 0, key.column ?? 0)) {
+      return
+    }
+
+    view = applyScroll(view, key.name === 'wheel-up' ? -WHEEL_STEP : WHEEL_STEP, total, room)
+    draw()
+
+    return
+  }
+
+  const command = bindingFor(focus, key)
+
+  if (command.type === 'quit') {
+    shutdown(0)
+
+    return
+  }
+
+  if (command.type === 'ctrl-d') {
+    if (!editor.input) {
+      shutdown(0)
+    }
+
+    return
+  }
+
+  if (command.type === 'focus') {
+    focus = command.focus
+    draw()
+
+    return
+  }
+
+  if (command.type === 'scroll' || command.type === 'scroll-page' || command.type === 'scroll-edge') {
+    const { total, room } = metrics()
+
+    if (command.type === 'scroll') {
+      view = applyScroll(view, command.delta, total, room)
+    } else if (command.type === 'scroll-page') {
+      view = applyScroll(view, command.direction * room, total, room)
+    } else if (command.edge === 'top') {
+      view = retainScroll({ scrollY: 0, follow: false }, total, room)
+    } else {
+      view = followBottom(total, room)
+    }
+
+    draw()
+
+    return
+  }
+
+  if (busy || (command.type !== 'editor' && command.type !== 'submit')) {
+    return
+  }
+
+  if (command.type === 'submit') {
+    submit(editor.input)
+
+    return
+  }
+
+  edit(command.key)
+  draw()
 }
 
 let pendingInput = ''
@@ -301,7 +354,7 @@ const onData = (chunk: string) => {
 }
 
 if (process.stdin.isTTY) {
-  process.stdout.write('\x1b[?1049h\x1b[2J\x1b[H')
+  process.stdout.write('\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H')
   readline.emitKeypressEvents(process.stdin)
   process.stdin.setRawMode(true)
   process.stdin.setEncoding('utf8')
@@ -339,6 +392,7 @@ process.stdout.on('resize', () => {
   }, 100)
 })
 
+setWindowTitle()
 link = startTerminalSession(event => {
   const next = pushEvent(turns, event)
 
@@ -352,8 +406,8 @@ link = startTerminalSession(event => {
     processes = noteProcessText(processes, event.text)
   }
 
-  if (event.type === 'status' && event.text === '离开') {
-    clerk = '离开'
+  if (event.type === 'status' && event.text === 'left') {
+    clerk = 'away'
     processes = []
   }
 
@@ -366,7 +420,11 @@ link = startTerminalSession(event => {
   }
 
   if (!stopping) {
-    draw()
+    if (event.type === 'text-delta') {
+      drawSoon()
+    } else {
+      draw()
+    }
   }
 })
 draw()

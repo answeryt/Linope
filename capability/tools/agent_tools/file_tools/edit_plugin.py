@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import Any, Optional
 
 
@@ -51,9 +49,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('edit', body, **(call_params or {}))
 
 
@@ -76,29 +74,32 @@ def edit_file(
     replace_all: bool = False,
     workspace: Optional[str] = None,
 ) -> str:
-    path = _resolve(file_path, workspace)
-    if not path.is_file():
-        return _error(f"file not found: {path}")
-    text = path.read_text(encoding="utf-8")
-    count = text.count(old_string)
-    if count == 0:
-        return _error("old_string not found")
-    if not replace_all and count != 1:
-        return _error(f"old_string must appear exactly once (found {count})")
-    updated = text.replace(old_string, new_string) if replace_all else text.replace(old_string, new_string, 1)
-    path.write_text(updated, encoding="utf-8")
+    try:
+        door = _door(workspace)
+        path = door.resolve(file_path, write=False, base=workspace)
+        if not path.is_file():
+            return _error(f"file not found: {path}")
+        text = door.read_text(file_path, base=workspace)
+        count = text.count(old_string)
+        if count == 0:
+            return _error("old_string not found")
+        if not replace_all and count != 1:
+            return _error(f"old_string must appear exactly once (found {count})")
+        updated = text.replace(old_string, new_string) if replace_all else text.replace(old_string, new_string, 1)
+        path = door.write_text(file_path, updated, base=workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
     return json.dumps(
         {"success": True, "path": str(path), "replacements": count if replace_all else 1},
         ensure_ascii=False,
     )
 
 
-def _resolve(file_path: str, workspace: Optional[str]) -> Path:
-    root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
-    candidate = Path(file_path)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    return candidate.resolve()
+def _door(workspace: Optional[str]):
+    from kernel.environment import current_room
+    from kernel.environment.file_io import door_for
+
+    return door_for(current_room(), workspace)
 
 
 def _error(message: str, **details: Any) -> str:

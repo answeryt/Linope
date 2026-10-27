@@ -1,8 +1,8 @@
-# Linope 最小聊天服务示例
+# Linope 最小搜索服务示例
 
-这个示例使用一个模型进程组成最小聊天服务。当前架构没有 `agent create` 或 `service start`：先启动进程，再创建空服务，最后把进程绑定到服务。
+这个示例用一个模型进程和一个搜索进程组成一份服务，然后只用服务编号跟它对话。没有 `service create`、`service bind`、`service call`。
 
-先在两个 PowerShell 窗口中分别启动 TUI：
+先启动 TUI：
 
 ```powershell
 .\linope.cmd terminal
@@ -10,81 +10,53 @@
 
 进入蓝色 TUI 后，下面的命令直接输入，不要再输入 `.\linope.cmd` 前缀。
 
-## 1. 启动模型进程
-
-在第一个 TUI 窗口中执行：
+## 1. 指出环境文件
 
 ```text
-process start model.openai_chat_model --resource-store file:.linope/chat.json
+load env capability/.env
 ```
 
-进程会保持运行，并输出类似下面的进程号：
+`model.openai_chat_model` 从这份文件里只拿 `OPENAI_API_KEY`。
+
+## 2. 启动两个进程
 
 ```text
-process_id=模型进程号
+process start model.openai_chat_model --with memory=search
+process start tools.ddgs
 ```
 
-记下真实的 `process_id`，不要关闭该窗口。
-
-## 2. 创建聊天服务
-
-执行：
+每一份都会打出一行：
 
 ```text
-service create chat --resource-store file:.linope/chat.json
+pid=<数字> capability=<能力名>
 ```
 
-## 3. 绑定模型进程
+记下这两个数字。
 
-把下面的 `实际进程号` 替换成第一步输出的真实 ID，不要输入尖括号或这四个中文占位字：
+## 3. 登记成一份服务
+
+把两个号换成上一步打出的真实进程号：
 
 ```text
-service bind chat --process 实际进程号 --role model --resource-store file:.linope/chat.json
+service start <模型进程号> <搜索进程号>
 ```
 
-查看绑定结果：
+成功时先打 `service=<编号>`，再打每一行 `pid=` 和 `capability=`。
+
+## 4. 跟服务对话
 
 ```text
-service status chat --resource-store file:.linope/chat.json
+service load 1 -- 今天北京天气怎么样
 ```
 
-## 4. 发送聊天消息
+`1` 是上一步打出的服务编号。这一行会交给服务里唯一还开着的模型进程，跟 `load message <模型进程号> -- 今天北京天气怎么样` 完全一样。之后搜什么、什么时候回答，都由模型自己一步步决定。
+
+服务里没有还开着的模型进程，或者不止一个，这一行会被拒绝，并列出相关进程号。
+
+## 5. 结束
 
 ```text
-service call chat --role model --kind message --resource-store file:.linope/chat.json -- 你好，请介绍一下你自己。
+exit
 ```
 
-继续发送一条消息：
-
-```text
-service call chat --role model --kind message --resource-store file:.linope/chat.json -- 请你介绍一下分布式系统。
-```
-
-每次回复都会写入：
-
-```text
-.linope/chat.json
-```
-
-请求和回复位于 `sections.mailbox.requests`。服务成员关系位于 `sections.process.bindings`。
-
-## 账本记录
-
-`.linope/chat.json` 是这个聊天服务的运行账本，不是模型配置文件。它保存四类数据：
-
-- `resource`：资源页、租约和句柄
-- `process`：进程 ID、能力名称、PID、状态和服务绑定
-- `mailbox`：请求、认领状态、回复和用量
-- `channel`：进程间通信方式和端点
-
-账本不会保存 API Key 的值，但会保存聊天正文、模型回复、工作目录和环境变量键名。
-
-## 5. 停止模型进程
-
-把下面的 `实际进程号` 替换成同一个真实 ID：
-
-```text
-process stop 实际进程号 --resource-store file:.linope/chat.json
-```
-
-`service delete` 只删除服务和绑定关系，不负责停止进程。
+窗口里的进程一起停掉。`.linope/services.json` 里的名单还在，但这些号不再是还开着的进程。

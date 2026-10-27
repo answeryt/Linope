@@ -76,9 +76,9 @@ def require_confined_mode(mode: str) -> str:
 def load(kind, body, call_params=None):
     """Load a sandbox execution policy. The mode stays in this package."""
     if kind != "sandbox":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("sandbox 的内容必须是映射")
+        raise TypeError("sandbox content must be a mapping")
     extras = dict(call_params or {})
     return execution_policy(
         str(body.get("mode") or ""),

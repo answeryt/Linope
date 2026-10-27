@@ -32,13 +32,13 @@ def test_two_starts_return_before_the_window_closes(tmp_path: Path, capsys, monk
 def test_create_writes_a_file_without_leaving_the_window(tmp_path: Path, capsys, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     clerk = Clerk()
-    assert clerk.serve(lines=["create 英语Agent.md", "linope create 另一份.txt", "exit"]) == 0
-    assert (tmp_path / "英语Agent.md").is_file()
-    assert (tmp_path / "另一份.txt").is_file()
+    assert clerk.serve(lines=["create EnglishAgent.md", "linope create another.txt", "exit"]) == 0
+    assert (tmp_path / "EnglishAgent.md").is_file()
+    assert (tmp_path / "another.txt").is_file()
     output = capsys.readouterr().out
-    assert "英语Agent.md" in output
-    assert "另一份.txt" in output
-    assert "load <种类>" not in output
+    assert "EnglishAgent.md" in output
+    assert "another.txt" in output
+    assert "load <kind>" not in output
 
 
 def test_a_one_shot_start_still_waits(monkeypatch) -> None:
@@ -65,7 +65,7 @@ def test_ask_reaches_the_living_window(tmp_path: Path, capsys, monkeypatch) -> N
         clerk.serve(
             lines=[
                 "process start tools.read",
-                "ask missing -- 读一下",
+                "ask missing -- read this",
                 "exit",
             ]
         )
@@ -73,13 +73,26 @@ def test_ask_reaches_the_living_window(tmp_path: Path, capsys, monkeypatch) -> N
     )
     captured = capsys.readouterr()
     assert "linope create" not in captured.err
-    assert "完整进程号" in captured.err
+    assert "full pid" in captured.err
+
+
+def test_a_typed_line_and_exit_are_journaled(tmp_path: Path, monkeypatch, capsys) -> None:
+    from kernel.trace.journal import Journal, journal_path
+
+    monkeypatch.chdir(tmp_path)
+    clerk = Clerk()
+    assert clerk.serve(lines=["list", "exit"]) == 0
+    capsys.readouterr()
+    rows = Journal(journal_path()).rows()
+    assert [row["text"] for row in rows] == ["list", "exit"]
+    assert all(row["kind"] == "line" for row in rows)
+    assert all("pid" not in row for row in rows)
 
 
 def test_an_unknown_line_uses_the_command_table(capsys) -> None:
     clerk = Clerk()
-    assert clerk.serve(lines=["没有这条", "exit"]) == 0
+    assert clerk.serve(lines=["no such line", "exit"]) == 0
     captured = capsys.readouterr()
     assert "linope create" in captured.err
-    assert "load <种类>" not in captured.err
-    assert "load <种类>" not in captured.out
+    assert "load <kind>" not in captured.err
+    assert "load <kind>" not in captured.out

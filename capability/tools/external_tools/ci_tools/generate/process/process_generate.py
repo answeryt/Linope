@@ -23,11 +23,11 @@ FORMAT_ORDER = ("json", "yaml", "toml", "md")
 FORMAT_ALIASES = {"yml": "yaml", "markdown": "md"}
 
 VOCABULARY = {
-    "Process": "可从 journal 重放的 durable function，不是 OS 进程。",
-    "ProcessDefinition": "稳定名称、版本与 Python Process Function 的定义。",
-    "ProcessActivation": "创建或恢复 Process 的输入。",
-    "Journal": "按 run ID 与 command index 保存命令结果和错误。",
-    "ProcessHandle": "跨重启查询或等待子 Process 的稳定引用。",
+    "Process": "A durable function that can be replayed from the journal, not an OS process.",
+    "ProcessDefinition": "The stable name, version, and Python Process function.",
+    "ProcessActivation": "Input that creates or resumes a Process.",
+    "Journal": "Stores command results and errors by run id and command index.",
+    "ProcessHandle": "A stable reference for querying or waiting on a child Process across restarts.",
 }
 
 TREE = """\
@@ -44,7 +44,7 @@ Process
 ARCHITECTURE: dict[str, Any] = {
     "layer": "process",
     "role": "durable_runtime",
-    "title": "process：持久 Process Runtime 与 Replay",
+    "title": "process: durable Process Runtime and replay",
     "vocabulary": VOCABULARY,
     "tree": TREE,
     "owns": [
@@ -57,12 +57,12 @@ ARCHITECTURE: dict[str, Any] = {
         "ProcessHandle",
     ],
     "requirements": [
-        "Process Function 从固定初始输入开始重放，不恢复 live coroutine。",
-        "每个 Task、child 或 wait 使用稳定 command index 写入 Journal。",
-        "Journal 命中时返回旧结果，未命中时才执行副作用。",
-        "同一 command index 的名称、版本或输入变化必须拒绝为非确定性。",
-        "Process 只通过 caused_by 表达因果关系，不形成主从 Agent 树。",
-        "Process Runtime 只依赖 Host 注入的 Store、Queue、Journal 和 Executor。",
+        "A Process function replays from a fixed initial input and does not resume a live coroutine.",
+        "Each Task, child, or wait writes the journal at a stable command index.",
+        "A journal hit returns the old result; a miss is the only time a side effect runs.",
+        "A name, version, or input change at the same command index must be rejected as nondeterministic.",
+        "A Process expresses causality only through caused_by and does not form a parent-child agent tree.",
+        "The Process Runtime depends only on the Store, Queue, Journal, and Executor injected by the host.",
     ],
 }
 
@@ -140,13 +140,13 @@ def _render(payload: dict[str, Any], fmt: str) -> str:
 
 
 def _render_md(payload: dict[str, Any]) -> str:
-    lines = [f"# {payload['title']}", "", "## 词汇", ""]
+    lines = [f"# {payload['title']}", "", "## Vocabulary", ""]
     for key, value in payload["vocabulary"].items():
-        lines.append(f"- **{key}**：{value}")
-    lines.extend(["", "## 结构", "", "```", payload["tree"], "```", "", "## 本层拥有", ""])
+        lines.append(f"- **{key}**: {value}")
+    lines.extend(["", "## Structure", "", "```", payload["tree"], "```", "", "## This layer owns", ""])
     for item in payload["owns"]:
         lines.append(f"- `{item}`")
-    lines.extend(["", "## 架构要求", ""])
+    lines.extend(["", "## Architecture requirements", ""])
     for index, item in enumerate(payload["requirements"], start=1):
         lines.append(f"{index}. {item}")
     lines.append("")

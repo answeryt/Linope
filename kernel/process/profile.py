@@ -14,7 +14,7 @@ class ProfileUnavailable(Exception):
     """The capability has no usable profile. Raised before the reconciler."""
 
     def __init__(self, capability_id: str) -> None:
-        super().__init__(f"这个能力没有可用档案: {capability_id}")
+        super().__init__(f"This capability has no usable profile: {capability_id}")
         self.capability_id = capability_id
 
 

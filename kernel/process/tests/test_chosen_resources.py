@@ -44,27 +44,27 @@ def test_with_adds_memory_beside_the_model_defaults(tmp_path: Path) -> None:
         pid=301,
     )
     kinds = [kind_name(grant.kind) for grant in process.activation.grants]
-    assert kinds == ["model", "network", "memory"]
-    memory = process.activation.grants[2]
+    assert kinds == ["network", "memory"]
+    memory = process.activation.grants[1]
     assert memory.metadata["identity"]["scope"] == "chat"
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert '"scope": "chat"' in saved or '"scope":"chat"' in saved
 
 
 def test_with_cannot_replace_a_default_resource() -> None:
-    with pytest.raises(ValueError, match="不能改默认资源: network"):
-        append_chosen(_model_declaration(), ("network=别的",))
+    with pytest.raises(ValueError, match="Cannot change the default resource: network"):
+        append_chosen(_model_declaration(), ("network=other",))
 
 
 def test_with_requires_an_identity() -> None:
-    with pytest.raises(ValueError, match="还缺身份"):
+    with pytest.raises(ValueError, match="Missing identity"):
         append_chosen(_model_declaration(), ("memory",))
 
 
-def test_a_kind_with_two_identity_fields_is_refused() -> None:
+def test_model_is_not_a_resource() -> None:
     declaration = ProcessDeclaration(
         capability="sample.capability",
         resources=(ResourceClaim(kind="tool", identity={"id": "files"}),),
     )
-    with pytest.raises(ValueError, match="model 还缺身份"):
+    with pytest.raises(ValueError, match="Unknown resource: model"):
         append_chosen(declaration, ("model=openai",))

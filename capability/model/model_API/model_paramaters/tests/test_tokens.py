@@ -25,7 +25,7 @@ class TokensTest(unittest.TestCase):
     def test_ascii_and_cjk_text_estimates(self) -> None:
         self.assertEqual(self.tokens.estimate_text_tokens_rough(""), 0)
         self.assertEqual(self.tokens.estimate_text_tokens_rough("abcd"), 1)
-        self.assertEqual(self.tokens.estimate_text_tokens_rough("你好"), 2)
+        self.assertEqual(self.tokens.estimate_text_tokens_rough("\uac00\uac01"), 2)
 
     def test_image_count_uses_fixed_cost(self) -> None:
         message = {

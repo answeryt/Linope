@@ -104,8 +104,8 @@ class MCPRuntime:
                 rendered = outcome
                 break
         if rendered is None:
-            known = ", ".join(record.name for record in manager.records()) or "无"
-            raise LookupError(f"MCP 工具 {name!r} 不在已连接的服务器上。已有: {known}")
+            known = ", ".join(record.name for record in manager.records()) or "none"
+            raise LookupError(f"MCP tool {name!r} is not on a connected server. Available: {known}")
         if "error" in rendered and "result" not in rendered:
             rendered = {"success": False, **rendered}
         else:
@@ -130,7 +130,7 @@ def _transport(name: str) -> Any:
         return _plugin("linope_mcp_stdio", "mcp_transport/stdio.py")
     if name == "streamable_http":
         return _plugin("linope_mcp_http", "mcp_transport/streamable_http.py")
-    raise RuntimeError(f"没有这种 MCP 通道: {name}")
+    raise RuntimeError(f"No such MCP transport: {name}")
 
 
 def _prepare(config: dict[str, Any]) -> dict[str, Any]:
@@ -190,7 +190,7 @@ def _plugin(name: str, relative: str) -> Any:
     path = _DIR / relative
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"打不开 MCP 插件: {path}")
+        raise RuntimeError(f"Cannot open the MCP plugin: {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     try:

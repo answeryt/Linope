@@ -56,14 +56,14 @@ def test_address_zero_can_differ_and_still_share_one_real_name(tmp_path: Path) -
         shared=("memory",),
         pid=201,
     )
-    assert remember(pool, first.activation.grants, "user", "第一句") == "chat/message/0"
+    assert remember(pool, first.activation.grants, "user", "first line") == "chat/message/0"
     second = reconciler.start(
         _memory("message"),
         definition=_definition(),
         shared=("memory",),
         pid=202,
     )
-    assert remember(pool, first.activation.grants, "user", "第二句") == "chat/message/1"
+    assert remember(pool, first.activation.grants, "user", "second line") == "chat/message/1"
 
     first_items = memory_contents(pool, first.activation.grants)["items"]
     second_items = memory_contents(pool, second.activation.grants)["items"]
@@ -71,13 +71,13 @@ def test_address_zero_can_differ_and_still_share_one_real_name(tmp_path: Path) -
     assert second_items[0]["address"] == "message/0"
     assert first_items[0]["real"] != second_items[0]["real"]
     assert first_items[1]["real"] == second_items[0]["real"]
-    assert first_items[1]["content"] == "第二句"
-    assert second_items[0]["content"] == "第二句"
+    assert first_items[1]["content"] == "second line"
+    assert second_items[0]["content"] == "second line"
     assert first_items[0]["time"]
     assert second_items[0]["time"] >= first_items[0]["time"]
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
-    assert "第一句" not in saved
-    assert "第二句" not in saved
+    assert "first line" not in saved
+    assert "second line" not in saved
     first.stop()
     second.stop()
 
@@ -91,8 +91,8 @@ def test_a_class_outside_the_space_is_refused(tmp_path: Path) -> None:
         pid=203,
     )
     with pytest.raises(PermissionError):
-        remember(pool, process.activation.grants, "user", "不该看见")
-    assert remember(pool, process.activation.grants, "tool", "结果") == "chat/artifact/0"
+        remember(pool, process.activation.grants, "user", "should not see")
+    assert remember(pool, process.activation.grants, "tool", "result") == "chat/artifact/0"
     assert _reals(pool, process) == ["artifact/0"]
     with pytest.raises(PermissionError):
         memory_contents(pool, process.activation.grants, "message")
@@ -104,11 +104,11 @@ def test_a_class_outside_the_space_is_refused(tmp_path: Path) -> None:
 def test_a_written_range_reads_only_those_addresses(tmp_path: Path) -> None:
     pool, reconciler = _open(tmp_path)
     process = reconciler.start(_memory("message,task"), definition=_definition(), pid=204)
-    for text in ("甲", "乙", "丙"):
+    for text in ("A", "B", "C"):
         remember(pool, process.activation.grants, "user", text)
-    remember(pool, process.activation.grants, "other", "任务")
+    remember(pool, process.activation.grants, "other", "task")
     contents = memory_contents(pool, process.activation.grants, "message/0-1 task/0")
-    assert [item["content"] for item in contents["items"]] == ["甲", "乙", "任务"]
+    assert [item["content"] for item in contents["items"]] == ["A", "B", "task"]
     assert [item["address"] for item in contents["items"]] == [
         "message/0",
         "message/1",
@@ -127,34 +127,36 @@ def test_the_old_name_check_still_refuses_another_scope(tmp_path: Path) -> None:
     process.stop()
 
 
-def test_a_named_address_reads_the_other_memory(tmp_path: Path) -> None:
+def test_a_named_address_stays_inside_the_pointer_space(tmp_path: Path) -> None:
+    from kernel.scheduler.memory_space import PointerSpace, authorize_resource
+
     pool, reconciler = _open(tmp_path)
     chat = reconciler.start(_memory("message", "chat"), definition=_definition(), pid=206)
     hello = reconciler.start(_memory("message", "hello"), definition=_definition(), pid=207)
-    remember(pool, chat.activation.grants, "user", "你好")
+    remember(pool, chat.activation.grants, "user", "hello")
     remember(pool, hello.activation.grants, "user", "hello")
 
     own = memory_contents(pool, chat.activation.grants)
-    assert [item["content"] for item in own["items"]] == ["你好"]
+    assert [item["content"] for item in own["items"]] == ["hello"]
     assert own["items"][0]["name"] == "chat"
+    named = memory_contents(pool, chat.activation.grants, "chat/message/0")
+    assert [item["content"] for item in named["items"]] == ["hello"]
 
-    other = memory_contents(pool, chat.activation.grants, "hello/message/0")
-    assert other["items"] == [
-        {
-            "address": "hello/message/0",
-            "real": "message/0",
-            "name": "hello",
-            "kind": "user",
-            "content": "hello",
-            "time": other["items"][0]["time"],
-            "seq": 1,
-        }
-    ]
-    whole = memory_contents(pool, chat.activation.grants, "hello")
-    assert [item["content"] for item in whole["items"]] == ["hello"]
-    with pytest.raises(ValueError, match="没有这份记忆"):
+    with pytest.raises(PermissionError, match="address space"):
+        memory_contents(pool, chat.activation.grants, "hello/message/0")
+    with pytest.raises(PermissionError, match="address space"):
+        memory_contents(pool, chat.activation.grants, "hello")
+    with pytest.raises(PermissionError, match="address space"):
         memory_contents(pool, chat.activation.grants, "missing/message/0")
     with pytest.raises(PermissionError):
         memory_contents(pool, chat.activation.grants, "hello/artifact/0")
+    with pytest.raises(PermissionError, match="address space"):
+        authorize_resource(chat.activation.grants, hello.activation.grants[0].resource_id)
+
+    rebuilt = PointerSpace.from_grants(chat.pid, chat.activation.grants)
+    assert rebuilt.own() is not None
+    assert rebuilt.own().scope == "chat"
+    assert rebuilt.own().classes == ("message",)
+    assert rebuilt.for_scope("hello") is None
     chat.stop()
     hello.stop()

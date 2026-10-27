@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -41,9 +40,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('read_image', body, **(call_params or {}))
 
 
@@ -77,11 +76,14 @@ def read_image(file_path: str, workspace: Optional[str] = None) -> str:
 
 
 def _resolve(file_path: str, workspace: Optional[str]) -> Path:
-    root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
-    candidate = Path(file_path)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    return candidate.resolve()
+    from kernel.environment import current_room
+    from kernel.environment.file_io import door_for
+
+    return door_for(current_room(), workspace).resolve(
+        file_path,
+        write=False,
+        base=workspace,
+    )
 
 
 def _error(message: str, **details: Any) -> str:

@@ -39,7 +39,7 @@ export function parseEvent(line: string): DisplayEvent | null {
     if (payload.type === 'session') {
       return {
         cwd: textOf(payload.cwd),
-        env: textOf(payload.env) || '未配置',
+        env: textOf(payload.env) || 'unset',
         store: textOf(payload.store),
         text: textOf(payload.text),
         type: 'session'

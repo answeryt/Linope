@@ -1,11 +1,10 @@
 # Sliding-window compression atomic functions
 
-本目录是无 Host、无 facade 的原子函数集合。它们不是 compose 自动发现的
-capability；当前由 Host 显式 import 和组合。函数只处理
-`list[dict]` 消息；彼此没有项目内 import，也不依赖
-`semantic_compression`、`summary_compression` 或 `model/token`。
+English | [中文](README.cn.md)
 
-## 文件与 API
+This directory is a set of atomic functions with no facade. `load` selects one of them through [`load_in_directory`](../../README.md). A host may also import them and combine them. Functions handle only `list[dict]` messages. They do not import each other, and they do not import `semantic_compression`, `summary_compression`, or the token estimators.
+
+## Files and API
 
 - `head_protection.py`
   - `restart_handoff_probe_bounds(...)`
@@ -33,34 +32,36 @@ capability；当前由 Host 显式 import 和组合。函数只处理
 - `preflight.py`
   - `has_compressible_window(...)`
 
-## 调用方必须注入的策略
+## Policy the caller must inject
 
-未来 Host 负责导入这些模块并绑定策略函数：
+The host is responsible for importing these modules and binding policy functions:
 
 1. `estimate_message_tokens(message) -> int`
-   - `tail_token_cut` 强制注入此 callable；
-   - 本目录不提供任何 token 计算或估算实现。
-2. 摘要识别：
+   - `tail_token_cut` requires this callable.
+   - This directory provides no token counting or estimation.
+2. Summary recognition:
    - `is_context_summary_content(content) -> bool`
    - `is_context_summary_message(message) -> bool`
    - `has_compressed_summary_metadata(message) -> bool`
    - `is_synthetic_compression_user_turn(message) -> bool`
-3. 组合函数：
-   - tool-group 前向/后向对齐；
-   - last user、last assistant、last-N users anchor；
-   - turn-pair end；
-   - head size 与 tail cut。
+3. Composition:
+   - forward and backward alignment of a tool group
+   - last user, last assistant, and last-N users anchors
+   - turn-pair end
+   - head size and tail cut
 
-注入使消息格式判定、token 策略及组合顺序留在 Host，同时每个插件可单独测试。
+Injection keeps message-format decisions, token policy, and composition order in the host, while each plugin can be tested alone.
 
-## 关键边界
+## Important boundaries
 
-- 首次压缩保护 `system + protect_first_n`；已有压缩或恢复头部出现 handoff
-  后，`protect_first_n` 衰减为零。
-- tool result 组不会被边界切开。
-- 空 user 行仅在其后紧接 assistant 时视为可删除的平台 echo。
-- 尾部 token cut 保留原 1.5 倍软上限、消息数下限、raw-budget 重走和
-  progress floor；最后必须前向对齐，避免 floor 再次切入 tool group。
-- latest user 的 head-floor 冲突通过完整 turn-pair 前推解决，避免已完成任务
-  被压成 pending ask。
-- preflight 只判断 `compress_start < compress_end`，不修改消息。
+- The first compression protects `system + protect_first_n`. After an existing compression, or after a handoff appears in a restored head, `protect_first_n` decays to zero.
+- A tool-result group is not cut at a boundary.
+- A blank user line counts as a removable platform echo only when an assistant message follows it immediately.
+- The tail token cut keeps the original 1.5x soft cap, the minimum message count, the raw-budget retry, and the progress floor. The last step must align forward, so the floor does not cut into a tool group again.
+- A head-floor conflict on the latest user is resolved by pushing a whole turn pair forward, so a finished task is not compressed into a pending ask.
+- Preflight only checks `compress_start < compress_end`. It does not modify messages.
+
+## Known Limitations and Deferred Work
+
+- **The host picks the function** — `load` calls `load_in_directory` on this folder. The body keys must match exactly one public function. These modules do not import each other, so there is no pipeline object here.
+- **No token counter** — `tail_token_cut` uses the estimator the caller passes. This directory does not import [`tokens`](../../../model/model_API/model_paramaters/tokens/README.md).

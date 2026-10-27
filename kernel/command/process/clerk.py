@@ -77,6 +77,7 @@ class Clerk:
         if not text:
             _done()
             return False
+        _note_line(self, text)
         if text in {"exit", "quit"}:
             _done()
             return True
@@ -141,7 +142,7 @@ class Clerk:
                 flush=True,
             )
         if parsed[2] and not _startup_ping(_Batch(tuple(batch)), PING_TIMEOUT):
-            print("这个进程没答", file=sys.stderr)
+            print("This process did not answer", file=sys.stderr)
             for process in batch:
                 process.stop()
             return ()
@@ -185,17 +186,27 @@ def serve(lines: Any = None) -> int:
     return Clerk().serve(lines)
 
 
-@guard("用法: linope session")
+@guard("usage: linope session")
 def run(argv: list[str]) -> int:
     """Open the one window. ``linope terminal`` uses this same entry."""
     from kernel.command.window import current_window
 
     if current_window() is not None:
-        print("已经在终端里", flush=True)
+        print("Already in the terminal", flush=True)
         return 0
     if argv:
-        raise UsageError("用法: linope session")
+        raise UsageError("usage: linope session")
     return serve()
+
+
+def _note_line(clerk: Clerk, text: str) -> None:
+    """The line a person typed. It has no pid, so `log` without a pid is what shows it."""
+    from kernel.trace.journal import Journal, journal_beside, journal_path
+
+    book = clerk._book
+    ledger = getattr(book, "_ledger", None) if book is not None else None
+    path = journal_path() if ledger is None else journal_beside(ledger.path)
+    Journal(path).append({"kind": "line", "text": text})
 
 
 def _done() -> None:

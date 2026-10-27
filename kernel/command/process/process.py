@@ -15,11 +15,11 @@ from kernel.command.process.start import START_USAGE, run as start_capability
 from kernel.command.window import current_window
 
 USAGE = (
-    "用法: linope process start <能力> [--change 主题=值] [--count 份数] "
-    "[--share 资源种类] [--with 种类=身份] [--once] [--ping]\n"
+    "usage: linope process start <capability> [--change topic=value] [--count count] "
+    "[--share resource kind] [--with kind=identity] [--once] [--ping]\n"
     "      linope process list\n"
-    "      linope process show <进程号> [地址]\n"
-    "      linope process trace <进程号>"
+    "      linope process show <pid> [address]\n"
+    "      linope process trace <pid>"
 )
 
 

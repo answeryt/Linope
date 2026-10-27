@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import tempfile
+from dataclasses import dataclass
+from enum import StrEnum
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,19 +25,41 @@ from kernel.hypermedia.uri import (
     parse_content_uri,
     parse_resource_uri,
 )
-from kernel.process.ledger import open_store
-from kernel.resource.memory.page import Page, PageState
-from kernel.resource.store.locator import local_path, normalize_locator
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 0
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+_DEFAULT_STORE = "file:.linope/resources.json"
+
+
+class PageState(StrEnum):
+    RESIDENT = "resident"
+    PINNED = "pinned"
+    SWAPPED = "swapped"
+
+
+@dataclass(frozen=True)
+class Page:
+    """One file page recorded in the local resource ledger."""
+
+    address: str
+    size: int = 0
+    state: PageState = PageState.RESIDENT
+
+    def __post_init__(self) -> None:
+        if not self.address:
+            raise ValueError("representation address is required")
+        if self.size < 0:
+            raise ValueError("representation size cannot be negative")
+
+    def with_state(self, state: PageState) -> Page:
+        return Page(address=self.address, size=self.size, state=state)
 
 
 def server_state_path(store_path: str | Path) -> Path:
-    locator = normalize_locator(store_path)
+    locator = _normalize_locator(store_path)
     if locator.startswith(("file:", "local:")):
-        return local_path(locator).resolve().parent / "http-server.json"
+        return _local_path(locator).resolve().parent / "http-server.json"
     return Path(".linope").resolve() / "http-server.json"
 
 
@@ -44,7 +69,7 @@ def running_server_base(store_path: str | Path) -> str | None:
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if normalize_locator(str(state.get("resource_store", ""))) != normalize_locator(
+    if _normalize_locator(str(state.get("resource_store", ""))) != _normalize_locator(
         store_path
     ):
         return None
@@ -98,7 +123,7 @@ class _ResourceHandler(BaseHTTPRequestHandler):
         self._serve_action(handle, action, base_url)
 
     def _serve_resource(self, handle: str, base_url: str) -> None:
-        store = open_store(self.server.store_locator)
+        store = _open_store(self.server.store_locator)
         try:
             found = store.link_at(handle)
             if found is None:
@@ -110,7 +135,7 @@ class _ResourceHandler(BaseHTTPRequestHandler):
             store.close()
 
     def _serve_content(self, handle: str, base_url: str) -> None:
-        store = open_store(self.server.store_locator)
+        store = _open_store(self.server.store_locator)
         try:
             found = store.link_at(handle)
             if found is None:
@@ -148,7 +173,7 @@ class _ResourceHandler(BaseHTTPRequestHandler):
             store.close()
 
     def _serve_action(self, handle: str, action: str, base_url: str) -> None:
-        store = open_store(self.server.store_locator)
+        store = _open_store(self.server.store_locator)
         try:
             found = store.link_at(handle)
             if found is None:
@@ -196,10 +221,10 @@ def serve_resources(
 ) -> None:
     """Serve one local resource store on a loopback address."""
     if host not in _LOOPBACK:
-        raise ValueError("资源服务只能监听本机回环地址")
-    locator = normalize_locator(store_path)
+        raise ValueError("The resource service can only listen on the loopback address")
+    locator = _normalize_locator(store_path)
     if locator.startswith("memory:"):
-        raise ValueError("内存存储不能启动独立 HTTP 服务")
+        raise ValueError("The memory store cannot start a standalone HTTP service")
     state_path = server_state_path(locator)
     if running_server_base(locator) is not None:
         raise RuntimeError("resource server already running")
@@ -214,7 +239,7 @@ def serve_resources(
             "resource_store": locator,
         },
     )
-    print(f"资源服务监听 {host}:{actual_port}", flush=True)
+    print(f"Resource service listening on {host}:{actual_port}", flush=True)
     try:
         server.serve_forever()
     finally:
@@ -259,3 +284,173 @@ def _remove_state(path: Path) -> None:
         path.unlink()
     except OSError:
         pass
+
+
+def _normalize_locator(value: str | Path | None) -> str:
+    """A file locator. An empty value uses the project ledger."""
+    raw = "" if value is None else str(value).strip()
+    if not raw:
+        raw = os.environ.get("LINOPE_RESOURCE_STORE", "").strip()
+    if not raw:
+        raw = str(_project_config().get("resource_store") or "").strip()
+    if not raw:
+        raw = _DEFAULT_STORE
+    if re.match(r"^[A-Za-z][A-Za-z0-9+._-]*:", raw) is not None and not (
+        len(raw) >= 2 and raw[1] == ":"
+    ):
+        return raw
+    return f"file:{raw}"
+
+
+def _local_path(locator: str | Path) -> Path:
+    from kernel.process.process_creat.instances import repo_root
+
+    raw = str(locator)
+    if raw.startswith(("file:", "local:")):
+        raw = raw.split(":", 1)[1]
+    if raw.startswith("//"):
+        raw = raw[2:]
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = repo_root() / path
+    return path
+
+
+def _project_config() -> dict[str, Any]:
+    from kernel.process.process_creat.instances import repo_root
+
+    path = repo_root() / ".linope" / "config.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+class _PageStore:
+    """The page slice of one local resource ledger."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def close(self) -> None:
+        return None
+
+    def link_at(self, handle: str) -> tuple[Page, Link] | None:
+        if not handle:
+            return None
+        for page, link in _read_pages(self.path):
+            if link.handle == handle:
+                return page, link
+        return None
+
+    def save_page(self, page: Page, link: Link) -> None:
+        payload = _read_ledger(self.path)
+        pages = _ensure_pages(payload)
+        key = _page_key(pages, page, link)
+        current = pages.get(key)
+        raw_page: dict[str, Any] = {}
+        raw_link: dict[str, Any] = {}
+        if isinstance(current, dict):
+            if isinstance(current.get("page"), dict):
+                raw_page = dict(current["page"])
+            if isinstance(current.get("link"), dict):
+                raw_link = dict(current["link"])
+        raw_page["address"] = page.address
+        raw_page["size"] = page.size
+        raw_page["state"] = page.state.value
+        raw_link["relation"] = link.relation
+        raw_link["resource_id"] = link.resource_id
+        raw_link["handle"] = link.handle
+        pages[key] = {"page": raw_page, "link": raw_link}
+        _write_state(self.path, payload)
+
+
+def _open_store(locator: str) -> _PageStore:
+    normalized = _normalize_locator(locator)
+    if not normalized.startswith(("file:", "local:")):
+        raise ValueError("The resource service only reads the local ledger")
+    return _PageStore(_local_path(normalized))
+
+
+def _read_ledger(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cannot read local storage {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Cannot read local storage {path}: the ledger is not an object")
+    return payload
+
+
+def _ensure_pages(payload: dict[str, Any]) -> dict[str, Any]:
+    sections = payload.get("sections")
+    if not isinstance(sections, dict):
+        sections = {}
+        payload["sections"] = sections
+    resource = sections.get("resource")
+    if not isinstance(resource, dict):
+        resource = {}
+        sections["resource"] = resource
+    pages = resource.get("pages")
+    if not isinstance(pages, dict):
+        pages = {}
+        resource["pages"] = pages
+    return pages
+
+
+def _read_pages(path: Path) -> list[tuple[Page, Link]]:
+    payload = _read_ledger(path)
+    sections = payload.get("sections")
+    resource = sections.get("resource") if isinstance(sections, dict) else None
+    found = resource.get("pages") if isinstance(resource, dict) else None
+    if not isinstance(found, dict):
+        return []
+    rows: list[tuple[Page, Link]] = []
+    for item in found.values():
+        parsed = _parse_page(item)
+        if parsed is not None:
+            rows.append(parsed)
+    return rows
+
+
+def _parse_page(item: object) -> tuple[Page, Link] | None:
+    if not isinstance(item, dict):
+        return None
+    raw_page = item.get("page")
+    raw_link = item.get("link")
+    if not isinstance(raw_page, dict) or not isinstance(raw_link, dict):
+        return None
+    address = str(raw_page.get("address") or "")
+    relation = str(raw_link.get("relation") or "")
+    resource_id = str(raw_link.get("resource_id") or "")
+    if not address or not relation or not resource_id:
+        return None
+    try:
+        state = PageState(str(raw_page.get("state") or PageState.RESIDENT.value))
+        size = int(raw_page.get("size") or 0)
+        page = Page(address=address, size=size, state=state)
+        link = Link(
+            relation=relation,
+            resource_id=resource_id,
+            handle=str(raw_link.get("handle") or ""),
+        )
+    except (TypeError, ValueError):
+        return None
+    return page, link
+
+
+def _page_key(pages: dict[str, Any], page: Page, link: Link) -> str:
+    if link.handle:
+        for key, item in pages.items():
+            raw_link = item.get("link") if isinstance(item, dict) else None
+            if isinstance(raw_link, dict) and str(raw_link.get("handle") or "") == link.handle:
+                return str(key)
+    for key, item in pages.items():
+        raw_page = item.get("page") if isinstance(item, dict) else None
+        address = raw_page.get("address") if isinstance(raw_page, dict) else ""
+        if str(address or "") == page.address or str(key) == page.address:
+            return str(key)
+    return page.address

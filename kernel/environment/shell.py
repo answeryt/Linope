@@ -43,14 +43,14 @@ class ProcessEnvironment:
             if not key or "\x00" in key or "\x00" in value:
                 raise ValueError("environment keys and values cannot contain NUL")
         if self.env_file_keys and not self.env_file:
-            raise ValueError("还没指定环境文件，不能选择键")
+            raise ValueError("No env file given; cannot select keys")
         for key in self.env_file_keys:
             if not key or "=" in key or "\x00" in key:
-                raise ValueError(f"环境变量名无效: {key!r}")
+                raise ValueError(f"Invalid environment variable name: {key!r}")
         if self.env_file:
             path = Path(self.env_file).expanduser().resolve()
             if not path.is_file():
-                raise ValueError(f"环境文件不存在: {path}")
+                raise ValueError(f"Env file does not exist: {path}")
             object.__setattr__(self, "env_file", str(path))
         for name, mode in (
             ("stdin", self.stdin),
@@ -201,5 +201,5 @@ def _read_env_file(path: str, keys: tuple[str, ...]) -> dict[str, str]:
         return found
     missing = [key for key in keys if key not in found]
     if missing:
-        raise ValueError(f"环境文件里没有这个键: {missing[0]}")
+        raise ValueError(f"Env file has no such key: {missing[0]}")
     return {key: found[key] for key in keys}

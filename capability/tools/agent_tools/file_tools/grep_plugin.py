@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -57,9 +56,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('grep', body, **(call_params or {}))
 
 
@@ -82,11 +81,10 @@ def grep_files(
 ) -> str:
     if not pattern.strip():
         return _error("invalid pattern: expected a non-empty string")
-    root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
-    if path:
-        candidate = Path(path)
-        root = candidate if candidate.is_absolute() else root / candidate
-    root = root.resolve()
+    try:
+        root = _root(path, workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
     rg = shutil.which("rg")
     if rg is not None:
         argv = [rg, "--json", "--max-count", str(GREP_MAX_MATCHES), "-e", pattern]
@@ -94,8 +92,8 @@ def grep_files(
             argv.extend(["--glob", include])
         argv.append(str(root))
         try:
-            completed = subprocess.run(argv, capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            completed = _run_rg(argv, root)
+        except (PermissionError, ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             return _error(str(exc))
         groups: dict[str, list[dict[str, Any]]] = {}
         for line in completed.stdout.splitlines():
@@ -155,6 +153,23 @@ def grep_files(
         {"success": True, "path": str(root), "matches": groups, "count": total, "truncated": False},
         ensure_ascii=False,
     )
+
+
+def _root(path: Optional[str], workspace: Optional[str]) -> Path:
+    from kernel.environment import current_room
+    from kernel.environment.file_io import door_for
+
+    return door_for(current_room(), workspace).resolve(path or ".", write=False, base=workspace)
+
+
+def _run_rg(argv: list[str], root: Path):
+    from kernel.environment import current_room
+
+    room = current_room()
+    if room is None:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    completed, _permit = room.compute.run(argv, cwd=str(root), timeout_seconds=30)
+    return completed
 
 
 def _error(message: str, **details: Any) -> str:

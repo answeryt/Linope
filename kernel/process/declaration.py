@@ -67,7 +67,7 @@ def stamp_memory_space(declaration: ProcessDeclaration, changes) -> ProcessDecla
         return declaration
     for part in space.replace(" ", "").split(","):
         if part not in CLASSES:
-            raise ValueError(f"不认识的记忆类: {part or space}")
+            raise ValueError(f"Unknown memory class: {part or space}")
     updated: list[ResourceClaim] = []
     for claim in declaration.resources:
         if kind_name(claim.kind) != "memory":
@@ -103,13 +103,13 @@ def _chosen_claim(raw: str, existing: set[str]) -> ResourceClaim:
     name = kind_name(kind.strip())
     identity_value = value.strip()
     if not sep or not name or not identity_value:
-        raise ValueError("还缺身份")
+        raise ValueError("Missing identity")
     if name in existing:
-        raise ValueError(f"不能改默认资源: {name}")
+        raise ValueError(f"Cannot change the default resource: {name}")
     contract = require(name)
     if len(contract.required_identity_keys) != 1:
         missing = ", ".join(contract.required_identity_keys)
-        raise ValueError(f"{name} 还缺身份: {missing}")
+        raise ValueError(f"{name} is missing identity: {missing}")
     return ResourceClaim(
         kind=name,
         identity={contract.required_identity_keys[0]: identity_value},

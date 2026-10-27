@@ -15,8 +15,21 @@ def tool_capability(name: str) -> str:
     return value if value.startswith("tools.") else f"tools.{value}"
 
 
-def tool_request(name: str, arguments: Any, *, call_id: str = "", task_id: str = "") -> dict[str, Any]:
+def tool_request(
+    name: str,
+    arguments: Any,
+    *,
+    call_id: str = "",
+    task_id: str = "",
+    permission: str | None = None,
+    capabilities: Any = None,
+) -> dict[str, Any]:
     """The process message for one tool step. The call id stays on the envelope."""
+    capability = tool_capability(name)
+    from kernel.process.profiles import tool_allowed
+
+    if not tool_allowed(capability, permission, capabilities):
+        raise PermissionError(f"Current permission cannot use {capability}")
     body = arguments if isinstance(arguments, dict) else {}
     return {
         "operation": "load",
@@ -28,8 +41,17 @@ def tool_request(name: str, arguments: Any, *, call_id: str = "", task_id: str =
     }
 
 
-def declared_tool_schema(capability: str) -> list[dict[str, Any]]:
+def declared_tool_schema(
+    capability: str,
+    *,
+    permission: str | None = None,
+    capabilities: Any = None,
+) -> list[dict[str, Any]]:
     """Read ``tool_schemas`` from the capability's own plugin. Do not call the tool."""
+    from kernel.process.profiles import tool_allowed
+
+    if not tool_allowed(capability, permission, capabilities):
+        return []
     try:
         definition = describe_instance(capability)
     except KeyError:

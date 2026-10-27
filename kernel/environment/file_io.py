@@ -16,7 +16,7 @@ class FileDoor:
 
     def resolve(self, path: str, *, write: bool, base: str | None = None) -> Path:
         if not path or "\x00" in path:
-            raise ValueError("路径无效")
+            raise ValueError("Invalid path")
         raw = Path(path)
         if not raw.is_absolute():
             raw = self._anchor(base) / raw
@@ -45,5 +45,5 @@ def door_for(room: object | None, workspace: str | None) -> FileDoor:
     root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
     root = root.expanduser().resolve()
     if not root.is_dir():
-        raise ValueError(f"工作区不是目录: {root}")
+        raise ValueError(f"Workspace is not a directory: {root}")
     return FileDoor(FilesystemView.for_local(root))

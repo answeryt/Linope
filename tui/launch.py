@@ -23,11 +23,11 @@ def open_tui() -> int:
     entry = root / "tui" / "main.ts"
     node = shutil.which("node")
     if node is None:
-        print("需要安装 Node.js 才能打开 Linope 终端。", file=sys.stderr)
+        print("Node.js is required to open the Linope terminal.", file=sys.stderr)
         return 1
     command = _runner(root, node, entry)
     if command is None:
-        print("需要安装 Node.js 才能打开 Linope 终端。", file=sys.stderr)
+        print("Node.js is required to open the Linope terminal.", file=sys.stderr)
         return 1
     if os.name == "nt":
         completed = subprocess.run(command)

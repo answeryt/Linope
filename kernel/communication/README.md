@@ -1,41 +1,38 @@
 # communication
 
-进程之间通过共享内存看见同一份内容。每个进程有自己的地址表，写在 [`address.py`](address.py)。`message/0` 是这个进程的地址，真名在那一份 memory 实体上。按 `hello/message/0` 可以读另一份记忆。
+English | [中文](README.cn.md)
 
-内存页面和句柄在 `kernel/resource`。通信只通过资源池读写那份实体。
+This directory builds the page a model sees, checks the model's reply, and writes that process's own notes. Who may enter a memory, and which span they may read, is [`kernel/scheduler`](../scheduler/README.md). The raw rows are [`kernel/resource/memory`](../resource/memory/README.md). This directory does not define a second admission rule.
 
-## 消息
-
-一条消息就是记忆里的一行：`kind`、`content`、`time`、`seq`，还可以带一个 `state`。
-
-| state | 谁写 |
+| File | Role |
 |---|---|
-| `asked` | 用户问了一句 |
-| `continue` | 模型要走一步（命令行或 JSON） |
-| `resulted` | 那一步的结果回来了 |
-| `rejected` | 模型的输出没通过校验，附详情 |
-| `answered` | 模型给了答案，这一问结束 |
+| `page.py` | One model page: the memory entry, the addresses it may read, and the commands it may run |
+| `verify.py` | Parses one reply into a read, an action, or an answer. Nothing runs here |
+| `offers.py` | The command lines that page may offer right now |
+| `channel.py` | This process's notes, and `deliver` / `publish` on a channel the caller already opened |
+| `address.py` | Forwards memory calls to `kernel.scheduler.access` |
 
-进程本身在睡、在做、在和谁说话，看 `kernel/trace`，不在这里。
+## Contract
 
-## 一问走到底
+`verify.py` accepts three forms: a `continue` JSON object, one bare command line, or a plain answer. A bare command line is a `continue` whose pointer is that line. Prose around exactly one command is that command. Several commands are refused. A passed step has `way` `read`, `start`, `tool`, `ask`, or `answer`. [`kernel/scheduler`](../scheduler/README.md) decides whether that step may run.
 
-[`follow.py`](follow.py) 把一次 `load message` 走到答案为止：每次给模型一页（`kernel/hypermedia/memory_page.py`），页里列出能读的地址和能走的命令。模型的回答先交 [`verify.py`](verify.py) 校验，只有页上有的那一步才会执行，结果写回记忆，再给下一页。不设步数上限。
+`offers.py` lists commands from the catalog of `tools.*` and `model.*` capabilities. Before a tool is listed, `tool_allowed` in [`kernel/process`](../process/README.md) applies the asking model's `permission` and `capabilities`. A tool that fails that check is left off the page. A tool or model that is not up offers `process start`. A tool that is up and sleeping offers `load tool <pid> -- `. A model that is up and sleeping offers `ask <pid> -- `. A busy one offers nothing.
 
-能走的命令由 [`offers.py`](offers.py) 列出：没起的工具给 `process start`，起了在睡的给 `load tool <pid> -- `，正在做事的不给。
+`MemoryChannel` writes one row into this process's memory. `send` records through `remember`. These are the process's own notes. They are not a transport between two services.
 
-## 通道
-
-送信走 [`channel.py`](channel.py) 里的通道，用户自己选，内核不造轮子：
-
-| 名字 | 用的库 | 安装 |
-|---|---|---|
-| `memory` | 共享内存（默认） | 不用装 |
-| `zeromq` | pyzmq PUSH/PULL | `pip install pyzmq` |
-| `grpc` | grpcio 通用方法 `/linope.Channel/Send` | `pip install grpcio` |
-| `nats` | nats-py，还能广播到 `linope.all` | `pip install nats-py` |
+Another service is reached only through a channel the caller already opened. Addresses and topics are ordinary strings.
 
 ```python
-from kernel.communication.channel import open_channel
-channel = open_channel("memory", pool=pool)
+from kernel.communication.channel import deliver, publish
+
+deliver(channel, "1", {"kind": "user", "content": "hello", "state": "asked"}, "2")
+publish(channel, "weather", {"kind": "user", "content": "hello", "state": "asked"})
 ```
+
+The kernel does not open a port and does not choose a transport. Words that have already arrived in this window are given to the service's only model as `load message`. When that process has memory, the load runs as one page turn in [`kernel/scheduler`](../scheduler/README.md). A process with no memory receives the words as they arrived. A page offers `process start` only when this window can launch a process.
+
+Row fields and the states `asked`, `continue`, `resulted`, `rejected`, and `answered` are stored by [`kernel/resource/memory`](../resource/memory/README.md). Whether the process is sleeping or working is [`kernel/trace`](../trace/README.md).
+
+## Known Limitations and Deferred Work
+
+- **No built-in remote transport** — `deliver` and `publish` send only on the channel object the caller passed in. A missing reply from another machine is the caller's timeout.

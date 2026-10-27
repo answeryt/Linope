@@ -75,20 +75,20 @@ def test_another_process_cannot_use_the_handle(tmp_path: Path) -> None:
 def test_share_is_only_the_named_kind(tmp_path: Path) -> None:
     _book_unused, _pool, reconciler = _book(tmp_path)
     declaration = _declaration(
-        ResourceClaim(kind="model", identity={"provider": "openai", "id": "gpt-4o"}),
         ResourceClaim(kind="memory", identity={"scope": "chat"}),
+        ResourceClaim(kind="tool", identity={"id": "files"}),
     )
     shared = (
         reconciler.start(
             declaration,
             definition=_definition(),
-            shared=("model",),
+            shared=("memory",),
             pid=104,
         ),
         reconciler.start(
             declaration,
             definition=_definition(),
-            shared=("model",),
+            shared=("memory",),
             pid=105,
         ),
     )
@@ -112,7 +112,7 @@ def test_startup_failure_discards_the_record(tmp_path: Path) -> None:
     book, _pool, reconciler = _book(tmp_path)
     with pytest.raises(ValueError):
         reconciler.start(
-            _declaration(ResourceClaim(kind="model", identity={"id": "gpt-4o"})),
+            _declaration(ResourceClaim(kind="tool", identity={})),
             definition=_definition(),
             pid=108,
         )
@@ -174,7 +174,7 @@ def test_a_new_kind_registers_without_a_pool_change(tmp_path: Path) -> None:
         pool.authorize(process.activation.grants[0].handle, process.pid)
     finally:
         unregister("widget")
-    with pytest.raises(ValueError, match="不认识的资源"):
+    with pytest.raises(ValueError, match="Unknown resource"):
         require("widget")
 
 
@@ -195,7 +195,7 @@ def test_memory_scope_is_the_only_address_space(tmp_path: Path) -> None:
     state = reconciler.pool.store.entity(process.activation.grants[0].resource_id).state
     assert state["address_space"]["scope"] == "chat"
     ledger = ProcessLedger(tmp_path / "ledger.json")
-    with pytest.raises(ValueError, match="不该保存"):
+    with pytest.raises(ValueError, match="must not be saved"):
         ledger.write(
             [
                 {

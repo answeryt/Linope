@@ -20,6 +20,7 @@
 - `capability/sandbox/sandbox-windows-acl/src`
 - `capability/sandbox/sandbox/src`
 - `capability/sandbox/workspace/src`
+- `capability/tools/agent_tools/code_tools`
 - `capability/tools/agent_tools/file_tools`
 - `capability/tools/agent_tools/interaction_tools`
 - `capability/tools/agent_tools/shell_tools`

@@ -11,6 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from kernel.resource.memory.state import open_state
+
 Open = Callable[[dict[str, Any]], dict[str, Any]]
 Close = Callable[[dict[str, Any], dict[str, Any] | None], None]
 
@@ -38,9 +40,9 @@ def register(contract: ResourceContract, *, replace: bool = False) -> None:
     """Add one kind. Repeat registration is refused unless it is a replacement."""
     name = kind_name(contract.name)
     if not name or name != contract.name:
-        raise ValueError("资源名字不能为空")
+        raise ValueError("Resource name must not be empty")
     if name in _CONTRACTS and not replace:
-        raise ValueError(f"资源已经登记过: {name}")
+        raise ValueError(f"Resource already registered: {name}")
     _CONTRACTS[name] = contract
 
 
@@ -58,7 +60,7 @@ def require(name: object) -> ResourceContract:
     try:
         return _CONTRACTS[kind_name(name)]
     except KeyError:
-        raise ValueError(f"不认识的资源: {kind_name(name)}") from None
+        raise ValueError(f"Unknown resource: {kind_name(name)}") from None
 
 
 def names() -> tuple[str, ...]:
@@ -75,9 +77,9 @@ def validate_claim(kind: object, identity: dict[str, Any], *, shared: bool) -> N
     ]
     if missing:
         joined = ", ".join(missing)
-        raise ValueError(f"{contract.name} 还缺身份: {joined}")
+        raise ValueError(f"{contract.name} is missing identity: {joined}")
     if shared and not contract.allow_shared:
-        raise ValueError(f"{contract.name} 不能共用")
+        raise ValueError(f"{contract.name} cannot be shared")
 
 
 def open_entity(
@@ -117,7 +119,8 @@ def close_entity(
 
 def _open_memory(identity: dict[str, Any]) -> dict[str, Any]:
     """The memory entity is the address range named by its scope."""
-    return {"address_space": {"scope": str(identity.get("scope") or "")}}
+
+    return open_state(identity)
 
 
 def _install_builtins() -> None:
@@ -125,7 +128,6 @@ def _install_builtins() -> None:
         ResourceContract("memory", ("scope",), open=_open_memory),
         ResourceContract("tool", ("id",)),
         ResourceContract("sandbox", ("root",)),
-        ResourceContract("model", ("provider", "id")),
         ResourceContract("network", ("channel",)),
     )
     for contract in builtins:

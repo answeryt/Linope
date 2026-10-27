@@ -29,7 +29,7 @@ def test_load_env_names_an_existing_file(tmp_path: Path, capsys, monkeypatch) ->
     env.write_text("OPENAI_API_KEY=sk-test\n", encoding="utf-8")
     assert main(["load", "env", ".env"]) == 0
     assert capsys.readouterr().out.strip() == f"env_file={env.resolve()}"
-    assert main(["load", "message", "--", "你好"]) == 2
+    assert main(["load", "message", "--", "hello"]) == 2
 
 
 def test_started_process_uses_that_env_file(tmp_path: Path) -> None:

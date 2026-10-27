@@ -1,9 +1,15 @@
-# ci_tools
+# ci_tools/ — plugin-convention gate
 
-插件约定门禁。入口：
+English | [中文](README.cn.md)
+
+Review plugin shape and write architecture cards. The check entry is [`generate/plugin`](generate/plugin/README.md).
+
+| Directory | Role |
+|---|---|
+| [`generate/`](generate/README.md) | List cards and the three architecture cards |
 
 ```text
-python tools/external_tools/ci_tools/generate/plugin/plugin_generate.py --check
+python capability/tools/external_tools/ci_tools/generate/plugin/plugin_generate.py --check
 ```
 
-手写库存是 `generate/plugin/list/allow_list/allow_list_card`（`paths` / `inject` / `kernel_layers` / `sockets`）。deny list 由扫描结果减去豁免路径生成。代码规则在各 `*_check.py`。插座路径由 `lip_check` 审查，能力图拼装由 `assembly_check` / `descriptor_check` 审查。kernel 架构（Microservice / Process / Execution / Task / Loop / Event）写在 `generate/services`、`generate/process`、`generate/async`、`generate/compose`，不进代码检查。
+The hand-written inventory is `generate/plugin/list/allow_list/allow_list_card` (`paths`, `inject`, `kernel_layers`, `sockets`). The deny list is the scan result minus exempt paths. Code rules live in each `*_check.py`.

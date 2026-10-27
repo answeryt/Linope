@@ -1,4 +1,5 @@
 import { logoLines } from './banner.js'
+import type { Focus } from './focus.js'
 import type { DisplayEvent } from './link/events.js'
 import { fg, fill, paint, reset, theme } from './theme.js'
 
@@ -13,16 +14,32 @@ export type Turn = {
 export type LiveProcess = {
   id: string
   capability: string
-  activity: '在等' | '在忙'
+  activity: 'waiting' | 'busy'
+}
+
+export type HistoryScroll = {
+  scrollY: number
+  follow: boolean
+}
+
+export type HistoryLayout = {
+  width: number
+  historyTop: number
+  historyRows: number
+  contentWidth: number
+  scrollbarColumn: number
+  historyRow: number
 }
 
 export type ScreenState = {
   columns: number
   cwd: string
-  clerk: '在' | '离开'
+  clerk: 'here' | 'away'
   processes: LiveProcess[]
   rows: number
-  scroll?: number
+  scrollY?: number
+  follow?: boolean
+  focus?: Focus
   status: 'ready' | 'running'
   turns: Turn[]
 }
@@ -110,65 +127,79 @@ const clip = (text: string, width: number) => {
   return `${out}…`
 }
 
-const takeLine = (text: string, width: number) => {
-  const chars = charsOf(text)
-  let used = 0
-  let cut = chars.length
-  let lastSpace = -1
-
-  for (let index = 0; index < chars.length; index += 1) {
-    const next = charWidth(chars[index] ?? '')
-
-    if (used + next > width) {
-      cut = index
-
-      break
-    }
-
-    if (chars[index] === ' ') {
-      lastSpace = index
-    }
-
-    used += next
-  }
-
-  if (cut < chars.length && lastSpace > 0) {
-    cut = lastSpace
-  }
-
-  return {
-    line: chars.slice(0, cut).join('').trimEnd(),
-    rest: chars.slice(cut).join('').trimStart()
-  }
-}
+const isTrimmedAway = (char: string) => char.trim().length === 0
 
 const wrap = (text: string, width: number): string[] => {
-  const out: string[] = []
   const limit = Math.max(1, width)
+  const out: string[] = []
 
   for (const para of text.split(/\r?\n/)) {
-    let rest = para
-
-    if (!rest) {
+    if (!para) {
       out.push('')
 
       continue
     }
 
-    while (displayWidth(rest) > limit) {
-      const taken = takeLine(rest, limit)
+    const chars = charsOf(para)
+    let start = 0
 
-      out.push(taken.line)
-      if (taken.rest === rest) {
+    while (start < chars.length) {
+      let used = 0
+      let index = start
+      let lastSpace = -1
+
+      for (; index < chars.length; index += 1) {
+        const next = charWidth(chars[index] ?? '')
+
+        if (used + next > limit) {
+          break
+        }
+
+        if (chars[index] === ' ') {
+          lastSpace = index
+        }
+
+        used += next
+      }
+
+      if (index >= chars.length) {
+        out.push(chars.slice(start).join(''))
+
         break
       }
-      rest = taken.rest
-    }
 
-    out.push(rest)
+      const cut = lastSpace > start ? lastSpace : index
+
+      if (cut <= start) {
+        out.push('')
+        out.push(chars.slice(start).join(''))
+
+        break
+      }
+
+      out.push(chars.slice(start, cut).join('').trimEnd())
+
+      let next = cut
+
+      while (next < chars.length && isTrimmedAway(chars[next] ?? '')) {
+        next += 1
+      }
+
+      if (next >= chars.length) {
+        out.push('')
+
+        break
+      }
+
+      start = next
+    }
   }
 
   return out.length ? out : ['']
+}
+
+export function wrapText(text: string, width: number): string[] {
+  return wrap(text, width)
 }
 
 const boxRow = (width: number, body: string, bodyWidth: number) => {
@@ -198,16 +229,16 @@ const field = (label: string, value: string, width: number) => {
   }
 }
 
-const activityWord = (raw: string): LiveProcess['activity'] | '离开' => {
-  if (raw === 'working' || raw === '在忙') {
-    return '在忙'
+const activityWord = (raw: string): LiveProcess['activity'] | 'away' => {
+  if (raw === 'working' || raw === 'busy' || raw === '在忙') {
+    return 'busy'
   }
 
-  if (raw === 'sleeping' || raw === '在等') {
-    return '在等'
+  if (raw === 'sleeping' || raw === 'waiting' || raw === '在等') {
+    return 'waiting'
   }
 
-  return '离开'
+  return 'away'
 }
 
 export function noteProcessText(current: LiveProcess[], text: string): LiveProcess[] {
@@ -220,9 +251,9 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
 
     if (found) {
       found.capability = started[2] ?? found.capability
-      found.activity = '在等'
+      found.activity = 'waiting'
     } else {
-      next.push({ activity: '在等', capability: started[2] ?? '', id })
+      next.push({ activity: 'waiting', capability: started[2] ?? '', id })
     }
 
     return next
@@ -234,7 +265,7 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
     const id = listed[1] ?? ''
     const activity = activityWord(listed[2] ?? '')
 
-    if (activity === '离开' || text.includes('status=closed')) {
+    if (activity === 'away' || text.includes('status=closed')) {
       return next.filter(item => item.id !== id)
     }
 
@@ -264,7 +295,7 @@ export function noteProcessText(current: LiveProcess[], text: string): LiveProce
 
     const activity = activityWord(facts?.activity ?? '')
 
-    if (activity === '离开') {
+    if (activity === 'away') {
       return next.filter(item => item.id !== id)
     }
 
@@ -293,12 +324,12 @@ const infoLines = (state: ScreenState, width: number) => {
   const alive = state.processes
   const recent = alive.slice(-3)
   const names = recent.length
-    ? recent.map(item => `${item.capability} ${item.activity}`).join('、')
-    : '没有'
-  const clerk = field('管家', state.clerk, width)
-  const count = field('活着', String(alive.length), width)
-  const processes = field('进程', names, width)
-  const project = field('项目', state.cwd, width)
+    ? recent.map(item => `${item.capability} ${item.activity}`).join(', ')
+    : 'none'
+  const clerk = field('clerk', state.clerk, width)
+  const count = field('alive', String(alive.length), width)
+  const processes = field('process', names, width)
+  const project = field('project', state.cwd, width)
 
   return [clerk, count, processes, project]
 }
@@ -334,74 +365,220 @@ const turnColor = (role: Role) => {
   return theme.accent
 }
 
-const transcript = (state: ScreenState, width: number): string[] => {
-  const maxWidth = Math.max(8, width - 2)
-  const lines: string[] = []
+const paintedTurn = (turn: Turn, contentWidth: number): string[] => {
+  const prefix = turn.role === 'user' ? '❯ ' : turn.role === 'error' ? '! ' : '  '
+  const color = turnColor(turn.role)
+  const pad = ' '.repeat(prefix.length)
+  const lines = wrap(turn.text, contentWidth - prefix.length).map((line, index) =>
+    fg(color, `${index === 0 ? prefix : pad}${line}`)
+  )
 
-  for (const turn of state.turns) {
-    const prefix = turn.role === 'user' ? '❯ ' : turn.role === 'error' ? '! ' : '  '
-    const color = turnColor(turn.role)
+  lines.push('')
 
-    wrap(turn.text, maxWidth - prefix.length).forEach((line, index) => {
-      const text = `${index === 0 ? prefix : ' '.repeat(prefix.length)}${line}`
+  return lines
+}
 
-      lines.push(fg(color, text))
-    })
-    lines.push('')
+const keptTurns = new WeakMap<Turn, { width: number; lines: string[] }>()
+
+const linesFor = (turn: Turn, contentWidth: number): string[] => {
+  if (!turn.stream) {
+    const kept = keptTurns.get(turn)
+
+    if (kept?.width === contentWidth) {
+      return kept.lines
+    }
+  }
+
+  const lines = paintedTurn(turn, contentWidth)
+
+  if (!turn.stream) {
+    keptTurns.set(turn, { width: contentWidth, lines })
   }
 
   return lines
 }
 
+let shown: {
+  turns: Turn[]
+  last: Turn | undefined
+  tail: string | undefined
+  count: number
+  width: number
+  lines: string[]
+} | null = null
+
+const transcript = (state: ScreenState, contentWidth: number): string[] => {
+  const turns = state.turns
+  const last = turns.at(-1)
+  const tail = last?.text
+
+  if (
+    shown &&
+    shown.turns === turns &&
+    shown.last === last &&
+    shown.tail === tail &&
+    shown.count === turns.length &&
+    shown.width === contentWidth
+  ) {
+    return shown.lines
+  }
+
+  const lines = turns.flatMap(turn => linesFor(turn, contentWidth))
+
+  shown = { turns, last, tail, count: turns.length, width: contentWidth, lines }
+
+  return lines
+}
+
+const padTo = (line: string, width: number) => {
+  const gap = width - displayWidth(line)
+
+  return gap > 0 ? `${line}${' '.repeat(gap)}` : line
+}
+
+const maxScroll = (total: number, room: number) => Math.max(0, total - Math.max(0, room))
+
 const statusLine = (state: ScreenState, width: number) => {
+  const focusLabel = state.focus === 'history' ? 'history' : 'input'
+  const paused = state.follow === false ? ' │ follow paused' : ''
+  const clerk = state.clerk === 'here' ? 'clerk here' : 'clerk away'
+  const full = `${state.status} │ ${clerk} │ ${focusLabel}${paused} │ /help`
   const maxText = Math.max(8, width - 6)
-  const full = `${state.status} │ ${state.clerk === '在' ? '管家在' : '管家离开'} │ /help`
   const text = ` ${clip(full, maxText)} `
-  const fillWidth = Math.max(2, width - text.length)
+  const fillWidth = Math.max(2, width - displayWidth(text))
   const left = Math.floor(fillWidth / 2)
 
   return fg(theme.border, '─'.repeat(left)) + fg(theme.text, text) + fg(theme.border, '─'.repeat(fillWidth - left))
 }
 
-export function historyRoom(state: ScreenState): number {
+export function historyLayout(state: ScreenState): HistoryLayout {
   const width = Math.max(24, state.columns - 2)
-  const chrome = logoLines(state.columns, state.rows).length + 1 + panel(state, width).length + 2
+  const logoCount = logoLines(state.columns, state.rows).length
+  const boxCount = panel(state, width).length
+  const historyTop = logoCount + 1 + boxCount
+  const historyRows = Math.max(4, state.rows - (historyTop + 2))
 
-  return Math.max(4, state.rows - chrome)
+  return {
+    width,
+    historyTop,
+    historyRows,
+    contentWidth: Math.max(8, width - 1),
+    scrollbarColumn: width,
+    historyRow: historyTop + 1
+  }
+}
+
+export function historyRoom(state: ScreenState): number {
+  return historyLayout(state).historyRows
+}
+
+export function historyHit(layout: HistoryLayout, row: number, column: number): boolean {
+  return (
+    row >= layout.historyRow &&
+    row < layout.historyRow + layout.historyRows &&
+    column >= 1 &&
+    column <= layout.scrollbarColumn
+  )
+}
+
+export function transcriptRows(state: ScreenState): number {
+  return transcript(state, historyLayout(state).contentWidth).length
+}
+
+export function scrollbarThumb(
+  total: number,
+  room: number,
+  scrollY: number,
+  track: number
+): { start: number; size: number } | null {
+  if (total <= room || track <= 0) {
+    return null
+  }
+
+  const size = Math.max(1, Math.min(track, Math.round((track * room) / total)))
+  const maxStart = track - size
+  const maxOffset = total - room
+  const clamped = Math.max(0, Math.min(scrollY, maxOffset))
+  const start = maxOffset === 0 ? 0 : Math.round((maxStart * clamped) / maxOffset)
+
+  return { start, size }
+}
+
+export function applyScroll(view: HistoryScroll, delta: number, total: number, room: number): HistoryScroll {
+  const limit = maxScroll(total, room)
+  const scrollY = Math.max(0, Math.min(view.scrollY + delta, limit))
+
+  return { scrollY, follow: scrollY >= limit }
+}
+
+export function followBottom(total: number, room: number): HistoryScroll {
+  return { scrollY: maxScroll(total, room), follow: true }
+}
+
+export function retainScroll(view: HistoryScroll, total: number, room: number): HistoryScroll {
+  const limit = maxScroll(total, room)
+
+  if (view.follow) {
+    return { scrollY: limit, follow: true }
+  }
+
+  const scrollY = Math.max(0, Math.min(view.scrollY, limit))
+
+  return { scrollY, follow: scrollY >= limit }
 }
 
 export function scrollLimit(state: ScreenState): number {
-  const width = Math.max(24, state.columns - 2)
+  const layout = historyLayout(state)
 
-  return Math.max(0, transcript(state, width).length - historyRoom(state))
+  return Math.max(0, transcript(state, layout.contentWidth).length - layout.historyRows)
+}
+
+const scrollbarCell = (index: number, thumb: { start: number; size: number } | null) => {
+  if (!thumb) {
+    return ' '
+  }
+
+  const onThumb = index >= thumb.start && index < thumb.start + thumb.size
+
+  return fg(onThumb ? theme.accent : theme.muted, onThumb ? '█' : '│')
 }
 
 export function renderScreen(state: ScreenState): string {
   // Keep a 2-column right margin so terminal auto-wrap never folds a row and
-  // pushes the top banner out of a short viewport.
-  const width = Math.max(24, state.columns - 2)
+  // pushes the top banner out of a short viewport. The history pane keeps one
+  // more column for the scrollbar, so wrapping does not change when it appears.
+  const layout = historyLayout(state)
   const logo = logoLines(state.columns, state.rows)
   const title = fg(theme.accent, 'LINOPE KERNEL')
-  const box = panel(state, width)
-  const allHistory = transcript(state, width)
-  const room = historyRoom(state)
-  const scroll = Math.min(Math.max(0, state.scroll ?? 0), Math.max(0, allHistory.length - room))
-  const end = allHistory.length - scroll
-  const history = allHistory.slice(Math.max(0, end - room), end)
-  const lines = [...logo, title, ...box, ...history, statusLine(state, width)]
+  const box = panel(state, layout.width)
+  const allHistory = transcript(state, layout.contentWidth)
+  const room = layout.historyRows
+  const limit = maxScroll(allHistory.length, room)
+  const follow = state.follow !== false
+  const scrollY = follow ? limit : Math.max(0, Math.min(state.scrollY ?? 0, limit))
+  const thumb = scrollbarThumb(allHistory.length, room, scrollY, room)
+  const history = Array.from({ length: room }, (_, index) => {
+    const line = allHistory[scrollY + index] ?? ''
+
+    return padTo(line, layout.contentWidth) + scrollbarCell(index, thumb)
+  })
+  const lines = [...logo, title, ...box, ...history, statusLine(state, layout.width)]
 
   return `${lines.join('\n')}\n`
 }
 
 export const helpText = [
-  '/help   显示这些按键',
-  '/clear  清空当前会话画面',
-  '/quit   退出',
-  '↑ / ↓               切换命令历史',
-  '← / →               移动输入光标',
-  'Home / End         移动光标；查看历史时回到顶部或底部',
-  'PageUp / PageDown  查看更早或更新的输出',
-  '其它每一行都发给 Linope 终端，例如 process list、create 文件.md'
+  '/help   show these keys',
+  '/clear  clear this session screen',
+  '/quit   quit',
+  'Tab / Shift+Tab     move focus between the input line and the history pane',
+  '↑ / ↓               input: walk command history; history: scroll one line',
+  'Shift+↑             scroll history up and pause following the bottom',
+  '← / →               input: move the cursor',
+  'Home / End          input: move the cursor; history: jump to the top or bottom',
+  'PageUp / PageDown   history: one page',
+  'wheel               scroll the history pane without changing focus',
+  'Every other line goes to the Linope terminal, for example process list or create file.md'
 ].join('\n')
 
 export function pushEvent(
@@ -436,10 +613,10 @@ export function pushEvent(
 
   if (event.type === 'image') {
     const last = turns.at(-1)
-    if (last?.role === 'assistant' && last.text === `图片 ${event.href}`) {
+    if (last?.role === 'assistant' && last.text === `image ${event.href}`) {
       return { status: null, turns }
     }
-    return { status: null, turns: [...turns, { role: 'assistant', text: `图片 ${event.href}` }] }
+    return { status: null, turns: [...turns, { role: 'assistant', text: `image ${event.href}` }] }
   }
 
   if (event.type === 'error') {

@@ -1,13 +1,13 @@
-# compose：Task Function 是持久副作用边界
+# compose: a Task function is the durable side-effect boundary
 
-## 词汇
+## Vocabulary
 
-- **TaskDefinition**：稳定名称、版本、重试、超时和资源需求。
-- **TaskExecutor**：执行同步/异步副作用并提交结果或错误。
-- **TaskBinding**：Task attempt 对 Resource Lease 的运行绑定。
-- **ResourceLease**：Task 执行期间取得的有限资源使用权。
+- **TaskDefinition**: Stable name, version, retry, timeout, and resource requirements.
+- **TaskExecutor**: Runs a synchronous or asynchronous side effect and submits the result or error.
+- **TaskBinding**: The runtime binding of a Task attempt to a resource lease.
+- **ResourceLease**: The limited right to use a resource while a Task runs.
 
-## 结构
+## Structure
 
 ```
 Process
@@ -17,20 +17,20 @@ Process
     └── Resource Binding
 ```
 
-## 在结构图中的位置
+## Place in the structure
 
-目录名保留 compose；公开概念统一使用 Task Function。能力图拼装由 plugin 审查（assembly_check / descriptor_check），本卡不写代码合同。
+The directory name stays compose; the public concept is Task Function. Plugin review (assembly_check / descriptor_check) checks capability-graph assembly. This card does not state a code contract.
 
-## 本层拥有
+## This layer owns
 
 - `TaskDefinition`
 - `TaskExecutor`
 - `TaskBinding`
 
-## 架构要求
+## Architecture requirements
 
-1. Task Function 承载模型、工具、HTTP、数据库和文件等副作用。
-2. TaskDefinition 必须具有稳定名称和版本。
-3. TaskExecutor 支持同步/异步执行、重试与超时。
-4. TaskBinding 取得 Resource Lease，并在 attempt 结束时逆序释放。
-5. Task 结果与错误由 Process Journal 记录，Replay 不重复执行已完成 Task。
+1. A Task function carries side effects such as models, tools, HTTP, databases, and files.
+2. A TaskDefinition must have a stable name and version.
+3. A TaskExecutor supports synchronous and asynchronous execution, retry, and timeout.
+4. A TaskBinding acquires a resource lease and releases leases in reverse order when the attempt ends.
+5. Task results and errors are recorded in the Process journal. Replay does not run a completed Task again.

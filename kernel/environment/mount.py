@@ -9,33 +9,37 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-READ_ONLY = "read-only"
-WORKSPACE_WRITE = "workspace-write"
-DANGER_FULL_ACCESS = "danger-full-access"
+from kernel.environment.sandbox_vocab import (
+    CONFINED,
+    DANGER_FULL_ACCESS,
+    MODES,
+    READ_ONLY,
+    WORKSPACE_WRITE,
+    check_mode,
+    confines,
+    writes,
+)
 
-MODES = (READ_ONLY, WORKSPACE_WRITE, DANGER_FULL_ACCESS)
-CONFINED = (READ_ONLY, WORKSPACE_WRITE)
+__all__ = [
+    "CONFINED",
+    "DANGER_FULL_ACCESS",
+    "MODES",
+    "READ_ONLY",
+    "WORKSPACE_WRITE",
+    "admit_path",
+    "blocked",
+    "check_mode",
+    "confines",
+    "inside",
+    "private_temp",
+    "project_identity",
+    "root_from",
+    "writes",
+]
 
 _SECRET_NAMES = {"id_rsa", "id_ed25519", "credentials.json"}
 _SECRET_PARTS = {".git", ".ssh", ".aws"}
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
-
-
-def check_mode(mode: str) -> str:
-    """Reject an unknown file mode."""
-    if mode not in MODES:
-        raise ValueError("文件模式只能是只读、工作区可写，或跳过包装")
-    return mode
-
-
-def writes(mode: str) -> bool:
-    """Whether the workspace root itself may be changed."""
-    return mode in {WORKSPACE_WRITE, DANGER_FULL_ACCESS}
-
-
-def confines(mode: str) -> bool:
-    """Whether an external command must be wrapped."""
-    return mode in CONFINED
 
 
 def project_identity(root: str) -> dict[str, str]:
@@ -96,6 +100,7 @@ def admit_path(
     *,
     write: bool,
     own_temp: str = "",
+    mode: str = "",
 ) -> Path:
     """Resolve a path and keep it inside an allowed root."""
     requested = candidate.expanduser()
@@ -104,18 +109,20 @@ def admit_path(
     except OSError:
         resolved = requested
     if blocked(requested) or blocked(resolved) or _other_private_temp(resolved, own_temp):
-        raise PermissionError("这个路径不在允许的地方")
+        raise PermissionError("This path is not in an allowed location")
+    if mode and not confines(mode):
+        return resolved
     matches = [
         (root, writable)
         for root, writable in roots
         if _contains(root, resolved)
     ]
     if not matches:
-        raise PermissionError("这个路径不在允许的地方")
+        raise PermissionError("This path is not in an allowed location")
     if write:
         deepest = max(matches, key=lambda item: (len(item[0]), 0 if item[1] else 1))
         if not deepest[1]:
-            raise PermissionError("这里只能读，不能改")
+            raise PermissionError("This path is read-only")
     return resolved
 
 

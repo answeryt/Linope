@@ -8,12 +8,11 @@ from typing import Any
 
 
 class ResourceKind(StrEnum):
-    """The first five kinds. Later kinds live in the contract registry."""
+    """The resource kinds. Later kinds live in the contract registry."""
 
     MEMORY = "memory"
     TOOL = "tool"
     SANDBOX = "sandbox"
-    MODEL = "model"
     NETWORK = "network"
 
 

@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import threading
 from collections.abc import Callable
 from typing import Any, Optional
@@ -50,11 +49,11 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if isinstance(body, str):
         body = {"command": body, "description": body}
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch("bash", body, **(call_params or {}))
 
 
@@ -99,19 +98,22 @@ def bash_persistent(
         'printf "\\n__DSH_CWD__:%s\\n" "$(pwd -P)"\n'
         "exit $__dsh_status"
     )
+    from kernel.environment import current_room
+
+    room = current_room()
+    if room is None:
+        return _error("No room; cannot run directly")
     try:
-        completed = subprocess.run(
-            [executable, "-lc", wrapper],
+        completed, permit = room.compute.run(
+            [executable, "-c", wrapper],
             cwd=session["cwd"],
-            env=session["env"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            timeout_seconds=timeout,
         )
-    except subprocess.TimeoutExpired:
-        return _error(f"command timed out after {int(timeout * 1000)}ms")
-    except OSError as exc:
+    except TimeoutError as exc:
         return _error(str(exc))
+    except (PermissionError, ValueError, RuntimeError, OSError) as exc:
+        return _error(str(exc))
+    del permit
 
     stdout = completed.stdout or ""
     marker = "\n__DSH_CWD__:"

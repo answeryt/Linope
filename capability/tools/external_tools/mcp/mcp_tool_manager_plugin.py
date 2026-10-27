@@ -439,7 +439,7 @@ def _runtime() -> Any:
         path = Path(__file__).resolve().with_name("mcp_runtime.py")
         spec = importlib.util.spec_from_file_location("linope_mcp_runtime", path)
         if spec is None or spec.loader is None:
-            raise RuntimeError(f"打不开 MCP 运行时: {path}")
+            raise RuntimeError(f"Cannot open the MCP runtime: {path}")
         module = importlib.util.module_from_spec(spec)
         sys.modules["linope_mcp_runtime"] = module
         try:
@@ -453,16 +453,16 @@ def _runtime() -> Any:
 
 def _tool_call(kind, body) -> tuple[str, dict[str, Any]]:
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if isinstance(body, str):
         body = {"name": body}
     if body is None:
         body = {}
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     arguments = body.get("arguments") or {}
     if not isinstance(arguments, dict):
-        raise TypeError("arguments 必须是映射")
+        raise TypeError("arguments must be a mapping")
     return str(body.get("name") or ""), dict(arguments)
 
 

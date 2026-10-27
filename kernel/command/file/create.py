@@ -6,7 +6,7 @@ from pathlib import Path
 
 from kernel.command.convention import UsageError, guard
 
-USAGE = "用法: linope create <路径> [-- 名字=值]"
+USAGE = "usage: linope create <path> [-- name=value]"
 
 
 @guard(USAGE)

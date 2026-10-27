@@ -110,10 +110,15 @@ def test_sleeping_alone_does_not_add() -> None:
     book = ProcessResourceBook()
     network = _lease("network", "net", {"channel": "ledger"})
     memory = _lease("memory", "mem", {"scope": "chat"})
-    model = _lease("model", "model", {"provider": "openai", "id": "gpt-4o"})
-    _ready(book, 7, [network, memory, model])
+    _ready(book, 7, [network, memory])
     pool = _Pool({"mem": _Entity({"items": {"system": {"class": "system", "content": "rules"}}})})
-    pressure = measure(pool=pool, record=book.get(7), book=book, activity="sleeping")
+    pressure = measure(
+        pool=pool,
+        record=book.get(7),
+        book=book,
+        activity="sleeping",
+        model="gpt-4o",
+    )
     assert pressure.peers == 0
     assert pressure.context_full is False
     assert relieve(book, 7, pressure, delegating=True) == 1

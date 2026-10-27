@@ -79,12 +79,12 @@ class ResourceLeaseManager:
         """Reject a handle that is not this process's current token."""
         record = self._handles.get(handle)
         if record is None or record["status"] != HandleStatus.ACTIVE:
-            raise PermissionError("旧凭证不能再写")
+            raise PermissionError("Old credential can no longer write")
         if int(record["pid"]) != int(pid):
-            raise PermissionError("这张句柄不属于这个进程")
+            raise PermissionError("This handle does not belong to this process")
         entity = self._entities[str(record["resource_id"])]
         if int(record["fencing_token"]) != int(entity.fencing_token):
-            raise PermissionError("旧凭证不能再写")
+            raise PermissionError("Old credential can no longer write")
 
     def acquire(self, context: ResourceContext) -> tuple[ResourceLease, ...]:
         import uuid
@@ -159,22 +159,10 @@ class ResourceLeaseManager:
         return self._entities.get(resource_id)
 
     def memory_named(self, scope: str) -> ResourceEntity | None:
-        """The one loaded memory with this name. None when the pool has no such memory."""
-        wanted = str(scope or "").strip()
-        if not wanted:
-            return None
-        matches = [
-            entity
-            for entity in self._entities.values()
-            if str(entity.kind) == "memory"
-            and str((entity.identity or {}).get("scope") or "") == wanted
-            and entity.status == "loaded"
-        ]
-        if len(matches) > 1:
-            raise ValueError("这个名字对应多份记忆")
-        if not matches:
-            return None
-        return matches[0]
+        """Direct lookup is not an access right. The scheduler must approve first."""
+
+        del scope
+        raise PermissionError("This range is outside this process's address space")
 
     def release(self, pid: int) -> tuple[ResourceEntity, ...]:
         unloaded: list[ResourceEntity] = []

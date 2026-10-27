@@ -83,11 +83,11 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if isinstance(body, str):
         body = {"command": body, "description": body}
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch("bash", body, **(call_params or {}))
 
 
@@ -127,30 +127,25 @@ def bash(
     if executable is None:
         return _error("bash is not available on this host")
 
-    argv = [executable, "-lc", command]
+    argv = [executable, "-c", command]
     timeout = None if run_in_background else (timeout_ms or DEFAULT_TIMEOUT_MS) / 1000.0
     try:
-        argv, cwd, env, timeout = _permit(argv, cwd, timeout)
+        permit = _permit(argv, cwd, timeout)
     except (PermissionError, ValueError, RuntimeError) as error:
         return _error(str(error))
     if run_in_background:
-        return _start_background(argv, cwd, description, jobs_start, env)
+        return _start_background(list(permit.argv), permit.cwd, description, jobs_start, permit.env)
 
-    return _run_foreground(argv, cwd, timeout or (DEFAULT_TIMEOUT_MS / 1000.0), env)
+    return _run_foreground(argv, cwd, timeout)
 
 
-def _permit(
-    argv: list[str],
-    cwd: str,
-    timeout: Optional[float],
-) -> tuple[list[str], str, Optional[dict[str, str]], Optional[float]]:
+def _permit(argv: list[str], cwd: str, timeout: Optional[float]):
     from kernel.environment import current_room
 
     room = current_room()
     if room is None:
-        return argv, cwd, None, timeout
-    permit = room.compute.prepare(argv, cwd=cwd, timeout_seconds=timeout, isolate=False)
-    return list(permit.argv), permit.cwd, permit.env, permit.timeout_seconds
+        raise RuntimeError("No room; cannot run directly")
+    return room.compute.prepare(argv, cwd=cwd, timeout_seconds=timeout)
 
 
 def _start_background(
@@ -215,27 +210,23 @@ def _start_background(
     )
 
 
-def _run_foreground(
-    argv: list[str],
-    cwd: str,
-    timeout: float,
-    env: Optional[dict[str, str]] = None,
-) -> str:
+def _run_foreground(argv: list[str], cwd: str, timeout: Optional[float]) -> str:
+    from kernel.environment import current_room
+    from kernel.environment.confine import denial_in_output
+
+    room = current_room()
+    if room is None:
+        return _error("No room; cannot run directly")
     try:
-        completed = subprocess.run(
-            argv,
-            cwd=cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return _error(f"command timed out after {int(timeout * 1000)}ms")
-    except OSError as exc:
+        completed, permit = room.compute.run(argv, cwd=cwd, timeout_seconds=timeout)
+    except TimeoutError as exc:
+        return _error(str(exc))
+    except (PermissionError, ValueError, RuntimeError, OSError) as exc:
         return _error(str(exc))
 
     text = "".join(part for part in (completed.stdout, completed.stderr) if part)
+    if denial_in_output(completed.returncode, completed.stderr or "", permit.denial_signatures):
+        text = f"{text.rstrip()}\n[sandbox: file access denied under {room.filesystem.access_mode} mode]"
     text = _tail(text, MAX_INLINE_CHARS)
     if completed.returncode != 0:
         marker = f"[exit code: {completed.returncode}]"

@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Host-sibling check: model_provider templates stay format-equivalent data.
+"""Host-sibling check: a model provider card is one JSON file.
 
-Each provider directory must ship YAML, JSON, and TOML with the same schema
-keys. Files are data, not code — they must not perform SDK calls.
+Each provider directory ships `<name>.json`. The file is data, not code —
+it must not perform SDK calls.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,6 @@ PLUGIN_NAME = "plugin_provider_config"
 PLUGIN_VERSION = "1.0"
 
 REQUIRED_TOP = ("provider", "interface", "model", "api_key_env", "parameters")
-FORMATS = (".yaml", ".yml", ".json", ".toml")
 
 
 def run(context: dict[str, Any]) -> dict[str, Any]:
@@ -54,85 +52,45 @@ def _check_provider_dir(
     provider_dir: Path,
 ) -> None:
     rel_dir = provider_dir.relative_to(repo).as_posix()
-    stem = provider_dir.name
-    files: dict[str, Path] = {}
-    for path in provider_dir.iterdir():
-        if not path.is_file() or path.suffix.lower() not in FORMATS:
-            continue
-        if path.stem != stem:
-            continue
-        files[path.suffix.lower()] = path
-    if ".yaml" not in files and ".yml" not in files:
+    json_path = provider_dir / f"{provider_dir.name}.json"
+    if not json_path.is_file():
         context["violations"].append(
-            _violation("provider.formats", rel_dir, "missing YAML template")
+            _violation("provider.formats", rel_dir, "missing JSON card")
         )
-    if ".json" not in files:
+        return
+    try:
+        loaded = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         context["violations"].append(
-            _violation("provider.formats", rel_dir, "missing JSON template")
+            _violation(
+                "provider.json",
+                json_path.relative_to(repo).as_posix(),
+                f"invalid JSON: {exc}",
+            )
         )
-    if ".toml" not in files:
+        return
+    if not isinstance(loaded, dict):
         context["violations"].append(
-            _violation("provider.formats", rel_dir, "missing TOML template")
+            _violation(
+                "provider.json",
+                json_path.relative_to(repo).as_posix(),
+                "JSON card must be an object",
+            )
         )
-
-    json_path = files.get(".json")
-    payload: dict[str, Any] | None = None
-    if json_path is not None:
-        try:
-            loaded = json.loads(json_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return
+    rel = json_path.relative_to(repo).as_posix()
+    _require_keys(context, rel, loaded)
+    interface = loaded.get("interface")
+    if isinstance(interface, str) and interface:
+        interface_file = _interface_file(repo, interface)
+        if interface_file is None:
             context["violations"].append(
                 _violation(
-                    "provider.json",
-                    json_path.relative_to(repo).as_posix(),
-                    f"invalid JSON: {exc}",
+                    "provider.interface",
+                    rel,
+                    f"interface `{interface}` has no model_interface/{interface}.py",
                 )
             )
-        else:
-            if not isinstance(loaded, dict):
-                context["violations"].append(
-                    _violation(
-                        "provider.json",
-                        json_path.relative_to(repo).as_posix(),
-                        "JSON template must be an object",
-                    )
-                )
-            else:
-                payload = loaded
-                _require_keys(
-                    context,
-                    json_path.relative_to(repo).as_posix(),
-                    loaded,
-                )
-                interface = loaded.get("interface")
-                if isinstance(interface, str) and interface:
-                    interface_file = _interface_file(repo, interface)
-                    if interface_file is None:
-                        context["violations"].append(
-                            _violation(
-                                "provider.interface",
-                                json_path.relative_to(repo).as_posix(),
-                                f"interface `{interface}` has no "
-                                f"model_interface/{interface}.py",
-                            )
-                        )
-
-    yaml_path = files.get(".yaml") or files.get(".yml")
-    if yaml_path is not None:
-        _require_text_keys(
-            context,
-            yaml_path.relative_to(repo).as_posix(),
-            yaml_path.read_text(encoding="utf-8"),
-            payload,
-        )
-    toml_path = files.get(".toml")
-    if toml_path is not None:
-        _require_text_keys(
-            context,
-            toml_path.relative_to(repo).as_posix(),
-            toml_path.read_text(encoding="utf-8"),
-            payload,
-        )
 
 
 def _require_keys(
@@ -151,35 +109,6 @@ def _require_keys(
             )
 
 
-def _require_text_keys(
-    context: dict[str, Any],
-    rel: str,
-    text: str,
-    payload: dict[str, Any] | None,
-) -> None:
-    for key in REQUIRED_TOP:
-        if not _has_key(text, key):
-            context["violations"].append(
-                _violation(
-                    "provider.schema",
-                    rel,
-                    f"missing required top-level key `{key}`",
-                )
-            )
-    if not payload:
-        return
-    for key in ("provider", "interface"):
-        expected = payload.get(key)
-        if isinstance(expected, str) and expected and expected not in text:
-            context["violations"].append(
-                _violation(
-                    "provider.equivalent",
-                    rel,
-                    f"`{key}` must match JSON value `{expected}`",
-                )
-            )
-
-
 def _interface_file(repo: Path, interface: str) -> Path | None:
     for relative in (
         Path("model") / "model_API" / "model_interface" / f"{interface}.py",
@@ -189,14 +118,6 @@ def _interface_file(repo: Path, interface: str) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
-
-
-def _has_key(text: str, key: str) -> bool:
-    return bool(
-        re.search(rf'(?m)^[ \t]*{re.escape(key)}\s*[:=]', text)
-        or re.search(rf'(?m)^[ \t]*\[{re.escape(key)}\]', text)
-        or re.search(rf'"{re.escape(key)}"\s*:', text)
-    )
 
 
 def _violation(rule: str, path: str, detail: str) -> dict[str, str]:

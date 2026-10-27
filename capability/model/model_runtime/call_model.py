@@ -68,7 +68,7 @@ def _card_path(card: str | Path) -> Path:
 
 
 def load_card(card: str | Path) -> dict[str, Any]:
-    """Read one provider card. YAML/TOML templates are ignored."""
+    """Read one provider card from its JSON file."""
     loaded = json.loads(_card_path(card).read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         raise ValueError(f"model card must be a mapping: {card!r}")

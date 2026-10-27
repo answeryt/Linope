@@ -1,7 +1,0 @@
-enabled = "UNSET"
-max_chars = "UNSET"
-chars_per_token = "UNSET"
-context_window_fraction = "UNSET"
-max_dynamic_chars = "UNSET"
-head_ratio = "UNSET"
-tail_ratio = "UNSET"

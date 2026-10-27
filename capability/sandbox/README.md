@@ -1,6 +1,6 @@
 # sandbox/ — process-sandbox capability family
 
-English | [中文](README.zh.md)
+English | [中文](README.cn.md)
 
 This family applies per-session file-write policy to same-world process execution. Isolated environments such as Docker do not register on `confine`.
 
@@ -13,3 +13,8 @@ This family applies per-session file-write policy to same-world process executio
 | [`workspace/`](workspace/README.md) | Docker container workspace (image, exec, bind-mount) | Converted to Linope plugins |
 
 Modes: `read-only` / `workspace-write` / `danger-full-access`.
+
+## Known Limitations and Deferred Work
+
+- **Docker workspace is a separate contract** — [`workspace/`](workspace/README.md) does not register on `confine`.
+- **`tool` and `sandbox` entities are marked loaded at open** — the platform wrapper runs later, from [`kernel/environment`](../../kernel/environment/README.md) `confine`.

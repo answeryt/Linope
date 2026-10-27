@@ -1,14 +1,15 @@
-"""How one message reaches another process. The user picks the channel by name.
+"""How a process keeps its own notes, and how a caller reaches another service.
 
-A message is a plain mapping: ``kind``, ``content``, ``state``, and ``sender``.
-``memory`` is the default: it writes the row into the receiver's shared memory,
-and the receiver reads every row after the seq it has already seen. ``grpc``,
-``nats``, and ``zeromq`` hand the same mapping to the library of that name.
+``MemoryChannel`` writes one row into a process's memory. A question uses it
+for that process's own notes. It is not a way to reach another service.
+
+Another service is reached only through a channel the caller already opened.
+``deliver`` names one address. ``publish`` names a topic. Both are plain strings.
+The kernel does not choose a transport and does not open one.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any, Protocol
 
 from kernel.communication.address import memory_contents, memory_grant, remember
@@ -26,37 +27,40 @@ class Channel(Protocol):
     def close(self) -> None: ...
 
 
-_FACTORIES: dict[str, Callable[..., Channel]] = {}
+class ServiceChannel(Protocol):
+    """A channel the caller opened. The kernel does not construct one."""
+
+    def send(self, to: str, message: dict[str, Any], sender: str = "") -> str:
+        """Deliver one message to one address."""
+
+    def publish(self, topic: str, message: dict[str, Any], sender: str = "") -> None:
+        """Deliver one message to a topic. No single recipient is named."""
+
+    def receive(self, me: str, after: int = 0) -> list[dict[str, Any]]:
+        """Messages for ``me`` whose seq is after ``after``, oldest first."""
+
+    def close(self) -> None: ...
 
 
-def register_channel(name: str, factory: Callable[..., Channel]) -> None:
-    _FACTORIES[str(name)] = factory
+def deliver(channel: Any, to: str, message: dict[str, Any], sender: str = "") -> str:
+    """Hand one message to the address ``to``. The address is the caller's string."""
+    _opened(channel)
+    return channel.send(str(to), dict(message), sender)
 
 
-def channel_names() -> tuple[str, ...]:
-    return tuple(sorted(_FACTORIES))
+def publish(channel: Any, topic: str, message: dict[str, Any], sender: str = "") -> None:
+    """Hand one message to a topic. The topic is the caller's string."""
+    _opened(channel)
+    channel.publish(str(topic), dict(message), sender)
 
 
-def open_channel(name: str = "memory", **settings: Any) -> Channel:
-    """Open the channel the user named. An unknown name lists the known ones."""
-    factory = _FACTORIES.get(str(name))
-    if factory is None:
-        raise ValueError(f"不认识的通道: {name}。可以用: {'、'.join(channel_names())}")
-    return factory(**settings)
-
-
-def needs(package: str, module: str) -> Any:
-    """Import a library a channel is built on, or say which package to install."""
-    import importlib
-
-    try:
-        return importlib.import_module(module)
-    except ImportError as exc:
-        raise RuntimeError(f"这个通道要先安装 {package}: pip install {package}") from exc
+def _opened(channel: Any) -> None:
+    if channel is None:
+        raise ValueError("No channel selected")
 
 
 class MemoryChannel:
-    """Write into the receiver's shared memory. Reading is every row after a seq."""
+    """Write into this process's memory. Reading is every row after a seq."""
 
     name = "memory"
 
@@ -96,41 +100,7 @@ class MemoryChannel:
         try:
             grants = self._pool.grants_for(int(pid))
         except (KeyError, ValueError) as exc:
-            raise LookupError(f"没有这个还开着的进程: {pid}") from exc
+            raise LookupError(f"No such open process: {pid}") from exc
         if memory_grant(grants) is None:
-            raise RuntimeError("这个进程没有记忆")
+            raise RuntimeError("This process has no memory")
         return grants
-
-
-class Inbox:
-    """Received messages for one process, numbered as they arrive."""
-
-    def __init__(self) -> None:
-        import threading
-
-        self._lock = threading.Lock()
-        self._rows: list[dict[str, Any]] = []
-
-    def put(self, message: dict[str, Any]) -> int:
-        with self._lock:
-            seq = len(self._rows) + 1
-            self._rows.append({**message, "seq": seq})
-            return seq
-
-    def after(self, seq: int) -> list[dict[str, Any]]:
-        with self._lock:
-            return [dict(row) for row in self._rows if row["seq"] > int(seq)]
-
-
-def _register_defaults() -> None:
-    from kernel.communication.grpc_channel import GrpcChannel
-    from kernel.communication.nats_channel import NatsChannel
-    from kernel.communication.zeromq_channel import ZeroMqChannel
-
-    register_channel("memory", MemoryChannel)
-    register_channel("grpc", GrpcChannel)
-    register_channel("nats", NatsChannel)
-    register_channel("zeromq", ZeroMqChannel)
-
-
-_register_defaults()

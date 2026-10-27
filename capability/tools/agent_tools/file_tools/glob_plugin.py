@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -54,9 +53,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('glob', body, **(call_params or {}))
 
 
@@ -69,11 +68,10 @@ def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
 def glob_files(pattern: str, path: Optional[str] = None, workspace: Optional[str] = None) -> str:
     if not pattern.strip():
         return _error("invalid pattern: expected a non-empty string")
-    root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
-    if path:
-        candidate = Path(path)
-        root = candidate if candidate.is_absolute() else root / candidate
-    root = root.resolve()
+    try:
+        root = _root(path, workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
     if not root.is_dir():
         return _error(f"directory not found: {root}")
     query = pattern if "/" in pattern or "\\" in pattern else f"**/{pattern}"
@@ -95,6 +93,14 @@ def glob_files(pattern: str, path: Optional[str] = None, workspace: Optional[str
         },
         ensure_ascii=False,
     )
+
+
+def _root(path: Optional[str], workspace: Optional[str]) -> Path:
+    from kernel.environment import current_room
+    from kernel.environment.file_io import door_for
+
+    door = door_for(current_room(), workspace)
+    return door.resolve(path or ".", write=False, base=workspace)
 
 
 def _error(message: str, **details: Any) -> str:

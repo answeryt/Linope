@@ -57,23 +57,26 @@ def measure(
     record: Any,
     book: Any | None,
     activity: str,
+    model: str = "",
 ) -> Pressure:
     """Read this process's memory and the other processes on its channel."""
     leases = tuple(getattr(record, "leases", ()) or ())
-    model = _model_id(leases)
+    name = str(model or "")
     tokens = 0
     entity = _memory_entity(pool, leases)
     state = {}
     if entity is not None and isinstance(getattr(entity, "state", None), dict):
         state = entity.state
-    for content in _contents(state):
-        tokens += count_tokens(model, content)
-    limit = resolve_default_context_length(model or "unknown/model")
+    from kernel.resource.memory.token_meter import count_state
+    from kernel.scheduler.access import capacity_full
+
+    tokens = count_state(name, state)
+    limit = resolve_default_context_length(name or "unknown/model")
     channel = _channel(leases)
     return Pressure(
         tokens=tokens,
         context_limit=limit,
-        context_full=limit > 0 and tokens >= limit,
+        context_full=capacity_full(tokens, limit),
         channel=channel,
         peers=_peers(book, record, channel),
         activity=str(activity or "sleeping"),
@@ -100,35 +103,6 @@ def _is_image(content: Any) -> bool:
         return False
     path = lowered.split("?", 1)[0]
     return path.endswith(_IMAGE_SUFFIXES)
-
-
-def _contents(state: dict[str, Any]) -> list[Any]:
-    items = state.get("items")
-    found: list[Any] = []
-    saw_system = False
-    if isinstance(items, dict):
-        for item in items.values():
-            if isinstance(item, dict):
-                if item.get("class") == "system" or item.get("kind") == "system":
-                    saw_system = True
-                content = item.get("content")
-                if content not in (None, ""):
-                    found.append(content)
-            elif item not in (None, ""):
-                found.append(item)
-    system = state.get("system")
-    if not saw_system and isinstance(system, str) and system:
-        found.append(system)
-    return found
-
-
-def _model_id(leases: tuple[Any, ...]) -> str:
-    for lease in leases:
-        if str(getattr(lease, "kind", "")) != "model":
-            continue
-        identity = getattr(lease, "identity", {}) or {}
-        return str(identity.get("id") or "")
-    return ""
 
 
 def _channel(leases: tuple[Any, ...]) -> str:

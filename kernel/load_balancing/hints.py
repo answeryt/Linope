@@ -58,5 +58,5 @@ def one_resource(found: tuple[Seat, ...]) -> tuple[Seat, ...]:
         return ()
     resource_ids = {item.resource_id for item in found}
     if len(resource_ids) != 1:
-        raise ValueError("这些进程没有共用同一份资源，不能互相分单")
+        raise ValueError("These processes do not share one resource and cannot split work")
     return found

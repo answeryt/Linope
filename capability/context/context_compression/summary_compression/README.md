@@ -1,27 +1,29 @@
-# 摘要压缩的原子函数
+# Atomic functions for summary compression
 
-这个目录里的函数从根目录的 `context_compression.py` 算法中拆出，各自无状态、只做一件事。每个 Python 文件只导入标准库。这些文件还不是会被自动发现并组装的能力插件；由宿主显式导入并接好。函数之间互不导入，也不导入 `sliding_window`、`semantic_compression`、模型代码或词元代码。
+English | [中文](README.cn.md)
 
-## 原子函数
+The functions in this directory each do one thing and import only the standard library. `load` selects one of them through [`load_in_directory`](../../README.md). A host may also import them and wire them with `functools.partial` or a closure. Functions do not import each other, and they do not import `sliding_window`, `semantic_compression`, model code, or token code.
 
-- `summary_budget.py`：用宿主提供的估算器计算有上限的目标预算。
-- `turn_serializer.py`：把轮次的字典列表序列化。脱敏、去掉思考内容、给图片加标签都由外部注入。
-- `aggregate_input_bounder.py`：按确定的头尾规则限制汇总输入的长度。
-- `structured_prompt_builder.py`：构造首轮和后续提示，并写上焦点、记忆、日期和出处说明。
-- `static_fallback.py`：本地确定的检查点，不调用模型。
-- `summary_text.py`：去掉摘要前缀、做规范化，并给摘要分类。
-- `handoff_helpers.py`：发现交接内容、剥掉交接标记，以及恢复交接数据。
-- `real_user_provenance.py`：判断是不是真实用户，并在没有用户时做校验。
-- `latest_task_grounding.py`：按确定规则把摘要落实到最近一项任务。
-- `auto_focus.py`：从最近的真实用户轮次推断有限长度的焦点。
-- `summary_runner.py`：注入一次大模型调用，并返回结构化结果。
-- `compressed_transcript_assembler.py`：按交替顺序安全插入、并入末尾、写入元数据，并清理注入进来的过期附属内容。
+## Atomic functions
 
-这里不提供 `host.py` 或 `facade.py`。组装、配置、重试、冷却、遥测、持久化和失败策略都由应用宿主负责。
+- `summary_budget.py`: compute a capped target budget with the estimator the host provides.
+- `turn_serializer.py`: serialize a turn's list of dictionaries. Redaction, stripping thinking, and labeling images are injected from outside.
+- `aggregate_input_bounder.py`: limit the length of the aggregated input with a fixed head-and-tail rule.
+- `structured_prompt_builder.py`: build the first and later prompts, and write the focus, memory, date, and source notes.
+- `static_fallback.py`: a local deterministic checkpoint. It does not call a model.
+- `summary_text.py`: strip the summary prefix, normalize, and classify the summary.
+- `handoff_helpers.py`: find handoff content, strip handoff markers, and restore handoff data.
+- `real_user_provenance.py`: decide whether this is a real user, and validate when there is no user.
+- `latest_task_grounding.py`: ground the summary on the latest task with a fixed rule.
+- `auto_focus.py`: infer a bounded focus from the latest real user turn.
+- `summary_runner.py`: inject one model call and return a structured result.
+- `compressed_transcript_assembler.py`: insert in alternating order, merge onto the end, write metadata, and clear stale attached content that was injected.
 
-## 宿主如何组装
+There is no `host.py` or `facade.py` here. Assembly, configuration, retry, cooldown, telemetry, persistence, and failure policy belong to the application host.
 
-宿主可以导入需要的函数，再用 `functools.partial` 或本地小闭包把它们接起来：
+## How the host assembles them
+
+The host can import the functions it needs, then connect them with `functools.partial` or a small local closure:
 
 ```python
 from functools import partial
@@ -77,6 +79,11 @@ result = run_summary_generation(
 )
 ```
 
-`run_summary_generation` 不会重试，不会改宿主状态，也不会自行换成兜底结果。当 `result["ok"] == False` 时，宿主必须明确选择：保留原始记录、换一个提供商再试、进入冷却，还是调用 `build_static_fallback`。只有做出这个决定之后，宿主才应调用 `assemble_compressed_transcript`。
+`run_summary_generation` does not retry, does not change host state, and does not substitute a fallback result on its own. When `result["ok"] == False`, the host must choose explicitly: keep the original record, try another provider, enter cooldown, or call `build_static_fallback`. Only after that decision should the host call `assemble_compressed_transcript`.
 
-所有面向记录的接口都保持 `list[dict]`。回调是扩展边界，用来接入本项目自己的判断、脱敏、词元估算、模型适配、回复提取，以及过期 `api_content` 的清除。
+Every record-facing interface stays `list[dict]`. Callbacks are the extension boundary. They connect this project's own judgment, redaction, token estimates, model adapters, reply extraction, and clearing of stale `api_content`.
+
+## Known Limitations and Deferred Work
+
+- **`run_summary_generation` does not retry or fall back** — when `result["ok"]` is false, the host chooses the next step, including `build_static_fallback`.
+- **No facade** — `load_in_directory` will run only when the body's keys match exactly one function in this folder. The host still imports the pieces it wants to chain.

@@ -1,45 +1,12 @@
-"""Follow only the links a client selected. Unselected links write no pages."""
+"""Select links on a page. This module does not run a model turn.
 
-from __future__ import annotations
+The name remains so older imports keep working. New code should call
+``kernel.hypermedia.link_selector``. Model turns are scheduled by
+``kernel.scheduler``.
+"""
 
-from collections.abc import Collection
-from dataclasses import dataclass
+from kernel.hypermedia.link_selector import FollowResult, link_named, select_links
 
-from kernel.hypermedia.link import Link
-from kernel.hypermedia.representation import Representation
+follow_selected = select_links
 
-
-@dataclass(frozen=True)
-class FollowResult:
-    """Selected links that could be walked, and every link that stayed put."""
-
-    followed: tuple[Link, ...]
-    left: tuple[Link, ...]
-
-
-def follow_selected(
-    representation: Representation,
-    selected: Collection[str],
-) -> FollowResult:
-    """Walk links whose resource id was selected and that carry a handle.
-
-    A selected link with no handle stays in ``left``. This function returns
-    links only; it does not create pages.
-    """
-    chosen = set(selected)
-    followed: list[Link] = []
-    left: list[Link] = []
-    for link in representation.links:
-        if link.resource_id in chosen and link.can_follow():
-            followed.append(link)
-        else:
-            left.append(link)
-    return FollowResult(followed=tuple(followed), left=tuple(left))
-
-
-def link_named(representation: Representation, relation: str) -> Link | None:
-    """Return the followable link for this relation, or none when it is absent."""
-    for link in representation.links:
-        if link.relation == relation and link.can_follow():
-            return link
-    return None
+__all__ = ["FollowResult", "follow_selected", "link_named", "select_links"]

@@ -1,16 +1,15 @@
 # process_creat
 
-这个目录负责找出要启动的能力，并把它打成一份激活信息。
+English | [中文](README.cn.md)
 
-它做两件事：
+This directory finds the capability to start and packs it into one activation. Opening the resource record is [`reconcile.py`](../reconcile.py). This directory does not decide whether sharing is allowed, and it does not stop or reclaim.
 
-- 按名字找到能力插件，例如 `model.openai_chat_model`。需要哪种资源由档案函数说明，不在这里猜。
-- 把插件路径、资源句柄和运行环境收成 `ProcessActivation`。句柄和需求对不上时，这里拒绝启动。
+## Contract
 
-真正打开资源记录、绑定租约的是 `kernel/process/reconcile.py`。这里不决定能不能共享，也不负责停止和回收。
+`instances.py` resolves one capability name, such as `model.openai_chat_model`, to one `CapabilityDefinition`: plugin paths, entrypoint `load`, and the resource requirements the profile stated. One capability has one entry. This directory does not guess missing requirements.
 
-## 文件
+`activation.py` packs that definition, the resource grants, the pid, the room, host policy, thread policy, and settings into a `ProcessActivation`. The pid must be a positive operating-system process id. If the grants do not match the needs, start is refused here.
 
-- `__init__.py`：导出创建进程时用到的类型和查找函数。
-- `instances.py`：按能力名解析插件入口。一个能力只对应一个入口。
-- `activation.py`：把「哪个插件、哪些句柄、什么环境」打成启动时用的激活信息。
+## Known Limitations and Deferred Work
+
+- **Lookup is one name to one plugin entry** — there is no second entrypoint selector on the activation.

@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from kernel.environment.identity import check_access_mode
-from kernel.environment.mount import admit_path, private_temp, writes
+from kernel.environment.mount import admit_path, inside, private_temp
+from kernel.environment.sandbox_vocab import confines, writable_roots
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class FilesystemView:
     def __post_init__(self) -> None:
         object.__setattr__(self, "access_mode", check_access_mode(self.access_mode))
         if not any(root.name == "workspace" for root in self.roots):
-            raise ValueError("文件系统缺少工作区")
+            raise ValueError("Filesystem has no workspace")
 
     def root_path(self, name: str) -> str:
         for root in self.roots:
@@ -57,16 +58,17 @@ class FilesystemView:
             tuple((root.path, root.writable) for root in self.roots),
             write=write,
             own_temp=own_temp,
+            mode=self.access_mode,
         )
 
     def with_access_mode(self, access_mode: str) -> "FilesystemView":
         mode = check_access_mode(access_mode)
-        writable = writes(mode)
+        workspace = self.root_path("workspace")
         roots = tuple(
             FilesystemRoot(
                 name=root.name,
                 path=root.path,
-                writable=writable and root.name != "package",
+                writable=_root_writable(mode, root.name, root.path, workspace),
             )
             for root in self.roots
         )
@@ -97,14 +99,23 @@ class FilesystemView:
         pid: int = 0,
     ) -> "FilesystemView":
         mode = check_access_mode(access_mode)
-        writable = writes(mode)
         root = workspace.expanduser().resolve()
+        workspace_path = str(root)
         roots = [
-            FilesystemRoot(name="workspace", path=str(root), writable=writable),
+            FilesystemRoot(
+                name="workspace",
+                path=workspace_path,
+                writable=_root_writable(mode, "workspace", workspace_path, workspace_path),
+            ),
             FilesystemRoot(
                 name="temp",
-                path=private_temp(str(root), pid),
-                writable=writable,
+                path=private_temp(workspace_path, pid),
+                writable=_root_writable(
+                    mode,
+                    "temp",
+                    private_temp(workspace_path, pid),
+                    workspace_path,
+                ),
             ),
         ]
         seen: set[str] = set()
@@ -123,3 +134,11 @@ class FilesystemView:
                 FilesystemRoot(name="package", path=str(resolved), writable=False)
             )
         return cls(roots=tuple(roots), access_mode=mode)
+
+
+def _root_writable(mode: str, name: str, path: str, workspace: str) -> bool:
+    """Whether one view root is writable under the sandbox's own rules."""
+    if name == "package" or not confines(mode):
+        return name != "package"
+    granted = writable_roots({"mode": mode, "workspace_root": workspace})
+    return any(inside(item, Path(path)) for item in granted)

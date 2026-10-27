@@ -1,17 +1,17 @@
-# services：Agent = Service + Resources
+# services: Agent = Service + Resources
 
-## 词汇
+## Vocabulary
 
-- **Agent**：Service 与 Resources 的最终装配结果。
-- **Service**：唯一部署边界；接收 ProcessActivation 并运行 Process。
-- **Ingress**：把外部输入规范化为可序列化 Activation。
-- **RunQueue**：使用 lease 与 fencing token 调度 Process/Task 工作。
-- **ProcessStore**：Host 注入的 Process Run 持久化接口。
-- **Resources**：容器资源与模型资源组成的统一容量池。
+- **Agent**: The final assembly of Service and Resources.
+- **Service**: The only deployment boundary; it accepts a ProcessActivation and runs Processes.
+- **Ingress**: Normalizes external input into a serializable Activation.
+- **RunQueue**: Schedules Process and Task work with a lease and a fencing token.
+- **ProcessStore**: Host-injected persistence interface for a Process run.
+- **Resources**: The shared capacity pool of container resources and model resources.
 
-## 结构
+## Structure
 
-``
+```
 Agent
 ├── Service
 │   ├── Ingress
@@ -22,22 +22,22 @@ Agent
 └── Resources
     ├── Container Resources
     └── Model Resources
-``
+```
 
-## 本层拥有
+## This layer owns
 
 - `Service`
 - `ServiceBlueprint`
 - `ServiceSpec`
 - `ServiceHost`
 
-## 架构要求
+## Architecture requirements
 
-1. Agent 严格等于 Service + Resources，不是人格或进程层级。
-2. Service 是唯一部署边界，一个 Service 可以运行多个 Process。
-3. Ingress 只传可序列化 ProcessActivation，不传 live Process。
-4. Worker 使用 queue lease 和 fencing token 驱动 Process Runtime。
-5. Store、Queue 和 Ingress 是 Host adapter，不进入 Process 定义。
-6. OS process、worker、队列和部署框架只能出现在 services。
-7. 服务层只翻译规格、调用现有创建入口、按角色送信，并在关闭时逐成员停止。
-8. 副本管理和进程挑选不在服务层，分别留在 process 与 load_balancing。
+1. Agent is exactly Service plus Resources, not a persona or a process hierarchy.
+2. Service is the only deployment boundary; one Service can run multiple Processes.
+3. Ingress passes only a serializable ProcessActivation, not a live Process.
+4. A worker drives the Process Runtime with a queue lease and a fencing token.
+5. Store, Queue, and Ingress are host adapters and are not part of the Process definition.
+6. OS processes, workers, queues, and deployment frameworks appear only in services.
+7. The service layer only translates the spec, calls the existing create entry, delivers by role, and stops each member on shutdown.
+8. Replica management and process picking are not in the service layer; they stay in process and load_balancing.

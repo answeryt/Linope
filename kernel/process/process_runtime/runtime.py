@@ -107,7 +107,7 @@ def serve_stdio(stdin: Any | None = None, stdout: Any | None = None) -> None:
         return
     activation = startup.get("activation")
     if not isinstance(activation, dict):
-        _write_line(outgoing, {"event": "error", "error": "启动信息里没有这个能力"})
+        _write_line(outgoing, {"event": "error", "error": "The startup message does not name this capability"})
         return
     adapter = None
     try:
@@ -176,7 +176,7 @@ class _LineInbox:
                 self._write({"event": "error", "error": str(exc)})
                 continue
             if not isinstance(message, dict):
-                self._write({"event": "error", "error": "请求必须是一条记录"})
+                self._write({"event": "error", "error": "The request must be one record"})
                 continue
             request_id = str(message.get("request_id") or uuid.uuid4().hex)
             return ClaimedRequest(

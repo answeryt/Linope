@@ -1,11 +1,43 @@
 # load_balancing
 
-请求点的是资源种类和身份，不点进程号，也不点线程。
+English | [中文](README.cn.md)
 
-账本上已经有的提示用来分单：谁还握着同一份资源的租约、句柄上的限额、上下文用了多少、信箱里正在等和正在干的有几单，以及这家最近的往返时间。这些提示不另记一份忙闲表。带档位、依赖、服务或最晚开始时间的请求，要已经预定，这里才把它放进进程信箱。
+A request names a resource kind and an identity. It does not name a pid or a thread. This directory reads the ledger for who still holds that resource and who can still take new work, then picks one. It does not take a lease. The call that sends the request is `route` in [`kernel/scheduler`](../scheduler/README.md). That function uses the choice, the extra worker, and the new process from here.
 
-进程和进程平级。还有空的那几家里挑一家，把单放进它的信箱。一家都没有，就开第一个进程。都满了，插件又允许几个人一起改，就在这个进程里再加一个平级线程。不允许一起改，或者线程已经到上限，就再开一个平级进程，让它去租同一份身份的资源。没点名共享时，不能把单分到另一份进程上。
+## Each script
 
-线程和线程平级。线程不写进账本地址。谁闲着谁来领。模型不等待线程，它加减的是同时等回信的单数。
+`hints.py`
 
-均衡器自己不拿租约。新进程仍由现有的调和器拉起。闲着、而且多于最少份数的进程才会被要求停下。正在干活的不硬关。
+Lists the processes that still hold this resource, read from the ledger. The code calls one such row a `Seat`. It is that process's load right now: how many items are waiting, how many are already claimed, whether the context window is full, how long the last round trip took, and whether this resource may be shared. There is no second busy table. `one_resource` requires these processes to hold the same resource. Separate copies cannot be treated as one pool of work.
+
+`pick.py`
+
+Picks one process that can still take new work. Two or fewer candidates keep the one with less work on hand. More than two draws two at random and keeps the one with less work on hand. The order is claimed items, waiting items, latest round-trip time, then process id.
+
+`process_scale.py`
+
+Opens another peer process, or asks an idle peer to stop. `open_peer` calls the reconciler to open one, and refuses once the process count is at the ceiling. `close_idle` asks idle processes to stop and leaves at least the floor count. A process that still has work stays. A process that belongs to a service stays. `reconciler_opener` wraps one `reconciler.start` as the function that opens another process.
+
+`workers.py`
+
+A pool of peer threads. The ceiling can change while the pool is running. A thread is not written into the ledger address. Whoever is idle takes the work. `raise_on_process` raises one process's worker ceiling, up to the given cap. `raise_ceiling` and `lower_ceiling` move that ceiling by capability name.
+
+`inflight.py`
+
+How many model replies may be waited on at once. `sample` records one round trip and keeps the next allowance between the minimum and the maximum. A longer round trip tightens it. A shorter one lets it rise.
+
+`relieve.py`
+
+When [`kernel/calculate`](../calculate/README.md) reports pressure, raises that process's `worker_ceiling` by one. Several reasons at once still add only one. A missing record stays at 1.
+
+`route.py`
+
+Re-exports `kernel.scheduler.route`. The choice is not written in this file.
+
+`__init__.py`
+
+Exports `route` only.
+
+## Known Limitations and Deferred Work
+
+- **`relieve` has no helper cap of its own** — each time pressure holds, it adds one. The worker ceiling is enforced by `workers.raise_on_process` and `scheduler.route`.

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -78,9 +77,9 @@ def tool_schemas() -> list[dict[str, Any]]:
 def load(kind, body, call_params=None):
     """Load one tool call. Argument shape stays in this plugin."""
     if kind != "tool":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     if not isinstance(body, dict):
-        raise TypeError("tool 的内容必须是映射")
+        raise TypeError("tool content must be a mapping")
     return dispatch('str_replace_editor', body, **(call_params or {}))
 
 
@@ -111,7 +110,11 @@ def str_replace_editor(
     max_output_chars: int = MAX_OUTPUT_CHARS,
 ) -> str:
     """View, create, replace, or insert in a file."""
-    target = _resolve(path, workspace)
+    try:
+        door = _door(workspace)
+        target = door.resolve(path, write=False, base=workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
     if command == "view":
         return _view(target, view_range, max_output_chars)
     if command == "create":
@@ -119,17 +122,19 @@ def str_replace_editor(
             return _error("create requires file_text")
         if target.is_file():
             return _error(f"create refused: file already exists: {target}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(file_text, encoding="utf-8")
-        return json.dumps({"success": True, "path": str(target), "command": "create"}, ensure_ascii=False)
+        try:
+            written = door.write_text(path, file_text, base=workspace)
+        except (PermissionError, ValueError, OSError) as error:
+            return _error(str(error))
+        return json.dumps({"success": True, "path": str(written), "command": "create"}, ensure_ascii=False)
     if command == "str_replace":
         if old_str is None:
             return _error("str_replace requires old_str")
-        return _replace(target, old_str, new_str or "")
+        return _replace(door, path, target, old_str, new_str or "", workspace)
     if command == "insert":
         if insert_line is None or new_str is None:
             return _error("insert requires insert_line and new_str")
-        return _insert(target, int(insert_line), new_str)
+        return _insert(door, path, target, int(insert_line), new_str, workspace)
     return _error(f"unknown command: {command}")
 
 
@@ -153,7 +158,7 @@ def _view(target: Path, view_range: Optional[list[int]], max_output_chars: int) 
     return json.dumps({"success": True, "path": str(target), "content": numbered}, ensure_ascii=False)
 
 
-def _replace(target: Path, old_str: str, new_str: str) -> str:
+def _replace(door, path: str, target: Path, old_str: str, new_str: str, workspace: Optional[str]) -> str:
     if not target.is_file():
         return _error(f"file not found: {target}")
     text = target.read_text(encoding="utf-8")
@@ -162,11 +167,14 @@ def _replace(target: Path, old_str: str, new_str: str) -> str:
         return _error("old_str not found")
     if count != 1:
         return _error(f"old_str is not unique (found {count} matches)")
-    target.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
-    return json.dumps({"success": True, "path": str(target), "command": "str_replace"}, ensure_ascii=False)
+    try:
+        written = door.write_text(path, text.replace(old_str, new_str, 1), base=workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
+    return json.dumps({"success": True, "path": str(written), "command": "str_replace"}, ensure_ascii=False)
 
 
-def _insert(target: Path, insert_line: int, new_str: str) -> str:
+def _insert(door, path: str, target: Path, insert_line: int, new_str: str, workspace: Optional[str]) -> str:
     if not target.is_file():
         return _error(f"file not found: {target}")
     lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -174,8 +182,11 @@ def _insert(target: Path, insert_line: int, new_str: str) -> str:
         return _error(f"insert_line out of range: {insert_line}")
     insertion = new_str if new_str.endswith("\n") else new_str + "\n"
     lines.insert(insert_line, insertion)
-    target.write_text("".join(lines), encoding="utf-8")
-    return json.dumps({"success": True, "path": str(target), "command": "insert"}, ensure_ascii=False)
+    try:
+        written = door.write_text(path, "".join(lines), base=workspace)
+    except (PermissionError, ValueError, OSError) as error:
+        return _error(str(error))
+    return json.dumps({"success": True, "path": str(written), "command": "insert"}, ensure_ascii=False)
 
 
 def _list_shallow(root: Path) -> list[str]:
@@ -192,12 +203,11 @@ def _list_shallow(root: Path) -> list[str]:
     return rows
 
 
-def _resolve(path: str, workspace: Optional[str]) -> Path:
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
-        candidate = root / candidate
-    return candidate.resolve()
+def _door(workspace: Optional[str]):
+    from kernel.environment import current_room
+    from kernel.environment.file_io import door_for
+
+    return door_for(current_room(), workspace)
 
 
 def _error(message: str, **details: Any) -> str:

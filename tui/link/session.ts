@@ -74,14 +74,14 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
   })
   proc.on('close', () => {
     emitStderr()
-    onEvent({ text: '离开', type: 'status' })
+    onEvent({ text: 'left', type: 'status' })
     onEvent({ type: 'done' })
   })
 
   return {
     send(text: string) {
       if (proc.exitCode !== null || proc.killed || !proc.stdin.writable) {
-        onEvent({ text: '管家已经离开', type: 'error' })
+        onEvent({ text: 'The clerk has left', type: 'error' })
         onEvent({ type: 'done' })
         return
       }

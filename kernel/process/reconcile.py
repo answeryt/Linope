@@ -65,7 +65,7 @@ class ProcessReconciler:
                 child = spawn_runtime(chosen_keys)
                 pid_value = int(child.pid or 0)
                 if pid_value <= 0:
-                    raise RuntimeError("这个能力的程序没有进程号")
+                    raise RuntimeError("This capability's program has no pid")
             if environment is None and (chosen_file or cwd):
                 environment = ProcessEnvironment.current(
                     pid=pid_value,
@@ -94,6 +94,7 @@ class ProcessReconciler:
                 host_policy=host_policy or HostExecutionPolicy(),
                 thread_policy=thread_policy,
             )
+            _remember_permission(declaration, cwd, environment)
             room = _room_facts(grants, environment)
             room["worker_ceiling"] = thread_policy.max_sync_workers
             room["inflight_ceiling"] = thread_policy.max_concurrent_tasks
@@ -147,9 +148,9 @@ class ProcessReconciler:
             definition = describe_instance(declaration.capability)
         count = 1 if replica_count is None else int(replica_count)
         if count < 1:
-            raise ValueError("份数至少为 1")
+            raise ValueError("Count must be at least 1")
         if pid is not None and count != 1:
-            raise ValueError("指定进程号时只能启动一份")
+            raise ValueError("Only one copy can start when a pid is given")
         started: list[CapabilityProcess] = []
         for index in range(count):
             started.append(
@@ -167,6 +168,17 @@ class ProcessReconciler:
                 )
             )
         return tuple(started)
+
+
+def _remember_permission(declaration: ProcessDeclaration, cwd: str | None, environment) -> None:
+    """Record a model permission where later tool profiles can fold it."""
+    permission = str((declaration.settings or {}).get("permission") or "").strip()
+    if not permission:
+        return
+    from kernel.environment.session_mode import remember_mode
+
+    folder = cwd or (None if environment is None else environment.cwd)
+    remember_mode(folder, permission)
 
 
 def _held(grants, leases):
@@ -205,7 +217,7 @@ def _env_selection(
     chosen = env_file
     if not chosen:
         if env_file_keys:
-            raise ValueError("还没指定环境文件，不能选择键")
+            raise ValueError("No env file given; cannot select keys")
         return "", ()
     if env_file_keys:
         return chosen, env_file_keys

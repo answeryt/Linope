@@ -13,7 +13,7 @@ class WorkerPool:
 
     def __init__(self, max_workers: int, *, name: str = "linope-sync") -> None:
         if max_workers < 0:
-            raise ValueError("工人人数不能是负数")
+            raise ValueError("Worker count cannot be negative")
         self._name = name
         self._max = int(max_workers)
         self._threads: set[threading.Thread] = set()
@@ -27,7 +27,7 @@ class WorkerPool:
 
     def set_max_workers(self, count: int) -> int:
         if count < 0:
-            raise ValueError("工人人数不能是负数")
+            raise ValueError("Worker count cannot be negative")
         with self._lock:
             self._max = int(count)
         self._adjust()
@@ -41,7 +41,7 @@ class WorkerPool:
 
     async def run(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._max <= 0 or self._shutdown:
-            raise RuntimeError("同步插件线程池已禁用")
+            raise RuntimeError("The synchronous plugin thread pool is disabled")
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Any] = loop.create_future()
         self._queue.put((function, args, kwargs, loop, future))
@@ -101,7 +101,7 @@ def raise_on_process(store: Any, process_id: str, count: int, ceiling: int) -> i
 def _move_ceiling(store: Any, capability: str, delta: int) -> int:
     rows = store.running_processes(capability)
     if not rows:
-        raise ValueError("这个能力还没有在跑的进程")
+        raise ValueError("This capability has no running process")
     ready = rows[0].get("ready") if isinstance(rows[0].get("ready"), dict) else {}
     if ready.get("is_async"):
         current = _current_inflight_ceiling(rows[0])
@@ -110,7 +110,7 @@ def _move_ceiling(store: Any, capability: str, delta: int) -> int:
             store.set_inflight_ceiling(row["process_id"], updated)
         return updated
     if ready and not ready.get("sync_thread_safe"):
-        raise ValueError("这个进程不能几个人一起改，请再开一个进程")
+        raise ValueError("This process cannot be edited by several workers; open another process")
     current = _current_worker_ceiling(rows[0])
     updated = max(1, current + delta)
     for row in rows:

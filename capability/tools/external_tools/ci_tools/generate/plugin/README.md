@@ -1,49 +1,51 @@
 # plugin
 
-插件约定 CI：审查仓库里的 plugin family 是否原子、隔离、入口正确，并生成 allow / deny 清单。
+English | [中文](README.cn.md)
 
-Host 是组合层，不是检查项。它用 importlib 按文件名加载 `*_check.py` / `*_generate.py`（与 pypyr 按 step 名加载相同），不静态导入各插件。
+Plugin-convention CI: review whether plugin families in the repository are atomic, isolated, and entered correctly, and generate the allow and deny lists.
 
-## 定位
+The host is the composition layer, not a check. It loads `*_check.py` / `*_generate.py` by file name with importlib (the same way pypyr loads a step by name). It does not statically import each plugin.
 
-- 扫描范围：Open-Linux 仓库根（同时看见 `kernel/` 与 `capability/`）。跳过缓存、点目录、`*-main` 第三方树，以及嵌套 SDK / 参考实现（`temporal-sdk-python`、`restate-sdk-python`、`temporal`、`restate`）和测试目录；新 plugin 根目录无需改 Host。默认 `--root` 会走到含 `kernel/compose/capability/composition.yaml` 的目录。
-- 审查：各 `*_check.py` 共享一份 context，只向 `violations` 追加违规
-- 生成：各 `*_generate.py` 按 `--format` 写出 list card（json / yaml / toml / md）
-- 唯一手写清单是 allow list；deny list = 发现到的 family 减去 allow 路径
-- `--check`：已提交的 list card 过期，或存在 `severity=error` 的违规时失败
+## Place
 
-## 需要下载的包 / 依赖
+- Scan scope: the Open-Linux repository root (it sees both `kernel/` and `capability/`). Skip caches, dot directories, `*-main` third-party trees, nested SDKs and reference implementations (`temporal-sdk-python`, `restate-sdk-python`, `temporal`, `restate`), and test directories. A new plugin root does not require a host change. The default `--root` walks to the directory that contains `kernel/compose/capability/composition.yaml`.
+- Review: each `*_check.py` shares one context and only appends violations to `violations`.
+- Generate: each `*_generate.py` writes a list card for `--format` (json / yaml / toml / md).
+- The only hand-written list is the allow list. The deny list is the discovered families minus the allow paths.
+- `--check`: fail when a committed list card is stale, or when a violation has `severity=error`.
 
-这些是 PyPI 第三方包，不是仓库内模块互导。CI 只静态解析源码，不 import 它们；要跑审查、或加载 vendored `sphinxext`，才需要装。
+## Packages to install
 
-| 包 | 用途 | 谁用 |
+These are third-party PyPI packages, not imports between modules in the repository. CI only parses source statically and does not import them. Install them to run the review, or to load the vendored `sphinxext`.
+
+| Package | Use | Who uses it |
 | --- | --- | --- |
-| `PyYAML` | 读 Host `composition.yaml` 与 list card | `host_sibling/lip_check.py`、allow/deny 生成器 |
-| `sphinx` | Sphinx 文档引擎（会一并装 `sphinxcontrib-*`、`alabaster`、`babel` 等） | `kernel/compose/plugin/vendor/stevedore/src/stevedore/sphinxext.py` |
-| `docutils` | reStructuredText 解析（`sphinx` 的依赖） | 同上：`nodes` / `rst` / `directives` / `StringList` |
+| `PyYAML` | Read the host `composition.yaml` and list cards | `host_sibling/lip_check.py`, the allow and deny generators |
+| `sphinx` | Sphinx documentation engine (also installs `sphinxcontrib-*`, `alabaster`, `babel`, and others) | `kernel/compose/plugin/vendor/stevedore/src/stevedore/sphinxext.py` |
+| `docutils` | reStructuredText parsing (a dependency of `sphinx`) | The same file: `nodes` / `rst` / `directives` / `StringList` |
 
 ```text
 python -m pip install PyYAML sphinx docutils
 ```
 
-`sphinxext.py` 顶部的 `from sphinx ...` / `from docutils ...` 是文档扩展的第三方依赖；`from stevedore import extension` 才是 vendored 包内引用。叶插件仍不得 import `stevedore`。不写 Sphinx 插件清单时，不必装 `sphinx`。
+`from sphinx ...` / `from docutils ...` at the top of `sphinxext.py` are third-party dependencies of the documentation extension. `from stevedore import extension` is a reference inside the vendored package. A leaf plugin still must not import `stevedore`. If you are not writing a Sphinx plugin list, you do not need to install `sphinx`.
 
-## 目录结构
+## Layout
 
 ```text
 plugin/
   plugin_generate.py          Host
   README.md
   list/
-    deny_list/                默认约束 + deny card 生成
+    deny_list/                default constraints + deny card generation
       deny_check.py
       deny_list_generate.py
       deny_list_crad/list.*
-    allow_list/               手写豁免 + allow card 生成
+    allow_list/               hand-written exemptions + allow card generation
       allow_check.py
       allow_list_generate.py
       allow_list_card/list.*
-    host_sibling/               按磁盘上的家族形态推断合同
+    host_sibling/             infer the contract from the family shape on disk
       surface_check.py
       sdk_boundary_check.py
       provider_config_check.py
@@ -53,105 +55,110 @@ plugin/
       descriptor_check.py
 ```
 
-## 文件说明
+## Files
 
-| 文件 | 插件名 | 职责 |
+| File | Plugin name | Role |
 | --- | --- | --- |
-| `plugin_generate.py` | `plugin_generate_host` | 发现 family、划分 deny/allow、加载并执行插件 |
-| `list/deny_list/deny_check.py` | `plugin_deny` | facade 禁止聚合层；禁止跨 plugin / 兄弟文件互导 |
-| `list/deny_list/deny_list_generate.py` | `plugin_deny_generate` | 写出 deny list card |
-| `list/allow_list/allow_check.py` | `plugin_allow` | 赦免 `.gates` 隔离边；检查必注入参数 |
-| `list/allow_list/allow_list_generate.py` | `plugin_allow_generate` | 读写手写 allow list card |
-| `host_sibling/surface_check.py` | `plugin_surface` | 按文件形态推断入口合同 |
-| `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | `call_api` 家族懒加载 SDK；消息格式化、响应解析、窗口恢复重试写在叶子里；禁止工具 schema 转换 |
-| `host_sibling/provider_config_check.py` | `plugin_provider_config` | provider 模板多格式等价、禁止当代码用 |
-| `host_sibling/kernel_check.py` | `plugin_kernel` | kernel 分层、ProcessRun/Activation、OS/部署边界。架构词汇和结构树在各层生成器 |
-| `host_sibling/lip_check.py` | `plugin_lip` | 插座路径：`composition.yaml` 的 sockets / modules / sources；禁止叶插件 import pluggy/stevedore/lip |
-| `host_sibling/assembly_check.py` | `plugin_assembly` | 能力图路径：composer 只能做“接线”；必须用 compose Source，`register_adapter` 必须直连 `FunctionModelAdapter`，禁止自写 discover / kind 翻译、能力前缀扫描、反射成员后动态分发 |
-| `host_sibling/descriptor_check.py` | `plugin_descriptor` | 叶子 `CAPABILITY` / `MODEL_CAPABILITY` 与 `plugin.json` 的开放簇 kind、requires、entry |
+| `plugin_generate.py` | `plugin_generate_host` | Discover families, split deny/allow, load and run plugins |
+| `list/deny_list/deny_check.py` | `plugin_deny` | A facade must not be an aggregation layer; no imports across plugins or sibling files |
+| `list/deny_list/deny_list_generate.py` | `plugin_deny_generate` | Write the deny list card |
+| `list/allow_list/allow_check.py` | `plugin_allow` | Pardon `.gates` isolation edges; check required injected parameters |
+| `list/allow_list/allow_list_generate.py` | `plugin_allow_generate` | Read and write the hand-written allow list card |
+| `host_sibling/surface_check.py` | `plugin_surface` | Infer the entry contract from the file shape |
+| `host_sibling/sdk_boundary_check.py` | `plugin_sdk_boundary` | The `call_api` family lazy-loads the SDK. Message formatting, response parsing, and window-recovery retry live in the leaf. Tool-schema conversion is forbidden |
+| `host_sibling/provider_config_check.py` | `plugin_provider_config` | A provider card is one JSON file and must not be used as code |
+| `host_sibling/kernel_check.py` | `plugin_kernel` | Kernel layers, ProcessRun/Activation, and the OS/deployment boundary. Architecture vocabulary and the structure tree are in each layer's generator |
+| `host_sibling/lip_check.py` | `plugin_lip` | Socket paths: `sockets` / `modules` / `sources` in `composition.yaml`. A leaf plugin must not import pluggy/stevedore/lip |
+| `host_sibling/assembly_check.py` | `plugin_assembly` | Capability-graph path: a composer may only wire things together. It must use a compose Source. `register_adapter` must connect directly to `FunctionModelAdapter`. Hand-written discover, kind translation, capability-prefix scans, and dynamic dispatch after reflecting members are forbidden |
+| `host_sibling/descriptor_check.py` | `plugin_descriptor` | A leaf `CAPABILITY` / `MODEL_CAPABILITY` and the open-cluster kind, requires, and entry in `plugin.json` |
 
-## 审查规则
+## Review rules
 
-### deny：原子与隔离
+### deny: atomic and isolated
 
-- `facade.filename`：family 内不得出现 `host.py` / `facade.py`
-- `facade.barrel_init`：`__init__.py` 不得再导出兄弟插件
-- `isolation.sibling_import`：不得 import 同 family 其它插件文件
-- `isolation.cross_plugin_import` / `isolation.project_import`：不得 import 其它项目插件
-- 标准库与未能解析到仓库内文件的第三方 import 放行；显式例外放在 allow list
+- `facade.filename`: a family must not contain `host.py` / `facade.py`
+- `facade.barrel_init`: `__init__.py` must not re-export sibling plugins
+- `isolation.sibling_import`: do not import another plugin file in the same family
+- `isolation.cross_plugin_import` / `isolation.project_import`: do not import another project's plugin
+- The standard library, and third-party imports that cannot be resolved to a file in the repository, are allowed. Explicit exceptions go in the allow list
 
-### allow：豁免与注入
+### allow: exemptions and injection
 
-- `paths`：这些路径不进入生成的 deny list（含插座引擎 `kernel/compose/plugin`、能力图引擎 `kernel/compose/capability`）
-- `.gates/isolation-allowlist.json` 的 edges：在 deny 跑完后赦免对应隔离违规
-- `inject`：指定 stem 必须接收的参数（例如 `sandbox_policy` 必须注入 `canonical_path`），避免插件去 import 兄弟实现
-- `kernel_layers`：kernel 结构图库存，由 `kernel_check` 读取
-- `sockets`：插座名 → 插头名 → 叶插件路径，由 `lip_check` 读取；Host 按名加载，叶插件不得 import 实现
-- `injection.estimator_param`：缺少必注入参数时报错
+- `paths`: these paths do not enter the generated deny list (including the socket engine `kernel/compose/plugin` and the capability-graph engine `kernel/compose/capability`)
+- Edges in `.gates/isolation-allowlist.json`: after deny finishes, pardon the matching isolation violations
+- `inject`: parameters a named stem must receive (for example `sandbox_policy` must inject `canonical_path`), so a plugin does not import a sibling implementation
+- `kernel_layers`: the kernel structure inventory, read by `kernel_check`
+- `sockets`: socket name to plug name to leaf plugin path, read by `lip_check`. The host loads by name. A leaf plugin must not import an implementation
+- `injection.estimator_param`: error when a required injected parameter is missing
 
-### host_sibling：合同由磁盘推断，不写死 Host kind 表
+### host_sibling: the contract is inferred from disk, not a hard-coded host kind table
 
-| 形态 | 要求 |
+| Shape | Requirement |
 | --- | --- |
-| `*_plugin.py` | `PLUGIN_NAME`、`PLUGIN_VERSION`；`PLUGIN_NAME` 全局唯一 |
-| `*_check.py` / `*_generate.py` | `PLUGIN_NAME`、`PLUGIN_VERSION`、`run(context)` |
-| family 中已有 `call_api` | 每个模块都暴露 `call_api` |
-| family 中已有 `apply_*` | 模块暴露 `apply_*`；model 请求字段写在对应 `model_interface` 文件内，不再一字段一文件 |
-| 其它 | 至少一个公开函数或类 |
+| `*_plugin.py` | `PLUGIN_NAME`, `PLUGIN_VERSION`. `PLUGIN_NAME` is globally unique |
+| `*_check.py` / `*_generate.py` | `PLUGIN_NAME`, `PLUGIN_VERSION`, `run(context)` |
+| family already has `call_api` | every module exposes `call_api` |
+| family already has `apply_*` | the module exposes `apply_*`. Model request fields live in the matching `model_interface` file, not one file per field |
+| other | at least one public function or class |
 
-对已有 `call_api` 的 family，额外约束：
+Extra constraints for a family that already has `call_api`:
 
-- Provider SDK（`openai` / `anthropic` / `google` / `genai`）必须在 `call_api` 内 import，不能出现在模块顶层
-- 消息格式化、响应解析、上下文窗口恢复重试写在对应叶子里（`format_messages` / `parse_response` / `parse_stream_chunk`，重试在 `call_api` 内）
-- 不得提供 `convert_tools` / `tool_choice_convert` 这类工具 schema 转换助手
+- A provider SDK (`openai` / `anthropic` / `google` / `genai`) must be imported inside `call_api`, not at module top level
+- Message formatting, response parsing, and context-window recovery retry live in the matching leaf (`format_messages` / `parse_response` / `parse_stream_chunk`; retry is inside `call_api`)
+- Do not provide a tool-schema conversion helper such as `convert_tools` / `tool_choice_convert`
 
-对看起来像 provider 根目录的 family：每个 provider 子目录必须同时有 YAML、JSON、TOML，顶层键 `provider` / `interface` / `model` / `api_key_env` / `parameters` 一致；`interface` 必须对应 `model/model_API/model_interface/<interface>.py`。
+For a family that looks like a provider root: each provider subdirectory has one `<name>.json` card. The top-level keys `provider` / `interface` / `model` / `api_key_env` / `parameters` are present. `interface` must correspond to `model/model_API/model_interface/<interface>.py`.
 
-`kernel_check.py` 约束 `kernel/`：顶层只允许 allow card 声明的层；插件落在叶目录；ProcessRun 必须包含 process/run ID、定义版本、状态、Activation 与资源 lease；Activation 必须可序列化；Process/Task/Resource 层不得使用 OS process/thread 或部署 API。`kernel/compose/plugin/` 是插座引擎（pluggy / stevedore / lip），不做 OS/部署 import 检查。
+`kernel_check.py` constrains `kernel/`: the top level may contain only layers declared by the allow card; plugins sit in leaf directories; a ProcessRun must include the process/run id, definition version, state, Activation, and resource leases; an Activation must be serializable; the Process/Task/Resource layers must not use OS process/thread or deployment APIs. `kernel/compose/plugin/` is the socket engine (pluggy / stevedore / lip) and is not checked for OS or deployment imports.
 
-两条拼装路径不要混用：
+Do not mix the two assembly paths:
 
-- 插座路径：`kernel/compose/capability/composition.yaml` 的 `sockets` / `modules` / `sources`，由 `lip_check.py` 审查。
-- 能力图路径：`ComposeSpec` + Sources，由 `assembly_check.py` 审查；叶子说明书由 `descriptor_check.py` 审查。
+- Socket path: `sockets` / `modules` / `sources` in `kernel/compose/capability/composition.yaml`, reviewed by `lip_check.py`.
+- Capability-graph path: `ComposeSpec` plus Sources, reviewed by `assembly_check.py`. Leaf descriptors are reviewed by `descriptor_check.py`.
 
-`lip_check.py` 约束能力查找：composition 的 `sockets` 登记必须指向存在的插头文件，且文件内 `PLUGIN_NAME` 与插头名一致。`*_plugin.py`、Host `manager/lip/board.py` 与其它非引擎族文件不得 import `pluggy` / `stevedore` / `lip`。插座板是对 `manager/stevedore` 的二开（包内相对导入）；Host 只按文件路径加载。跨插件文件 import 仍由 deny_check 负责。`sources` 若出现，`type` 必须能被 `source_from_mapping` 认识。
+`lip_check.py` constrains capability lookup: a `sockets` entry in the composition must point at a plug file that exists, and `PLUGIN_NAME` inside that file must match the plug name. `*_plugin.py`, the host `manager/lip/board.py`, and other non-engine family files must not import `pluggy` / `stevedore` / `lip`. The socket board is a local fork of `manager/stevedore` (relative imports inside the package). The host loads only by file path. Imports across plugin files are still deny_check's job. If `sources` is present, `type` must be recognized by `source_from_mapping`.
 
-`assembly_check.py` 约束能力图拼装：import 了 `CapabilityCatalog` / `CapabilityGraphResolver` / `ComposeSpec` 且不在 `kernel/compose/`、`tests/kernel/` 的文件是 composer。composer 必须使用 `inject` / `inject_capabilities` / `CapBus` / `Capability`；不得 `ast.parse`、不得自写 `discover()`、不得再写 kind 翻译表、不得按 capability 前缀扫描；未使用 `FunctionModelAdapter` 时不得 `inspect.signature`、不得 duck-type fallback 四种 ABI；`register_adapter` 必须直连 `FunctionModelAdapter`（不能先包一层再注册）；不得通过 `vars/dir/getmembers + startswith + 动态调用` 反射叶子调用细节。
+`assembly_check.py` constrains capability-graph assembly: a file that imports `CapabilityCatalog` / `CapabilityGraphResolver` / `ComposeSpec` and is not under `kernel/compose/` or `tests/kernel/` is a composer. A composer must use `inject` / `inject_capabilities` / `CapBus` / `Capability`. It must not `ast.parse`, must not write its own `discover()`, must not write another kind-translation table, and must not scan by capability prefix. When `FunctionModelAdapter` is not used, it must not `inspect.signature` and must not duck-type a fallback across four ABIs. `register_adapter` must connect directly to `FunctionModelAdapter` (it cannot wrap a layer and then register). It must not reflect leaf call details through `vars/dir/getmembers + startswith + dynamic call`.
 
-这条规则是通用角色边界，不是 model 特判：只要是 composer，都应该只负责拼装，不负责请求整形、重试编排、反射分发等“调用细节”。
+This rule is a general role boundary, not a special case for models: a composer should only assemble. It should not shape requests, orchestrate retries, or dispatch by reflection.
 
-`descriptor_check.py` 约束开放簇说明书：`kind` 是插件自声明的簇（可点号细分），不是内核白名单；`name` 或 `provides` 必须落在该簇下；`requires` 与 kernel `parse_requirements` 同一套语法；`entry` 必须指向存在的函数。旧装载词（`recipe` / `module` / `tool` / `model`）不得再当作 `kind`。
+`descriptor_check.py` constrains open-cluster descriptors: `kind` is a cluster the plugin declares itself (it may be refined with dots), not a kernel allow-list. `name` or `provides` must fall under that cluster. `requires` uses the same syntax as kernel `parse_requirements`. `entry` must point at a function that exists. Old loader words (`recipe` / `module` / `tool` / `model`) must not be used as `kind` again.
 
-## 生成清单
+## Generated lists
 
-allow list 是唯一手写库存，字段：
+The allow list is the only hand-written inventory. Fields:
 
-- `paths`：豁免路径
-- `inject`：stem → 必注入参数名（含 kernel 插件）
-- `kernel_layers`：手写库存，由 `kernel_check` 经 `load()` 读取
-- `sockets`：手写库存，由 `lip_check` 读取；Host 按插座名/插头名加载叶插件
+- `paths`: exempt paths
+- `inject`: stem to required injected parameter names (including kernel plugins)
+- `kernel_layers`: hand-written inventory, read by `kernel_check` through `load()`
+- `sockets`: hand-written inventory, read by `lip_check`. The host loads a leaf plugin by socket name and plug name
 
-deny list 由 Host 发现结果减去 allow 路径生成，字段：
+The deny list is generated from the host's discovery result minus the allow paths. Fields:
 
-- `families`：纳入默认约束的 plugin family 根路径
+- `families`: root paths of plugin families under the default constraints
 
-`--check` 时不写文件，只对比已提交 card 是否过期，过期路径记入 `stale`。
+`--check` does not write files. It only compares committed cards for staleness. Stale paths are recorded in `stale`.
 
-## 调用关系
+## Call path
 
 ```text
 python plugin_generate.py [--check] [--format json|yaml|toml|md] [--root ...]
 
 plugin_generate.py (Host)
-  → 从磁盘发现 family，用 allow list 划分 denied / allowed
-  → 审查：deny_check → allow_check → surface / sdk_boundary / provider_config / kernel_check / lip_check / assembly_check / descriptor_check
-  → 生成：allow_list_generate → deny_list_generate
-  → --check：stale 或 error 违规 → exit 1
-  → 默认：写出 list card；仍有 error 违规 → exit 1
+  → discover families from disk and split denied / allowed with the allow list
+  → review: deny_check → allow_check → surface / sdk_boundary / provider_config / kernel_check / lip_check / assembly_check / descriptor_check
+  → generate: allow_list_generate → deny_list_generate
+  → --check: stale or an error violation → exit 1
+  → default: write the list cards; if an error violation remains → exit 1
 ```
 
-插件约定：每个 `*_check.py` / `*_generate.py` 暴露 `PLUGIN_NAME`、`PLUGIN_VERSION`、`run(context)`。Host 把同一份 context 依次传入；检查项只追加 `violations`，生成项只写 card。
+Plugin convention: each `*_check.py` / `*_generate.py` exposes `PLUGIN_NAME`, `PLUGIN_VERSION`, and `run(context)`. The host passes the same context through in order. A check only appends `violations`. A generator only writes cards.
 
-## 设计思想
+## Design
 
-将 Host、审查、生成拆开：Host 只发现与编排，检查项不写文件，生成项不判隔离。手写 allow、自动 deny，新增 plugin family 默认进入约束，只有明确豁免才离开 deny list。
+The host, review, and generation are separate. The host only discovers and orchestrates. A check does not write files. A generator does not judge isolation. The allow list is written by hand and the deny list is automatic. A new plugin family enters the constraints by default and leaves the deny list only with an explicit exemption.
+
+## Known Limitations and Deferred Work
+
+- **Default root uses a marker this tree does not have** — `find_repo_root` looks for `.gates/isolation-allowlist.json`, top-level `model/` and `tools/`, and `kernel/compose/capability`. Those paths are absent here, so the function falls back to six parents above this file.
+- **`sphinx` is named for a vendored extension path** — `kernel/compose/plugin/vendor/stevedore` is not in this tree. Install `sphinx` only when that extension is present. `PyYAML` is what the list cards need.

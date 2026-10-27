@@ -1,11 +1,8 @@
 # Semantic compression atomic functions
 
-This directory contains small deterministic compression functions extracted from
-the root `context_compression.py` design. The root script and `model/token`
-modules are intentionally untouched.
+English | [中文](README.cn.md)
 
-These files are not compose-discovered capability plugins yet. The Host imports
-and wires the needed functions explicitly.
+Small deterministic functions over `list[dict]` messages. `load` selects one of them through [`load_in_directory`](../../README.md). A host may also import the functions and pass callbacks. No function imports another module in this directory, `sliding_window`, or `summary_compression`.
 
 ## Contracts
 
@@ -44,9 +41,9 @@ and wires the needed functions explicitly.
 
 ## Host composition
 
-The future Host owns configuration and imports the desired functions. It
-should create closures for boundaries and policies, then pass them to the
-callback-only pipeline in this typical order:
+The host owns configuration and imports the functions it wants. It creates
+closures for boundaries and policies, then passes them to the callback-only
+pipeline in this order:
 
 1. Deduplicate tool results.
 2. Compute the protected-tail boundary.
@@ -93,3 +90,8 @@ compressed = run_deterministic_pipeline(messages, passes=passes)
 
 The names in this example are deliberately not re-exported through an
 `__init__`, facade or host module. The Host imports each atomic plugin directly.
+
+## Known Limitations and Deferred Work
+
+- **No pipeline is registered** — `deterministic_pipeline.py` runs the callbacks it is given and imports no sibling. `load` on this package still selects one function by argument names.
+- **Token counting is injected** — the functions call `estimate_messages` when the host passes it. This directory does not count tokens itself.

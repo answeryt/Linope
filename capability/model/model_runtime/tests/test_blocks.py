@@ -11,7 +11,7 @@ from capability.model.model_runtime.usage import read_usage
 class ModelBlocksTest(unittest.TestCase):
     def test_mixed_text_and_tool_call_are_separate(self) -> None:
         assembler = BlockAssembler()
-        assembler.push({"type": "text-delta", "text": "我先查看目录。"})
+        assembler.push({"type": "text-delta", "text": "I will look at the directory."})
         assembler.push(
             {
                 "type": "tool-call-delta",
@@ -21,7 +21,7 @@ class ModelBlocksTest(unittest.TestCase):
             }
         )
         turn = assembler.finish()
-        self.assertEqual(turn.text(), "我先查看目录。")
+        self.assertEqual(turn.text(), "I will look at the directory.")
         self.assertEqual(len(turn.tool_calls()), 1)
         self.assertEqual(turn.tool_calls()[0].name, "tools.glob")
 
@@ -55,7 +55,7 @@ class ModelBlocksTest(unittest.TestCase):
 
     def test_usage_parts_merge_input_then_output(self) -> None:
         assembler = BlockAssembler()
-        assembler.push({"type": "text-delta", "text": "你好"})
+        assembler.push({"type": "text-delta", "text": "hello"})
         assembler.push({"type": "usage", "usage": {"input": 4}})
         assembler.push({"type": "usage", "usage": {"output": 2}})
         turn = assembler.finish()

@@ -238,11 +238,58 @@ class Win32Bindings:
         self._CreateWellKnownSid = advapi32.CreateWellKnownSid
         self._IsValidSid = advapi32.IsValidSid
         self._GetLengthSid = advapi32.GetLengthSid
+        self._GetLengthSid.argtypes = [ctypes.c_void_p]
+        self._GetLengthSid.restype = wintypes.DWORD
         self._CopySid = advapi32.CopySid
+        self._CopySid.argtypes = [wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+        self._CopySid.restype = wintypes.BOOL
+        self._IsValidSid.argtypes = [ctypes.c_void_p]
+        self._IsValidSid.restype = wintypes.BOOL
+        self._CreateWellKnownSid.argtypes = [
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self._CreateWellKnownSid.restype = wintypes.BOOL
         self._GetTokenInformation = advapi32.GetTokenInformation
+        self._GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self._GetTokenInformation.restype = wintypes.BOOL
         self._SetTokenInformation = advapi32.SetTokenInformation
+        self._SetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.c_char_p,
+            wintypes.DWORD,
+        ]
+        self._SetTokenInformation.restype = wintypes.BOOL
         self._CreateRestrictedToken = advapi32.CreateRestrictedToken
+        self._CreateRestrictedToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.c_char_p,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self._CreateRestrictedToken.restype = wintypes.BOOL
         self._SetEntriesInAclW = advapi32.SetEntriesInAclW
+        self._SetEntriesInAclW.argtypes = [
+            wintypes.ULONG,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self._SetEntriesInAclW.restype = wintypes.DWORD
         self._SetNamedSecurityInfoW = advapi32.SetNamedSecurityInfoW
         self._GetNamedSecurityInfoW = advapi32.GetNamedSecurityInfoW
         self._GetTempPathW = kernel32.GetTempPathW
@@ -251,6 +298,8 @@ class Win32Bindings:
         self._UnlockFileEx = kernel32.UnlockFileEx
         self._CreatePipe = kernel32.CreatePipe
         self._SetHandleInformation = kernel32.SetHandleInformation
+        self._SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+        self._SetHandleInformation.restype = wintypes.BOOL
         self._CreateProcessAsUserW = advapi32.CreateProcessAsUserW
         self._SetEnvironmentVariableW = kernel32.SetEnvironmentVariableW
         self._ReadFile = kernel32.ReadFile
@@ -264,6 +313,7 @@ class Win32Bindings:
         self._TerminateProcess = kernel32.TerminateProcess
         self._SetConsoleCtrlHandler = kernel32.SetConsoleCtrlHandler
         self._GetStdHandle = kernel32.GetStdHandle
+        self._GetStdHandle.restype = wintypes.HANDLE
 
     def open_process(self, desired_access: int, inherit: int, pid: int) -> int | None:
         handle = self._OpenProcess(desired_access, inherit, pid)

@@ -12,12 +12,12 @@ from typing import Any
 def load_in_directory(directory: Path, kind: str, body: Any) -> Any:
     """Load context content with the one function in this folder that fits."""
     if kind != "context":
-        raise ValueError(f"这个进程不能装入 {kind}")
+        raise ValueError(f"This process cannot load {kind}")
     arguments = _arguments(body)
     matches = _functions_for_arguments(directory, arguments)
     if len(matches) != 1:
         raise ValueError(
-            "没有能装入这份内容的函数" if not matches else "这份内容对应不止一个函数"
+            "No function can load this content" if not matches else "More than one function matches this content"
         )
     return _invoke(matches[0], arguments)
 
@@ -27,7 +27,7 @@ def _arguments(body: Any) -> dict[str, Any]:
         return body
     if isinstance(body, str):
         return {"messages": [{"role": "user", "content": body}]}
-    raise TypeError("context 的内容必须是映射或文本")
+    raise TypeError("context content must be a mapping or text")
 
 
 def _functions_for_arguments(directory: Path, arguments: dict[str, Any]) -> list[Any]:
@@ -83,7 +83,7 @@ def _invoke(function: Any, arguments: dict[str, Any]) -> Any:
     try:
         bound = inspect.signature(function).bind(**arguments)
     except TypeError as error:
-        raise TypeError(f"不能装入内容: {error}") from error
+        raise TypeError(f"Cannot load content: {error}") from error
     bound.apply_defaults()
     if inspect.iscoroutinefunction(function):
         return __import__("asyncio").run(function(*bound.args, **bound.kwargs))

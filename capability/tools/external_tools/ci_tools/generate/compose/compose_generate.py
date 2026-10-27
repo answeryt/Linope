@@ -23,10 +23,10 @@ FORMAT_ORDER = ("json", "yaml", "toml", "md")
 FORMAT_ALIASES = {"yml": "yaml", "markdown": "md"}
 
 VOCABULARY = {
-    "TaskDefinition": "稳定名称、版本、重试、超时和资源需求。",
-    "TaskExecutor": "执行同步/异步副作用并提交结果或错误。",
-    "TaskBinding": "Task attempt 对 Resource Lease 的运行绑定。",
-    "ResourceLease": "Task 执行期间取得的有限资源使用权。",
+    "TaskDefinition": "Stable name, version, retry, timeout, and resource requirements.",
+    "TaskExecutor": "Runs a synchronous or asynchronous side effect and submits the result or error.",
+    "TaskBinding": "The runtime binding of a Task attempt to a resource lease.",
+    "ResourceLease": "The limited right to use a resource while a Task runs.",
 }
 
 TREE = """\
@@ -40,17 +40,17 @@ Process
 ARCHITECTURE: dict[str, Any] = {
     "layer": "compose",
     "role": "durable_task",
-    "title": "compose：Task Function 是持久副作用边界",
+    "title": "compose: a Task function is the durable side-effect boundary",
     "vocabulary": VOCABULARY,
     "tree": TREE,
     "owns": ["TaskDefinition", "TaskExecutor", "TaskBinding"],
-    "note": "目录名保留 compose；公开概念统一使用 Task Function。能力图拼装由 plugin 审查（assembly_check / descriptor_check），本卡不写代码合同。",
+    "note": "The directory name stays compose; the public concept is Task Function. Plugin review (assembly_check / descriptor_check) checks capability-graph assembly. This card does not state a code contract.",
     "requirements": [
-        "Task Function 承载模型、工具、HTTP、数据库和文件等副作用。",
-        "TaskDefinition 必须具有稳定名称和版本。",
-        "TaskExecutor 支持同步/异步执行、重试与超时。",
-        "TaskBinding 取得 Resource Lease，并在 attempt 结束时逆序释放。",
-        "Task 结果与错误由 Process Journal 记录，Replay 不重复执行已完成 Task。",
+        "A Task function carries side effects such as models, tools, HTTP, databases, and files.",
+        "A TaskDefinition must have a stable name and version.",
+        "A TaskExecutor supports synchronous and asynchronous execution, retry, and timeout.",
+        "A TaskBinding acquires a resource lease and releases leases in reverse order when the attempt ends.",
+        "Task results and errors are recorded in the Process journal. Replay does not run a completed Task again.",
     ],
 }
 
@@ -128,21 +128,21 @@ def _render(payload: dict[str, Any], fmt: str) -> str:
 
 
 def _render_md(payload: dict[str, Any]) -> str:
-    lines = [f"# {payload['title']}", "", "## 词汇", ""]
+    lines = [f"# {payload['title']}", "", "## Vocabulary", ""]
     for key, value in payload["vocabulary"].items():
-        lines.append(f"- **{key}**：{value}")
-    lines.extend(["", "## 结构", "", "```", payload["tree"], "```", ""])
+        lines.append(f"- **{key}**: {value}")
+    lines.extend(["", "## Structure", "", "```", payload["tree"], "```", ""])
     note = payload.get("note")
     if note:
-        lines.extend(["## 在结构图中的位置", "", note, ""])
-    lines.extend(["## 本层拥有", ""])
+        lines.extend(["## Place in the structure", "", note, ""])
+    lines.extend(["## This layer owns", ""])
     owns = payload.get("owns") or []
     if owns:
         for item in owns:
             lines.append(f"- `{item}`")
     else:
-        lines.append("无。")
-    lines.extend(["", "## 架构要求", ""])
+        lines.append("None.")
+    lines.extend(["", "## Architecture requirements", ""])
     for index, item in enumerate(payload["requirements"], start=1):
         lines.append(f"{index}. {item}")
     lines.append("")

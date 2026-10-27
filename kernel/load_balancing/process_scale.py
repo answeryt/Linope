@@ -22,9 +22,9 @@ def reconciler_opener(reconciler: Any, declaration: Any, thread_policy: Any = No
 def open_peer(opener: Callable[[], str], *, current: int, ceiling: int) -> str:
     """Start one more peer process and return its process id."""
     if ceiling < 1:
-        raise ValueError("进程上限至少为 1")
+        raise ValueError("Process limit must be at least 1")
     if current >= ceiling:
-        raise ValueError("进程已经到上限")
+        raise ValueError("Process count is already at the limit")
     return opener()
 
 
@@ -41,7 +41,7 @@ def close_idle(
     claimed work, waiting work, round trip, then process id.
     """
     if floor < 0:
-        raise ValueError("最少进程数不能是负数")
+        raise ValueError("Minimum process count cannot be negative")
     idle = [
         seat
         for seat in found

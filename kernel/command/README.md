@@ -1,39 +1,103 @@
-# command
+# command/ — `linope` command entry
 
-`kernel/command` 是内核的命令入口。命令按事情分开放：`process/` 管启动和对进程说话，`file/` 管建文件和指出环境文件，`screen/` 管屏幕上看到的资源服务。认命令只有 `dispatch.py` 一份。`linope terminal` 和 `linope session` 打开同一个窗口。
+English | [中文](README.cn.md)
 
-现在能执行的有：
+`dispatch.py` reads the first word and hands the rest to that script. An unknown word, or a bad usage line, exits 2.
 
-```text
-linope create <路径> [-- 名字=值]
-linope load env <路径>
-linope process start <能力> [--change 主题=值] [--count 份数] [--share 资源种类] [--with 种类=身份] [--once] [--ping]
-linope resource serve [--host 127.0.0.1] [--port 0]
-linope terminal
-```
+There are two layers. The first word names an object: create a file, start a process, look at a process, or record pids that are already running as one service. A short line typed after the window is open talks to a process that is already open, for example `load message`. A short line does not start a process.
 
-`create` 在这台机器上建文件。`--` 后面写一行 `名字=值`，就是往这份文件里加一个环境变量。`load env` 记住这份文件，之后同一终端里的 `process start` 没写 `--env-file` 就用它。密钥值留在文件里，不打印出来。TUI 和 `linope session` 里直接写 `create <路径>`，也可以写 `linope create <路径>`，不必另开窗口。
+This layer does not read a model card, run a tool, or pick a command out of model output. The card is in the capability plugin. The tool runs in the tool process. Parsing a model reply is [`kernel/communication`](../communication/README.md).
 
-`process start` 按能力档案申请资源，为每个操作系统 `pid` 打开一份资源记录，然后停在当前进程里。不写 `--once` 就一直留到进程退出或 `Ctrl+C`。写了 `--once`，做完这一次就关闭记录并返回。`--share` 只让点到的资源种类在这次启动里共用。`--with` 在档案已有的资源之外再领一种，例如 `--with memory=chat`；档案里已经有的种类不能用它改掉。`--ping` 问这个进程自己，等它回 `pong`，不调用模型。没答上就关闭记录，命令失败。
+| Directory | Commands |
+|---|---|
+| [`file/`](file/README.md) | `create`, `load env` |
+| [`process/`](process/README.md) | `process start`, and the window lines `load`, `ask`, `ping`, `list`, `show`, `trace` |
+| [`screen/`](screen/README.md) | `resource serve`, and printing one fragment of a model reply to the terminal |
 
-进程领了记忆时，`load message <进程号> -- 文件路径` 可以把一份 `.txt`、`.md` 或 `.json` 的全文记进 `system`，不调用模型。再加载另一份文件会留在后面，不换掉已经记下的文件。份数从 1 开始，写在路径前面，例如 `load message <进程号> -- 1 文件路径`，这份文件就插到那个位置，原来的依次往后挪。不写份数时，新文件排到最后；同一路径再加载只更新这一份，没写份数就留在原位。下一次提问把这些文件按这个顺序拼成一段 `system` 送出。人说的话、模型的输出、工具的输出，以及交任务回来的结果，也写进同一份 memory，跟 `system` 放在一起，按发生的时间往后排。这些正文不写入进程账本。这个进程没有记忆时，这样的文件路径会被拒绝。
+`service` is [`kernel/services`](../services/README.md). The turn journal that `log` prints is [`kernel/trace`](../trace/README.md).
 
-进程还留着的时候，同一终端里可以再写：
+## Object commands
 
-```text
-load message -- 你好
-load tool -- {"query": "分布式系统"}
-ask <对方进程号> -- 要做的事
-ping
-ping <pid>
-```
+These are the object commands. They can be typed outside a window. The full flag tables are in the directory READMEs above.
 
-`load message` 和 `load tool` 交给这个进程已经打开的适配器。指向提示词文件的那一次除外，它只写入 memory 里的 `system`。`load env` 不送进进程。`message` 只给模型进程，`tool` 只给工具进程。有多份进程时要写上操作系统 `pid`。自己对自己说 `load message`，这个进程记成自己在干。
+`create <path> [-- name=value]`
 
-进程还留在这个窗口里时，`show <进程号>` 会把这份 memory 里的系统提示词和对话正文一起打出来。没领 memory 就没有这一段。关掉窗口之后，这些字已经不在，再 `show` 只能看到进程账，看不到对话。
+Creates a file on this machine. One `name=value` after `--` is written into that file, to prepare an environment variable. This does not start a process.
 
-`ask` 把一件事交给还留着的另一个进程。送过去的只有这件事，不附上发送方的 memory。对方用自己的 memory 来做。结果写回发送方的 memory。这时两边都记成正在跟对方一起干，做完回到闲着。除了对方，还要正好有一个还活着的进程当发送方。
+`load env <path>`
 
-没有 `process list`、`process status`、`process stop`，也没有 `service create|bind|call`。
+Remembers this env file. The next `process start` in the same window uses it when `--env-file` is omitted. The value stays in the file. The command prints the path.
 
-命令层不读模型卡片、不执行工具、不跟随输出里的命令，也不选择传输后端。
+`process start <capability>`
+
+Starts a process by capability name. `process start model.openai_chat_model` starts a model process. `process start tools.read` starts the read-file tool process. The capability's `capability_profile` says which resources this start claims. One operating-system pid has one resource record. The command prints `pid=` and stays in the current window, waiting for a body. It does not call the model by itself.
+
+`--count 2` starts two copies. The copies are peers. `--share memory` is what makes this start share memory. Without it, each copy has its own. `--with memory=chat` claims one extra kind the profile did not already claim. `--once` closes after one `load` has been handed over. `--ping` asks after open, and fails when nobody answers.
+
+`process list`
+
+Lists the processes in the window: pid, busy or idle, record status. It does not start a process.
+
+`process show <pid> [address]`
+
+Shows one process page. When that process has memory, the page includes the contents at that address.
+
+`process trace <pid>`
+
+Shows that process's activity, from idle to busy.
+
+After the window closes, `list`, `show`, and `trace` read the ledger and logs on disk. Dialogue text is in memory, not in the ledger file.
+
+`service start <pid> [<pid> ...]`
+
+Records pids that are already running as one service, in `.linope/services.json`. One missing, dead, or repeated pid writes nothing. Starting a process is still `process start`.
+
+`service load <service id> -- <body>`
+
+Used inside a window. It finds the single model process in that service that is still open, rewrites the line as `load message <that pid> -- <body>`, and hands it to that process. No model, or two models, is a refusal. The service does not choose the next tool.
+
+`resource serve [--host 127.0.0.1] [--port 0]`
+
+Starts an HTTP service on this machine so a developer can open resource pages in a browser. A model search or file edit does not use this command.
+
+`log [pid]`
+
+Prints the turn journal in time order: each line a person typed, and the text each time the model finishes a write. `log <pid>` keeps only that process. A typed line has no pid, so it appears only in `log` without a pid.
+
+`terminal` and `session`
+
+Open the same window. The short lines below are typed in that window.
+
+## Lines inside the window
+
+After `process start` leaves the window open, [`process/listen.py`](process/listen.py) reads these lines. They are not written into the resource ledger. Arguments and failures are in [`process/`](process/README.md).
+
+`load message <pid> -- <body>`
+
+Sends that sentence to the model process. The process must already be open, and it must be a model. When it has memory, the sentence is stored there and the question runs as a page turn until the model answers. Older rows stay addresses on that page. The window does not have to be able to launch a process for this turn; `process start` is offered only when it can.
+
+`load message <pid> <address> -- <question>`
+
+Places the text at that address on the first page the model sees, then stores the question and runs the turn. An address is `message/0`, `message/0-3`, or `chat/message/0`. Several addresses are separated by spaces. A bad address is refused before the question is stored. `show <pid>` still lists every row this process can see.
+
+`load tool <pid> -- <JSON>`
+
+Sends that call to the tool process. The process must already be open, and it must be a tool.
+
+`load message <pid> -- <n> <file>`
+
+Copies a `.txt`, `.md`, or `.json` file into the `system` section of that process's memory. This step does not call the model. A process with no memory refuses it.
+
+When the second word of `load` is not `env`, `dispatch.py` does not treat the line as `load env`. It hands the line to the open window. `load env` remembers an env file. `load message` talks to a process.
+
+`ask <pid> -- <task>`
+
+Hands the task to another process that is already open. The receiver does not see the sender's memory. A receiver with memory runs its own page turn, so the task and the answer are stored there. A receiver with no memory gets the task text. The result is written back to the sender. Besides the receiver, the window must contain exactly one other living process to act as the sender.
+
+`ping <pid>`
+
+Asks whether that process is still there. The answer must be `pong` with the same sequence and the same pid.
+
+`list`, `show <pid>`, `trace <pid>`
+
+The same lookups as `process list`, `process show`, and `process trace`, typed inside the window, against the processes in that window.

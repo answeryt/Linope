@@ -1,49 +1,46 @@
 # model_interface
 
-Provider 原生 SDK 封装层。每个文件暴露 `call_api`，以及本接口的消息格式化与响应解析。
+English | [中文](README.cn.md)
 
-## 定位
+Provider-native SDK wrappers. Each file exposes `call_api`, plus message formatting and response parsing for that interface.
 
-- 介于 provider card 与第三方 SDK 之间
-- 负责把内部消息块翻成本接口 SDK 字段、解析响应、以及上下文窗口 / 输出上限恢复重试
-- 不负责工具 schema 转换（`convert_tools`）
-- 叶模块不得 import 仓库内其它模块；SDK 只在 `call_api` 内 import
-- `recover_request` 按文件路径加载，不作为包互导；token 粗估不参与组请求
+## Place
 
-## 文件说明
+- Between the provider card and the third-party SDK
+- Turns internal message blocks into this interface's SDK fields, parses the response, and retries when recovering a context window or an output cap
+- Does not convert tool schemas (`convert_tools`)
+- A leaf module must not import other modules in the repo. The SDK is imported only inside `call_api`
+- `recover_request` is loaded by file path, not as a package import. Rough token estimates are not used to build the request
 
-| 文件 | SDK | API |
+## Files
+
+| File | SDK | API |
 | --- | --- | --- |
 | `openai_chat.py` | `openai.AsyncClient` | `chat.completions.create` |
 | `openai_response.py` | `openai.AsyncClient` | `responses.create` |
 | `anthropic.py` | `anthropic.AsyncAnthropic` | `messages.create` |
 | `gemini.py` | `google.genai.Client` | `generate_content`, `generate_content_stream` |
 
-## 调用关系
+## Call path
 
 ```text
 model_provider card
-  → call_model 拼 payload
+  → call_model builds the payload
   → model_interface.format_messages
-  → model_interface.call_api（含窗口恢复重试）
+  → model_interface.call_api (includes window-recovery retry)
   → Provider SDK
   → model_interface.parse_response / parse_stream_chunk
 ```
 
-`None` / `"UNSET"` 跳过，不覆盖 SDK 默认值。各接口自己的字段改名（如 `max_tokens` → `max_completion_tokens`）写在该文件的私有函数里。窗口级重试由本层 `call_api` 调用 `recover_request`；Journal 级 Task 重试仍归 kernel。
+`None` / `"UNSET"` is skipped and does not override an SDK default. Field renames that belong to one interface (for example `max_tokens` → `max_completion_tokens`) live in that file's private functions. Window-level retry is this layer's `call_api` calling `recover_request`. Journal-level Task retry still belongs to the kernel.
 
-一次模型步骤可以收到完整 `messages`，以及 `tools` 和 `tool_choice`。工具调用保留 `id`，工具结果用这个 `id` 回到同一次步骤。是否再次调用模型由 Agent 任务的下一条动作决定，不由本层循环。
+One model step can receive the full `messages`, plus `tools` and `tool_choice`. A tool call keeps its `id`. The tool result returns to the same step with that `id`. Whether to call the model again is decided by the next action of the agent task, not by a loop in this layer.
 
-## 与 Kernel 持久执行的边界
+## Boundary with the process
 
-模型请求属于有外部副作用的 Task Function，不能直接写在可重放 Process Function
-中。窗口/输出上限恢复重试写在 `call_api` 内。Journal 级 Task 重试、资源 lease、结果记录和 Replay 仍由 `kernel/compose/executor` 与 `kernel/process/journal` 负责。
+Window and output-cap recovery stay inside `call_api`, which calls `recover_request` from [`context_limits`](../model_paramaters/context_limits/README.md). The process record, leases, and the turn journal belong to [`kernel/process`](../../../../kernel/process/README.md) and [`kernel/trace`](../../../../kernel/trace/README.md). This layer does not write the ledger.
 
-```text
-Process Function
-  → ctx.run(model_task, input)
-  → Task Executor
-  → model_interface.call_api(payload)
-  → Journal 保存 output / error
-  → Process Replay 直接读取历史结果
-```
+## Known Limitations and Deferred Work
+
+- **No tool-schema conversion** — `convert_tools` is not provided. The caller passes tool declarations in the shape that interface already accepts.
+- **The SDK import is inside `call_api`** — a missing provider package fails at call time, not at import of the leaf module.

@@ -91,25 +91,25 @@ class CapabilityProcess:
         payload = self._child_payload()
         if child.stdin is None:
             self._abandon_child(child)
-            raise RuntimeError("这个能力的程序没有准备好")
+            raise RuntimeError("This capability's program is not ready")
         try:
             child.stdin.write(json.dumps({"activation": payload}, ensure_ascii=False) + "\n")
             child.stdin.flush()
         except OSError as exc:
             self._abandon_child(child)
-            raise RuntimeError("这个能力的程序没有准备好") from exc
+            raise RuntimeError("This capability's program is not ready") from exc
         ready = _read_line(child, timeout)
         if not ready:
             self._abandon_child(child)
-            raise RuntimeError("这个能力的程序没有准备好")
+            raise RuntimeError("This capability's program is not ready")
         try:
             reply = json.loads(ready)
         except json.JSONDecodeError as exc:
             self._abandon_child(child)
-            raise RuntimeError("这个能力的程序没有准备好") from exc
+            raise RuntimeError("This capability's program is not ready") from exc
         if reply.get("event") != "ready":
             self._abandon_child(child)
-            raise RuntimeError(str(reply.get("error") or "这个能力的程序没有准备好"))
+            raise RuntimeError(str(reply.get("error") or "This capability's program is not ready"))
         self._ready = True
         self._os_pid = int(self.activation.pid)
         self.status = ProcessStatus.RUNNING
@@ -252,7 +252,7 @@ class CapabilityProcess:
     def revoke(self, handle: str) -> dict[str, object]:
         """Invalidate one handle through the resource pool."""
         if self._pool is None:
-            raise RuntimeError("这个进程没有资源池")
+            raise RuntimeError("This process has no resource pool")
         revocation = self._pool.revoke(handle)
         return {
             "handle": revocation.handle,

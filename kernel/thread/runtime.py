@@ -6,7 +6,6 @@ import asyncio
 import contextvars
 import inspect
 import os
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -41,52 +40,16 @@ class ThreadRuntime:
     ) -> None:
         """Run until the process asks for a cooperative stop."""
 
-        pending: set[asyncio.Task[None]] = set()
-        self._wait_for_sync_shutdown = True
-        self._process_id = str(process_id)
-        self._ceilings = ceilings
-        self._workers = WorkerPool(self._sync_worker_count(adapter))
-        claimed_once = False
-        try:
-            stopping = False
-            while not stopping:
-                if await _resolve(should_stop):
-                    stopping = True
-                    break
+        from kernel.scheduler.threads import run_runtime
 
-                self._discard_finished(pending)
-                if claimed_once:
-                    self._align(adapter)
-                if len(pending) >= self._admit_limit():
-                    await self._wait_for_one(pending)
-                    continue
-
-                request = await asyncio.to_thread(
-                    inbox.claim,
-                    process_id,
-                    f"async-runtime-{uuid.uuid4().hex}",
-                    self.policy.claim_lease_seconds,
-                )
-                if request is None:
-                    if await _resolve(should_stop):
-                        stopping = True
-                        break
-                    await asyncio.sleep(self.policy.poll_interval_seconds)
-                    continue
-
-                claimed_once = True
-                self._align(adapter)
-                task = asyncio.create_task(
-                    self._execute_request(inbox, adapter, request),
-                    name=f"linope-request-{request.request_id}",
-                )
-                pending.add(task)
-
-            await self._drain(pending)
-        finally:
-            if self._workers is not None:
-                self._workers.shutdown(wait=self._wait_for_sync_shutdown)
-                self._workers = None
+        await run_runtime(
+            self,
+            process_id=process_id,
+            inbox=inbox,
+            adapter=adapter,
+            should_stop=should_stop,
+            ceilings=ceilings,
+        )
 
     async def _execute_request(
         self,
@@ -125,7 +88,7 @@ class ThreadRuntime:
         if operation == "ping":
             pid = self._reply_pid()
             if "pid" in message and int(message.get("pid") or 0) != pid:
-                return {"event": "error", "error": "这不是这个能力的进程号"}
+                return {"event": "error", "error": "This is not this capability's pid"}
             return {
                 "event": "pong",
                 "pid": pid,
@@ -135,7 +98,7 @@ class ThreadRuntime:
         if adapter is None or not (
             hasattr(adapter, "handle") or hasattr(adapter, "handle_async")
         ):
-            return {"event": "error", "error": "这个进程没有 load"}
+            return {"event": "error", "error": "This process has no load"}
 
         payload = {
             key: value for key, value in message.items() if key != "request_id"
@@ -150,7 +113,7 @@ class ThreadRuntime:
                     result = await result
             else:
                 if self._workers is None:
-                    raise RuntimeError("同步插件执行器尚未启动")
+                    raise RuntimeError("The synchronous plugin executor has not started")
                 context = contextvars.copy_context()
                 result = await self._workers.run(context.run, adapter.handle, payload)
         except Exception as error:

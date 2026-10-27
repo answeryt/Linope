@@ -6,7 +6,7 @@ import sys
 
 from kernel.command.convention import UsageError, guard, parse
 
-USAGE = "用法: linope resource serve"
+USAGE = "usage: linope resource serve"
 
 
 @guard(USAGE)
@@ -19,7 +19,7 @@ def run(argv: list[str]) -> int:
     raise UsageError(USAGE)
 
 
-_SERVE = "用法: linope resource serve [--host 127.0.0.1] [--port 0]"
+_SERVE = "usage: linope resource serve [--host 127.0.0.1] [--port 0]"
 
 
 def _serve(argv: list[str]) -> int:
@@ -33,7 +33,7 @@ def _serve(argv: list[str]) -> int:
     host = str(invocation.options.get("host") or "127.0.0.1")
     port = 0 if invocation.options.get("port") is None else int(invocation.options["port"])
     if port < 0 or port > 65535:
-        raise UsageError("--port 要在 0 到 65535 之间")
+        raise UsageError("--port must be between 0 and 65535")
     from kernel.hypermedia.http_server import serve_resources
 
     try:
