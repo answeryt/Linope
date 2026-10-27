@@ -7,7 +7,16 @@ name = "linope"
 version = "0.0.1"
 description = "Linope kernel and terminal"
 requires-python = ">=3.11"
-dependencies = ["litellm"]
+dependencies = [
+    "litellm",
+    "openai",
+    "anthropic",
+    "google-genai",
+    "ddgs",
+    "mcp",
+    "httpx",
+    "PyYAML",
+]
 
 [project.scripts]
 linope = "tui.launch:main"
@@ -15,4 +24,11 @@ linope = "tui.launch:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tui*", "kernel*", "capability*", "bindings*"]
+exclude = ["*.tests", "*.tests.*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.md", "*.toml", "*.ts", "*.js"]
+
+[tool.setuptools.exclude-package-data]
+"*" = [".env", "**/.env"]
