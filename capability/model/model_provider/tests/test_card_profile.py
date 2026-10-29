@@ -13,6 +13,16 @@ def test_profile_uses_card_defaults() -> None:
     assert declaration.settings["provider"] == CARD_CONFIG["provider"]
     assert declaration.settings["id"] == CARD_CONFIG["model"]
     assert "temperature" not in declaration.settings
+    assert "base_url" not in declaration.settings
+
+
+def test_base_url_change_updates_the_profile() -> None:
+    declaration = capability_profile(
+        "model.openai_chat_model",
+        (("base_url", "https://example.invalid/v1"),),
+    )
+    assert declaration.settings["base_url"] == "https://example.invalid/v1"
+    assert declaration.settings["id"] == CARD_CONFIG["model"]
 
 
 def test_model_and_temperature_changes_update_the_profile() -> None:

@@ -68,7 +68,7 @@ process start tools.<插件名>
 
 `--with` 的写法是 `种类=身份`。档案里已经有的种类不能用它改，终端会说「不能改默认资源」。身份没写全时，终端会说「还缺身份」。
 
-`--change` 只改这次调用，写法是 `--change 主题=值`，可以重复。主题必须是这个能力认识的。`model.openai_chat_model` 认识 `model`、`provider`、`temperature`。`--change model=` 换的是模型名；`--change temperature=` 不另开一份模型。不认识的主题会原样报「不认识的主题」。
+`--change` 只改这次调用，写法是 `--change 主题=值`，可以重复。主题必须是这个能力认识的。`model.openai_chat_model` 认识 `model`、`provider`、`temperature`、`base_url`。`--change model=` 换的是模型名；`--change base_url=` 换的是 API 地址；`--change temperature=` 不另开一份模型。不认识的主题会原样报「不认识的主题」。
 
 `--share` 后面写资源种类。只有这次点到的种类共用，而且身份要相同。点了 `memory` 不会把 `model` 也变成同一份。两个进程要看同一份记忆时，两次启动都写 `--share memory`，并且 `--with memory=` 后面是同一个身份。没点名的种类，即使允许共用，也仍是各一份。
 

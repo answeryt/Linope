@@ -27,7 +27,8 @@ def declaration_from_card(
         key: value for key, value in parameters.items() if value != UNSET
     }
     permission, capabilities, kept = _permission_changes(changes)
-    known = set(parameters) | {"model", "provider"}
+    known = set(parameters) | {"model", "provider", "base_url"}
+    base_url = None
     for topic, raw in kept:
         if topic not in known:
             raise ValueError(f"Unknown topic: {topic}")
@@ -36,9 +37,13 @@ def declaration_from_card(
             identity["id"] = value
         elif topic == "provider":
             identity["provider"] = value
+        elif topic == "base_url":
+            base_url = value
         else:
             call_params[topic] = value
     settings = {"provider": identity["provider"], "id": identity["id"]}
+    if base_url is not None:
+        settings["base_url"] = base_url
     settings.update(call_params)
     resources = [
         ResourceClaim(

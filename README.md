@@ -23,105 +23,37 @@ If you want to learn Linope's command line, read the [command-line documentation
 Python 3.11 or newer is required. Linope terminal also requires Node.js 20 or newer.
 
 ```sh
-git clone https://github.com/answeryt/Linope.git
-cd Linope
-pip install .
-```
-
-That install includes the model SDKs, `litellm`, `ddgs`, and `mcp`. Then type:
-
-```sh
+pip install linope
 linope
 ```
 
-On Windows the command comes from that Python's `Scripts` directory. If the shell cannot find `linope`, run `.\linope.cmd` from the repository.
+After it is installed, the next time you use it, type `linope` in the terminal.
 
-Inside the window, point at the secrets file, then start the capability processes. The smallest search example is [example/README.md](example/README.md).
+## Create an Environment Variable and Send a Message
+
+Inside the window, create the secrets file, load it, then start the process. Write one variable at a time. The name is `OPENAI_API_KEY`. Put the API endpoint and model name on the start line.
 
 ```text
+create capability/.env -- OPENAI_API_KEY=your-api-key
 load env capability/.env
-process start model.openai_chat_model --with memory=search
-process start tools.ddgs
+process start model.openai_chat_model --change base_url=https://your-api-endpoint --change model=your-model --with memory=search
 ```
 
-A model process reads only the secret name written on its own card from `capability/.env`, such as `OPENAI_API_KEY`.
+A process that is already running keeps its old endpoint and model until you `process start` again.
 
-## Configure the Model and API Endpoint
+Note the model process id. If you forget it, use the `list` command.
 
-This example starts `model.openai_chat_model`, which uses an OpenAI Chat-compatible interface. The model name and API endpoint are defined in this card:
-
-```text
-capability/model/model_provider/openai_chat_model/openai_chat_model.json
-```
-
-The main fields to change are:
-
-```json
-{
-  "model": "deepseek-flash",
-  "base_url": "https://api.deepseek.com"
-}
-```
-
-These are the current defaults. When changing providers, set `model` to the model id provided by the provider and `base_url` to its API endpoint. Do not assume that the endpoint ends in `/v1`; follow the provider's documentation. `api_key_env` is the environment-variable name and defaults to `OPENAI_API_KEY`; it usually does not need to change.
-
-Note that the current implementation reads the card JSON and the matching plugin's `CARD_CONFIG` for different parts of the process. When changing the model or `base_url`, update both of these files:
-
-```text
-capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py
-```
-
-Keep `model`, `base_url`, and `api_key_env` consistent in both files. If you use the Responses interface, make the corresponding changes in:
-
-```text
-capability/model/model_provider/openai_response_model/openai_response_model.json
-capability/model/model_provider/openai_response_model/openai_response_model_plugin.py
-```
-
-## Create Environment Variables
-
-Environment variables are stored in:
-
-```text
-capability/.env
-```
-
-Create this file in the repository root if it does not exist. Put one variable on each line, for example:
-
-```dotenv
-OPENAI_API_KEY=your-api-key
-```
-
-The variable name must match `api_key_env` in the model card. After entering the Linope terminal, run this first:
-
-```text
-load env capability/.env
-```
-
-Then start the model and tool processes. This file contains secrets. Do not put real keys in documentation, commit them to Git, or share them with other people.
-
-## Learn the Command Line
-
-The complete command rules are documented here:
-
-- [Chinese command rules](example/linope.cn.md)
-- [English command rules](example/linope.md)
-
-[The example guide](example/README.md) demonstrates the full sequence: starting the model, starting the search tool, registering a service, and sending a question.
-
-After starting a model process with `memory`, load one of the command guides into its system memory:
+Load [example/linope.md](example/linope.md) into that model:
 
 ```text
 load message <model-process-id> -- example/linope.md
 ```
 
-For a model using Chinese instructions, load:
+Then send a message with the same command:
 
 ```text
-load message <model-process-id> -- example/linope.cn.md
+load message <model-process-id> -- your message
 ```
-
-This teaches the model Linope's command protocol, page format, and safety boundaries. It can then choose and combine available capabilities from the current page more independently, instead of requiring a person to spell out every command. Loading the guide does not grant additional permissions; the model can still execute only the commands available on the current page.
 
 Directory notes:
 
