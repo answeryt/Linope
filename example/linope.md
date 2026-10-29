@@ -68,7 +68,7 @@ process start tools.<plugin name>
 
 The syntax for `--with` is `kind=identity`. It cannot change a kind already present in the card; the terminal will say "the default resource cannot be changed". If the identity is incomplete, the terminal will say "identity is missing".
 
-`--change` applies only to the current call. Its syntax is `--change topic=value`, and it may be repeated. The topic must be recognized by the capability. `model.openai_chat_model` recognizes `model`, `provider`, and `temperature`. `--change model=` changes the model name; `--change temperature=` does not start another model process. An unknown topic is reported as "unknown topic".
+`--change` applies only to the current call. Its syntax is `--change topic=value`, and it may be repeated. The topic must be recognized by the capability. `model.openai_chat_model` recognizes `model`, `provider`, `temperature`, and `base_url`. `--change model=` changes the model name; `--change base_url=` changes the API endpoint; `--change temperature=` does not start another model process. An unknown topic is reported as "unknown topic".
 
 Write a resource kind after `--share`. Only the kinds named in this invocation are shared, and their identities must match. Sharing `memory` does not make `model` shared as well. For two processes to see the same memory, both startup commands must contain `--share memory` and the same identity after `--with memory=`. An unnamed kind remains separate even if sharing it is allowed.
 

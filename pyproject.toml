@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "linope"
 version = "0.0.1"
 description = "Linope kernel and terminal"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "litellm",
@@ -17,6 +18,9 @@ dependencies = [
     "httpx",
     "PyYAML",
 ]
+
+[project.urls]
+Homepage = "https://github.com/answeryt/Linope"
 
 [project.scripts]
 linope = "tui.launch:main"

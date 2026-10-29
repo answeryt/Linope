@@ -18,11 +18,9 @@ The current “service” implementation records the pids of several already-run
 
 The [bindings](bindings) directory also contains gRPC, NATS, and ZeroMQ transports. The kernel does not open them when starting services, and the code does not import `bindings` from `kernel`. When the corresponding libraries are not installed locally, [bindings/tests/test_transports.py](bindings/tests/test_transports.py) is skipped. A real one-message exchange between two processes over gRPC has not yet been completed.
 
-`pip install .` does not install `grpcio`, `nats-py`, or `pyzmq`. To use these three transports, install them separately and enable them yourself.
+`pip install linope` does not install `grpcio`, `nats-py`, or `pyzmq`. To use these three transports, install them separately and enable them yourself.
 
 ## Other Notes
-
-The package has not been published to PyPI. For now, clone the repository and run `pip install .` inside the repository.
 
 A Docker workspace additionally requires `aiodocker`, and Docker must be installed on the machine. The default installation does not include it.
 
