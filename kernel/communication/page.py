@@ -49,10 +49,11 @@ def model_page(
     seq: int,
     commands: tuple[CommandOffer, ...] = (),
     read: list[dict[str, Any]] | None = None,
+    state: str | None = None,
 ) -> Representation:
-    """Rows from the pointer space, then the memory resource and the offered actions."""
+    """The current delivery, then the actions offered now. No address catalog."""
 
-    page = memory_page(rows, scope=scope, seq=seq, read=read)
+    page = memory_page(rows, scope=scope, seq=seq, read=read, state=state)
     facts = dict(page.facts)
     details = dict(facts.get("details") or {})
     links = list(page.links)

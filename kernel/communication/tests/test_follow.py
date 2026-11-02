@@ -194,7 +194,7 @@ def _reading_model_plugin(tmp_path: Path) -> Path:
         "    page = json.loads(body[-1]['content'])\n"
         "    with LOG.open('a', encoding='utf-8') as handle:\n"
         "        handle.write(json.dumps(page, ensure_ascii=False) + '\\n')\n"
-        "    if page.get('read'):\n"
+        "    if any(row.get('address') for row in page.get('rows') or []):\n"
         "        return 'I have seen the old messages.'\n"
         "    return json.dumps({'state': 'continue', 'pointer': 'message/0'}, ensure_ascii=False)\n"
         "async def load_async(kind, body, call_params=None):\n"
@@ -226,10 +226,10 @@ def test_a_read_is_journaled_and_stays_out_of_memory(tmp_path: Path, monkeypatch
     capsys.readouterr()
 
     pages = _pages(tmp_path)
-    assert pages[1]["read"][0]["address"] == "message/0"
-    assert pages[1]["read"][0]["time"]
-    assert pages[0]["rows"][0]["time"] == pages[1]["read"][0]["time"]
-    assert pages[0]["_links"]["message/0"]["time"] == pages[1]["read"][0]["time"]
+    assert pages[1]["rows"][0]["address"] == "message/0"
+    assert pages[1]["rows"][0]["time"]
+    assert pages[0]["rows"][0]["time"] == pages[1]["rows"][0]["time"]
+    assert "message/0" not in pages[0]["_links"]
 
     rows = Journal(journal_beside(tmp_path / "ledger.json")).rows()
     reads = [row for row in rows if row.get("step") == "read"]

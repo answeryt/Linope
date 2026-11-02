@@ -35,7 +35,7 @@
 
 `closed` 不再提供 `stop`。`show` 打出的就是这一页：事实加上这些链接。
 
-记忆页在 `memory_page.py`。每一行是一条链接，句柄里含有当前序号。记忆又写了一行，序号变了，旧页上的句柄就对不上。这是同一件事：状态往前走了，旧的转移不再有效。
+记忆页在 `memory_page.py`。它只展示这一次要给模型看的行，不为历史地址逐条做链接。命令链接的句柄里仍含有当前序号。记忆又写了一行，序号变了，旧页上的句柄就对不上。
 
 模型要执行的命令菜单不在这里拼，在 [`kernel/communication`](../communication/README.cn.md)。它用这里的页和链接，把「现在能 `process start`、`load tool` 还是 `ask`」写进模型看到的那一页。本目录给出页、链接和本地 HTTP。启动服务的命令在 [`kernel/command/screen`](../command/screen/README.cn.md)。
 

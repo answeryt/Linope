@@ -33,8 +33,8 @@ def relieve(
 
 
 def _needed(pressure: Pressure, *, delegating: bool) -> bool:
-    if pressure.context_full:
-        return True
+    """Context size does not add a worker. A full prompt is a memory decision."""
+
     if pressure.peers > 0 and pressure.activity == "with":
         return True
     return delegating and pressure.activity in {"self", "with"}

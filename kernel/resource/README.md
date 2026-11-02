@@ -10,11 +10,11 @@ A process sees the handle, the kind, and the call parameters. The entity id stay
 
 ## memory/
 
-[`memory/`](memory/README.md) is the dictionary one memory entity holds.
+[`memory/`](memory/README.md) is one logical memory. The resource entity keeps only a scope handle. Rows live in a `MemoryStore`, and page tables live in `MemoryRuntime`.
 
-`state.py` opens that dictionary as `{"address_space": {"scope": ...}}`. Rows live under `items`. The key of a row is its stored name: `message/0`, `task/0`, `artifact/0`, or `system`. `next` is the next number for `message`, `task`, and `artifact`. `seq` is one counter for the whole dictionary. `store.py` appends a row and joins named prompt files into the system row. `token_meter.py` sums tokens for text already stored. The sum is computed when asked.
+A stored name is `message/0`, `task/0`, `artifact/0`, or `system`. The default backend is in-process. `linope memory backend` can select `sqlite` and a path. A model receives the system prompt and the current user message, then reads older rows by address.
 
-Every process that holds the entity shares those stored names. A process's own `message/0` can point at a different stored name. That address list, and who may read or write, is [`kernel/scheduler`](../scheduler/README.md).
+Every process that holds the entity shares those stored names. A process's own `message/0` can point at a different stored name. Who may read or write is [`kernel/scheduler`](../scheduler/README.md).
 
 ## Scripts
 

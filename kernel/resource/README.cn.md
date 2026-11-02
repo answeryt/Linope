@@ -10,11 +10,11 @@
 
 ## memory/
 
-[`memory/`](memory/README.cn.md) 是一个记忆实体持有的那本字典。
+[`memory/`](memory/README.cn.md) 是一份逻辑记忆。资源实体只保存 scope 句柄。行在 `MemoryStore`，页表在 `MemoryRuntime`。
 
-`state.py` 把它打开为 `{"address_space": {"scope": ...}}`。行放在 `items` 下。一行的键就是它的真名：`message/0`、`task/0`、`artifact/0`，或 `system`。`next` 是 `message`、`task`、`artifact` 各自的下一个编号。`seq` 是整本字典的一个计数器。`store.py` 追加一行，并把有名字的提示文件拼进 system 行。`token_meter.py` 把已经存下的文本的 token 数加总。这个数在询问时算出来。
+一行的真名是 `message/0`、`task/0`、`artifact/0` 或 `system`。默认后端是进程内存储。`linope memory backend` 可以选择 `sqlite` 并给出路径。模型默认只收到 system 提示词和当前用户消息，再用地址读取旧行。
 
-持有该实体的每个进程共用这些真名。一个进程自己的 `message/0` 可以指向另一个真名。那张地址表，以及谁可以读或写，在 [`kernel/scheduler`](../scheduler/README.cn.md)。
+持有该实体的每个进程共用这些真名。一个进程自己的 `message/0` 可以指向另一个真名。谁可以读或写，在 [`kernel/scheduler`](../scheduler/README.cn.md)。
 
 ## 脚本
 

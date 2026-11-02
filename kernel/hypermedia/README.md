@@ -35,7 +35,7 @@ The process page is `process_page.py`. `activity` is the current state. The link
 
 `closed` does not offer `stop`. `show` prints this page: the facts plus these links.
 
-The memory page is `memory_page.py`. Each row is a link. The handle includes the current sequence. After another row is written, the sequence changes and the handle on the old page no longer matches. That is the same rule: once the state has moved on, the old transition is no longer valid.
+The memory page is `memory_page.py`. It shows only the rows for this request and does not link every historical address. Command handles still include the current sequence. After another row is written, the sequence changes and the handle on the old page no longer matches.
 
 The command menu a model may run is assembled in [`kernel/communication`](../communication/README.md). It uses the page and the links from here to put "start a process, load a tool, or ask" on the page the model sees. This directory supplies the page, the links, and the local HTTP service. The command that starts the service is [`kernel/command/screen`](../command/screen/README.md).
 

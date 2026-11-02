@@ -139,6 +139,15 @@ class ProcessResourceBook:
             return ()
         return tuple(item.handle for item in record.leases)
 
+    def drop_handle(self, pid: int, handle: str) -> None:
+        """Remove one revoked handle from the account and from the ledger copy."""
+
+        record = self._records.get(int(pid))
+        if record is None:
+            return
+        record.leases = [item for item in record.leases if item.handle != handle]
+        self.save()
+
     def close(self, pid: int) -> ProcessResourceRecord | None:
         """Mark the account closed. A second close does nothing."""
         record = self._records.get(int(pid))

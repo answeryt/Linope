@@ -21,7 +21,7 @@ class ProcessReaper:
         self._is_alive = is_alive
 
     def reap_if_dead(self, row: dict[str, Any] | None) -> bool:
-        if row is None or row.get("status") not in {"starting", "running"}:
+        if row is None or row.get("status") not in {"starting", "running", "ready"}:
             return False
         if self._is_alive(row.get("pid"), row.get("identity")):
             return False

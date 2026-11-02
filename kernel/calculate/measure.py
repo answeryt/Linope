@@ -62,21 +62,16 @@ def measure(
     """Read this process's memory and the other processes on its channel."""
     leases = tuple(getattr(record, "leases", ()) or ())
     name = str(model or "")
-    tokens = 0
-    entity = _memory_entity(pool, leases)
-    state = {}
-    if entity is not None and isinstance(getattr(entity, "state", None), dict):
-        state = entity.state
-    from kernel.resource.memory.token_meter import count_state
-    from kernel.scheduler.access import capacity_full
+    from kernel.resource.memory.token_meter import estimate_tokens
+    from kernel.scheduler.access import memory_system
 
-    tokens = count_state(name, state)
+    tokens = estimate_tokens(memory_system(pool, leases))
     limit = resolve_default_context_length(name or "unknown/model")
     channel = _channel(leases)
     return Pressure(
         tokens=tokens,
         context_limit=limit,
-        context_full=capacity_full(tokens, limit),
+        context_full=limit > 0 and tokens >= limit,
         channel=channel,
         peers=_peers(book, record, channel),
         activity=str(activity or "sleeping"),
@@ -112,19 +107,6 @@ def _channel(leases: tuple[Any, ...]) -> str:
         identity = getattr(lease, "identity", {}) or {}
         return str(identity.get("channel") or "")
     return ""
-
-
-def _memory_entity(pool: Any | None, leases: tuple[Any, ...]) -> Any | None:
-    if pool is None:
-        return None
-    store = getattr(pool, "store", None)
-    if store is None:
-        return None
-    for lease in leases:
-        if str(getattr(lease, "kind", "")) != "memory":
-            continue
-        return store.entity(getattr(lease, "resource_id", ""))
-    return None
 
 
 def _peers(book: Any | None, record: Any, channel: str) -> int:

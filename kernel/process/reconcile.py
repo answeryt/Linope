@@ -64,6 +64,10 @@ class ProcessReconciler:
             if pid_value is None:
                 child = spawn_runtime(chosen_keys)
                 pid_value = int(child.pid or 0)
+                if child is not None:
+                    from kernel.environment.host_adapter import apply_host_limits
+
+                    apply_host_limits(child, host_policy)
                 if pid_value <= 0:
                     raise RuntimeError("This capability's program has no pid")
             if environment is None and (chosen_file or cwd):

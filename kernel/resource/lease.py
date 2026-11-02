@@ -74,6 +74,9 @@ class ResourceLeaseManager:
         self._entities: dict[str, ResourceEntity] = {}
         self._handles: dict[str, dict[str, Any]] = {}
         self._pending_loads: dict[int, list[str]] = {}
+        from kernel.resource.memory.runtime import MemoryRuntime
+
+        self.memory = MemoryRuntime()
 
     def authorize(self, handle: str, pid: int) -> None:
         """Reject a handle that is not this process's current token."""
@@ -154,6 +157,9 @@ class ResourceLeaseManager:
             return
         entity.status = "unloaded"
         entity.state = None
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            memory.release_resource(resource_id)
 
     def entity(self, resource_id: str) -> ResourceEntity | None:
         return self._entities.get(resource_id)
@@ -194,7 +200,7 @@ class ResourceLeaseManager:
         if record is None or record["status"] != HandleStatus.ACTIVE:
             raise KeyError(handle)
         record["status"] = HandleStatus.REVOKED
-        pid = str(record["pid"])
+        pid = int(record["pid"])
         resource_id = str(record["resource_id"])
         unloaded = self._release_resource(pid, resource_id)
         return HandleRevocation(

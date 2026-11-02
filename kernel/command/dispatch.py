@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 from kernel.command.file.create import run as create
+from kernel.command.memory import run as memory_backend
 from kernel.command.file.env import run as load_env
 from kernel.command.log import run as show_log
 from kernel.command.process.clerk import run as session
@@ -18,6 +19,7 @@ COMMANDS = {
     "create": create,
     "list": talk,
     "load": load_env,
+    "memory": memory_backend,
     "log": show_log,
     "ping": talk,
     "process": process,
@@ -46,6 +48,7 @@ def usage() -> str:
         "linope process trace <pid>",
         "linope service start <pid> [<pid> ...]",
         "linope service load <service id> -- <body>",
+        "linope memory backend [memory | sqlite --path <file>]",
         "linope resource serve",
         "linope log [pid]",
         "linope terminal",

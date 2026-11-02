@@ -193,7 +193,7 @@ def test_memory_scope_is_the_only_address_space(tmp_path: Path) -> None:
     with pytest.raises(PermissionError):
         admit(record.leases, "other")
     state = reconciler.pool.store.entity(process.activation.grants[0].resource_id).state
-    assert state["address_space"]["scope"] == "chat"
+    assert state["scope"] == "chat"
     ledger = ProcessLedger(tmp_path / "ledger.json")
     with pytest.raises(ValueError, match="must not be saved"):
         ledger.write(

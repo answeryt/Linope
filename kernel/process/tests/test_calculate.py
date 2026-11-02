@@ -72,7 +72,7 @@ def test_an_image_adds_tokens() -> None:
     assert text + image > text
 
 
-def test_full_context_adds_one_helper() -> None:
+def test_full_context_does_not_add_a_helper() -> None:
     book = ProcessResourceBook()
     _ready(book, 7, [])
     pressure = Pressure(
@@ -83,8 +83,8 @@ def test_full_context_adds_one_helper() -> None:
         peers=0,
         activity="sleeping",
     )
-    assert relieve(book, 7, pressure, delegating=False) == 2
-    assert book.get(7).room["worker_ceiling"] == 2
+    assert relieve(book, 7, pressure, delegating=False) == 1
+    assert book.get(7).room["worker_ceiling"] == 1
 
 
 def test_busy_handoff_adds_one_helper() -> None:
@@ -124,12 +124,11 @@ def test_sleeping_alone_does_not_add() -> None:
     assert relieve(book, 7, pressure, delegating=True) == 1
 
 
-def test_repeated_pressure_can_pass_four() -> None:
+def test_repeated_context_pressure_does_not_add_workers() -> None:
     book = ProcessResourceBook()
     _ready(book, 7, [])
     pressure = Pressure(1, 1, True, "", 0, "sleeping")
     ceiling = 1
     for _ in range(5):
         ceiling = relieve(book, 7, pressure, delegating=False)
-    assert ceiling == 6
-    assert ceiling > 4
+    assert ceiling == 1

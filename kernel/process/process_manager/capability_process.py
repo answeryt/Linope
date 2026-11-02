@@ -254,6 +254,8 @@ class CapabilityProcess:
         if self._pool is None:
             raise RuntimeError("This process has no resource pool")
         revocation = self._pool.revoke(handle)
+        if self._book is not None:
+            self._book.drop_handle(int(revocation.pid), revocation.handle)
         return {
             "handle": revocation.handle,
             "pid": revocation.pid,

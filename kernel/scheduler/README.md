@@ -19,7 +19,7 @@ One scheduler for model turns, pointer steps, resource routing, and thread admis
 
 The shared notebook is one memory entity. [`kernel/resource`](../resource/README.md) makes that entity when this launch names `memory` in `shared` and the claims use the same scope. The rows and their stored names live in [`kernel/resource/memory`](../resource/memory/README.md). This directory keeps a private address list for each process that holds the entity.
 
-`access.py` stores those lists in `_MAPS`, keyed by process id and resource id, then by class. `remember` asks the memory module to append one row. The stored name comes back as `message/0`, then `message/1`, from the entity's own counter. `_map_real` appends that stored name onto every current holder whose `space` includes the class:
+`MemoryRuntime` stores those lists in a per-process page table, keyed by process id and resource id, then by class. The page table can be saved with the memory backend. Releasing the runtime cache leaves committed rows in place. `remember` asks the memory module to append one row. The stored name comes back as `message/0`, then `message/1`, from the entity's own counter. `_map_real` appends that stored name onto every current holder whose `space` includes the class:
 
 ```python
 for pid, grant in holders:
@@ -61,4 +61,4 @@ A read that names a scope, such as `chat/message/0`, does not use the private li
 ## Known Limitations and Deferred Work
 
 - **A turn has no step cap** — `turn` keeps walking until the model answers or the call fails.
-- **Address lists last for this run** — `_MAPS` starts empty in a new run. Stored rows remain in the memory dict. A later write appends only that new stored name, so this process's `message/0` is the new row. Rows already stored are read with a scoped address such as `chat/message/0`.
+- **A new process starts with an empty page table** — Committed rows remain in the `MemoryStore`. This process's `message/0` is the next row written while it holds the memory. Rows already stored are read with a scoped address such as `chat/message/0`.

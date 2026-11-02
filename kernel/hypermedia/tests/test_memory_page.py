@@ -17,18 +17,14 @@ def _rows() -> list[dict]:
     ]
 
 
-def test_only_this_turn_carries_words() -> None:
-    document = page_document(model_page(_rows(), scope="s", seq=5))
+def test_only_the_named_rows_are_shown_and_addresses_are_not_linked() -> None:
+    current = _rows()[-2:]
+    document = page_document(model_page(current, scope="s", seq=5))
     assert document["state"] == "resulted"
     assert [row["content"] for row in document["rows"]] == ["new question", "pid=7 capability=tools.ddgs"]
-    assert [row["time"] for row in document["rows"]] == [
-        "2026-10-22T15:03:00+00:00",
-        "2026-10-22T15:04:00+00:00",
-    ]
-    assert {"system/0", "message/0", "message/1", "answer"} <= set(document["_links"])
-    assert document["_links"]["message/0"]["time"] == "2026-10-22T15:01:00+00:00"
-    assert document["_links"]["message/0"]["kind"] == "user"
-    assert "content" not in document["_links"]["message/0"]
+    assert "message/0" not in document["_links"]
+    assert "system/0" not in document["_links"]
+    assert "answer" in document["_links"]
     assert "time" not in document["_links"]["answer"]
 
 
@@ -59,8 +55,9 @@ def test_a_handle_changes_when_the_seq_changes() -> None:
 
 
 def test_a_memory_projection_lists_addresses_without_commands() -> None:
-    document = page_document(memory_page(_rows(), scope="s", seq=5))
-    assert "message/0" in document["_links"]
+    document = page_document(memory_page(_rows()[-1:], scope="s", seq=5))
+    assert "message/0" not in document["_links"]
+    assert document["rows"][0]["content"] == "pid=7 capability=tools.ddgs"
     assert "answer" not in document["_links"]
     assert "memory" not in document["_links"]
     assert all(not name.startswith("start:") for name in document["_links"])

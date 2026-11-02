@@ -22,7 +22,9 @@ MEMORY_CLASSES = frozenset({"system", "message", "task", "artifact"})
 _GOT_LIMIT = 500
 _FENCE = re.compile(r"^```[A-Za-z]*\s*\n(?P<inner>.*?)\n?```$", re.DOTALL)
 _TICKS = re.compile(r"^`(?P<inner>[^`\n]+)`$")
-_ADDRESS = re.compile(r"(system)(?:/0)?|(message|task|artifact)/\d+(?:-\d+)?")
+_ADDRESS = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)?(?:system)(?:/0)?|(?:[A-Za-z0-9_.-]+/)?(?:message|task|artifact)/\d+(?:-\d+)?"
+)
 _COMMAND_HEADS = frozenset({"process", "load", "ask"})
 
 
@@ -122,6 +124,10 @@ def interpret(output: Any, page: Representation, *, current_seq: int | None = No
     return classify(step)
 
 
+def _memory_address(head: str) -> bool:
+    return _ADDRESS.fullmatch(head) is not None
+
+
 def _pointer(pointer: str, body: Any, page: Representation, refuse: Any) -> Step | Rejection:
     if pointer == ANSWER:
         if not isinstance(body, str) or not body.strip():
@@ -129,7 +135,7 @@ def _pointer(pointer: str, body: Any, page: Representation, refuse: Any) -> Step
         return Step(ANSWER, ANSWER, body.strip())
     words = _strip_linope(pointer)
     head = words.split(None, 1)[0] if words else ""
-    if head.split("/", 1)[0] in MEMORY_CLASSES:
+    if _memory_address(head):
         return _read(words, page, refuse)
     if head == "process":
         return _start(words, page, refuse)
@@ -145,23 +151,25 @@ def _pointer(pointer: str, body: Any, page: Representation, refuse: Any) -> Step
 
 
 def _read(selector: str, page: Representation, refuse: Any) -> Step | Rejection:
-    known = {link.resource_id for link in page.links}
+    del page
     wanted: list[str] = []
     for part in selector.replace(",", " ").split():
-        match = re.fullmatch(r"(system)(?:/0)?|(message|task|artifact)/(\d+)(?:-(\d+))?", part)
+        match = re.fullmatch(
+            r"(?:[A-Za-z0-9_.-]+/)?(system)(?:/0)?|(?:([A-Za-z0-9_.-]+)/)?(message|task|artifact)/(\d+)(?:-(\d+))?",
+            part,
+        )
         if match is None:
             return refuse("Bad address; write message/0 or message/0-2", "pointer", part)
         if match.group(1):
+            prefix = ""
             addresses = ["system/0"]
         else:
-            start = int(match.group(3))
-            end = int(match.group(4) or start)
+            prefix = f"{match.group(2)}/" if match.group(2) else ""
+            start = int(match.group(4))
+            end = int(match.group(5) or start)
             if end < start:
                 return refuse("Address range must go from low to high", "pointer", part)
-            addresses = [f"{match.group(2)}/{index}" for index in range(start, end + 1)]
-        missing = [address for address in addresses if address not in known]
-        if missing:
-            return refuse(f"This address is not on the current page: {missing[0]}", "pointer", part)
+            addresses = [f"{prefix}{match.group(3)}/{index}" for index in range(start, end + 1)]
         wanted.extend(addresses)
     return Step("read", " ".join(wanted))
 

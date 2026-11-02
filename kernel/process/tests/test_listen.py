@@ -420,7 +420,7 @@ def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
     assert "you are the assistant" not in [row["content"] for row in first["rows"]]
     assert [row["content"] for row in second["rows"]] == ["goodbye"]
     assert "hello" not in [row["content"] for row in second["rows"]]
-    assert second["_links"]["message/0"]["kind"] == "user"
+    assert "message/0" not in second["_links"]
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "you are the assistant" not in saved
     assert "model answered" not in saved
@@ -584,8 +584,22 @@ def test_shared_memory_keeps_system_model_and_tool_output(
     first, second = _pair(tmp_path, _recording_plugin(tmp_path), shared=("memory",))
     first_id = first.pid
     second_id = second.pid
+
+    class _Keep(_Service):
+        def __init__(self, *processes: object) -> None:
+            super().__init__(*processes)
+            self.kinds: set[str] = set()
+
+        def close(self) -> None:
+            from kernel.scheduler.access import memory_contents
+
+            found = memory_contents(first._pool, first.activation.grants)
+            self.kinds = {str(item["kind"]) for item in (found or {}).get("items") or []}
+            super().close()
+
+    service = _Keep(first, second)
     hold(
-        _Service(first, second),
+        service,
         lines=[
             f"show {first_id}",
             f"load message {first_id} -- {prompt}",
@@ -606,8 +620,7 @@ def test_shared_memory_keeps_system_model_and_tool_output(
     shared = _page(calls[2]["body"])
     assert _system_text(calls[2]["body"]) == "you are the assistant"
     assert [row["content"] for row in shared["rows"]] == ["next turn"]
-    visible = [item.get("kind") for item in shared["_links"].values()]
-    assert {"user", "model", "tool"} <= set(visible)
+    assert {"user", "model", "tool"} <= service.kinds
     assert "tool done" not in [row["content"] for row in shared["rows"]]
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "you are the assistant" not in saved
@@ -661,7 +674,6 @@ def test_ask_hands_the_task_and_writes_the_result_back(
     followed_page = _page(followed)
     assert [row["content"] for row in followed_page["rows"]] == ["anything else"]
     assert "peer rules" not in json.dumps(followed, ensure_ascii=False)
-    assert "other" in [item.get("kind") for item in followed_page["_links"].values()]
     receiver_rows = service.memories[receiver_id]
     assert [row["content"] for row in receiver_rows if row["kind"] == "user"] == ["please handle"]
     assert [row["content"] for row in receiver_rows if row["kind"] == "model"] == ["model answered"]
@@ -748,7 +760,7 @@ def _page_plugin(tmp_path: Path) -> Path:
         "    page = json.loads(body[-1]['content'])\n"
         "    with LOG.open('a', encoding='utf-8') as handle:\n"
         "        handle.write(json.dumps(page, ensure_ascii=False) + '\\n')\n"
-        "    if page.get('read'):\n"
+        "    if any(row.get('address') for row in page.get('rows') or []):\n"
         "        return '已看到原文'\n"
         "    return '记得带伞'\n"
         "async def load_async(kind, body, call_params=None):\n"
@@ -813,8 +825,8 @@ def test_an_address_is_read_on_the_first_page(tmp_path: Path, monkeypatch, capsy
     capsys.readouterr()
     pages = _pages_log(tmp_path)
     assert "read" not in pages[0]
-    assert [item["address"] for item in pages[1]["read"]] == ["message/0", "message/1"]
-    assert [item["content"] for item in pages[1]["read"]] == ["上海今天下雨", "记得带伞"]
+    assert [item["address"] for item in pages[1]["rows"]] == ["message/0", "message/1"]
+    assert [item["content"] for item in pages[1]["rows"]] == ["上海今天下雨", "记得带伞"]
     assert any(item["content"] == "查询北京天气" for item in window.memory)
 
 

@@ -1,16 +1,13 @@
-"""A projection of memory rows. Commands and the answer link are added by the model page.
+"""The rows this turn is showing. Older memory is not linked from the page.
 
-Rows of the current turn carry their words. Earlier rows only carry an address,
-kind, and time. Entering one of those addresses still requires the process
-pointer space.
+Entering an address still requires the process pointer space. The model asks
+for ``message/0`` itself; this page does not publish a directory of addresses.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from kernel.hypermedia.handle import opaque
-from kernel.hypermedia.link import Link
 from kernel.hypermedia.representation import Representation
 
 ANSWER = "answer"
@@ -22,36 +19,18 @@ def memory_page(
     scope: str,
     seq: int,
     read: list[dict[str, Any]] | None = None,
+    state: str | None = None,
 ) -> Representation:
-    """Addresses this memory currently projects. This page does not grant them."""
+    """Show only the rows the caller named for this request."""
 
-    turn = _turn_start(rows)
-    shown: list[dict[str, Any]] = []
-    links: list[Link] = []
-    details: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        address = str(row.get("address") or "")
-        if not address:
-            continue
-        kind = str(row.get("kind") or "")
-        when = str(row.get("time") or "")
-        links.append(Link(address, address, opaque(scope, seq, address)))
-        details[address] = {"kind": kind, "time": when}
-        if kind == "system" or int(row.get("seq") or 0) < turn:
-            continue
-        item = {"address": address, "kind": kind, "content": str(row.get("content") or ""), "time": when}
-        if row.get("state"):
-            item["state"] = str(row["state"])
-        shown.append(item)
+    del scope
+    shown = [_public(row) for row in (read if read is not None else rows)]
     facts: dict[str, Any] = {
-        "state": _page_state(rows),
+        "state": state or _page_state(shown),
         "seq": int(seq),
         "rows": shown,
-        "details": details,
     }
-    if read:
-        facts["read"] = read
-    return Representation(facts, tuple(links))
+    return Representation(facts, ())
 
 
 def page_document(page: Representation) -> dict[str, Any]:
@@ -72,18 +51,22 @@ def allowed_pointers(page: Representation) -> list[str]:
     return [link.resource_id for link in page.links]
 
 
-def _turn_start(rows: list[dict[str, Any]]) -> int:
-    """The seq of the newest user question. Rows from there on are this turn."""
-
-    start = 0
-    for row in rows:
-        if str(row.get("kind") or "") == "user":
-            start = max(start, int(row.get("seq") or 0))
-    return start
+def _public(row: dict[str, Any]) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "kind": str(row.get("kind") or ""),
+        "content": str(row.get("content") or ""),
+    }
+    if row.get("address"):
+        item["address"] = str(row["address"])
+    if row.get("time"):
+        item["time"] = str(row["time"])
+    if row.get("state"):
+        item["state"] = str(row["state"])
+    return item
 
 
 def _page_state(rows: list[dict[str, Any]]) -> str:
-    newest = max(rows, key=lambda row: int(row.get("seq") or 0), default=None)
+    newest = rows[-1] if rows else None
     if newest is None:
         return "asked"
     return str(newest.get("state") or "asked")

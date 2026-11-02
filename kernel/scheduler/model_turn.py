@@ -10,12 +10,14 @@ import json
 import sys
 from typing import Any
 
+from kernel.resource.memory.fit import ContextCapacity
 from kernel.scheduler.access import (
     address_scope,
     authorize_selector,
     latest_seq,
     memory_contents,
     page_messages,
+    prompt_budget,
 )
 from kernel.communication.channel import Channel, MemoryChannel
 from kernel.communication.offers import command_offers
@@ -49,23 +51,30 @@ def turn(
     grants = getattr(process.activation, "grants", ()) or ()
     me = str(_pid_of(process))
     mail = channel or MemoryChannel(pool)
-    read: list[dict[str, Any]] | None = None
+    delivery: list[dict[str, Any]] | None = None
     if read_selector:
         authorize_selector(grants, read_selector)
-        read = _read(pool, grants, read_selector)
+        delivery = _fit(process, pool, grants, _read(pool, grants, read_selector), question)
     mail.send(me, {"kind": "user", "content": question, "state": "asked"})
     while True:
+        shown = delivery if delivery is not None else _current(pool, grants, question)
+        delivery = None
         page = model_page(
-            _rows(pool, grants),
+            shown,
             scope=address_scope(grants),
             seq=latest_seq(pool, grants),
             commands=offers(service, process),
-            read=read,
+            state=_state(shown, pool, grants),
         )
-        read = None
+        try:
+            messages = page_messages(pool, grants, page_document(page))
+            prompt_budget(pool, grants, page_document(page), _model_name(process))
+        except ContextCapacity as exc:
+            _refuse(mail, me, Rejection(str(exc), "context", question, (), latest_seq(pool, grants)))
+            return str(exc)
         result = _ask_model(
             process,
-            page_messages(pool, grants, page_document(page)),
+            messages,
             note_activity=note_activity,
         )
         text = _text(result)
@@ -74,16 +83,20 @@ def turn(
         if isinstance(step, Rejection):
             mail.send(me, {"kind": "model", "content": text, "state": "continue"})
             _refuse(mail, me, step)
+            delivery = _newest(pool, grants)
             continue
         request = step
         if isinstance(request, Answer):
             mail.send(me, {"kind": "model", "content": request.body, "state": "answered"})
             return result if request.body == text.strip() else request.body
         if isinstance(request, MemoryRead):
-            read = _read_authorized(pool, grants, request, page, mail, me)
+            delivery = _read_authorized(pool, grants, request, page, mail, me, process, question)
+            if delivery is None:
+                delivery = _newest(pool, grants)
             continue
         mail.send(me, {"kind": "model", "content": step.pointer, "state": "continue"})
         _run(service, process, mail, request, page)
+        delivery = _newest(pool, grants)
 
 
 def _read_authorized(
@@ -93,6 +106,8 @@ def _read_authorized(
     page: Representation,
     mail: Channel,
     me: str,
+    process: Any = None,
+    question: str = "",
 ) -> list[dict[str, Any]] | None:
     """Read only after the pointer space accepts the selector."""
 
@@ -111,7 +126,15 @@ def _read_authorized(
             ),
         )
         return None
-    return _read(pool, grants, request.selector)
+    try:
+        return _fit(process, pool, grants, _read(pool, grants, request.selector), question)
+    except PermissionError as exc:
+        _refuse(
+            mail,
+            me,
+            Rejection(str(exc), "pointer", request.selector, tuple(allowed_pointers(page)), int(page.facts.get("seq") or 0)),
+        )
+        return None
 
 
 def _run(
@@ -248,21 +271,75 @@ def _refuse(mail: Channel, me: str, rejection: Rejection) -> None:
     mail.send(me, {"kind": "other", "content": detail, "state": "rejected"})
 
 
-def _rows(pool: Any, grants: Any) -> list[dict[str, Any]]:
-    return list((memory_contents(pool, grants) or {}).get("items") or [])
+def _current(pool: Any, grants: Any, question: str) -> list[dict[str, Any]]:
+    items = (memory_contents(pool, grants) or {}).get("items") or []
+    for row in reversed(items):
+        if row.get("kind") == "user" and row.get("content") == question:
+            item = _public(row)
+            item.pop("address", None)
+            item.pop("real", None)
+            return [item]
+    return [{"kind": "user", "content": question, "state": "asked"}]
+
+
+def _newest(pool: Any, grants: Any) -> list[dict[str, Any]]:
+    items = (memory_contents(pool, grants) or {}).get("items") or []
+    if not items:
+        return []
+    return [_public(items[-1])]
+
+
+def _state(shown: list[dict[str, Any]], pool: Any, grants: Any) -> str:
+    if shown and shown[-1].get("state"):
+        return str(shown[-1]["state"])
+    items = (memory_contents(pool, grants) or {}).get("items") or []
+    if items and items[-1].get("state"):
+        return str(items[-1]["state"])
+    return "asked"
 
 
 def _read(pool: Any, grants: Any, selector: str) -> list[dict[str, Any]]:
     rows = (memory_contents(pool, grants, selector) or {}).get("items") or []
-    return [
-        {
-            "address": row["address"],
-            "kind": row["kind"],
-            "content": row["content"],
-            "time": row.get("time") or "",
-        }
-        for row in rows
-    ]
+    return [_public(row) for row in rows]
+
+
+def _public(row: dict[str, Any]) -> dict[str, Any]:
+    item = {
+        "address": row.get("address") or "",
+        "kind": row.get("kind") or "",
+        "content": row.get("content") or "",
+        "time": row.get("time") or "",
+        "real": row.get("real") or "",
+        "seq": int(row.get("seq") or 0),
+    }
+    if row.get("state"):
+        item["state"] = row["state"]
+    return item
+
+
+def _fit(
+    process: Any,
+    pool: Any,
+    grants: Any,
+    rows: list[dict[str, Any]],
+    question: str,
+) -> list[dict[str, Any]]:
+    from kernel.resource.memory.runtime import MemoryRuntime
+
+    runtime = getattr(getattr(pool, "store", None), "memory", None)
+    if not isinstance(runtime, MemoryRuntime):
+        return rows
+    page = {"rows": [{"kind": "user", "content": question}]}
+    budget = prompt_budget(pool, grants, page, _model_name(process))
+    fitted, _rest = runtime.read_budget(rows, budget)
+    return fitted or rows[:1]
+
+
+def _model_name(process: Any) -> str:
+    settings = getattr(getattr(process, "activation", None), "settings", None) or {}
+    if isinstance(settings, dict):
+        return str(settings.get("id") or "")
+    return ""
 
 
 def _text(result: Any) -> str:

@@ -1,18 +1,16 @@
-"""Count tokens for the raw texts already stored in one memory."""
+"""Estimate tokens for text that is about to be sent. Stored rows are not scanned."""
 
 from __future__ import annotations
 
-from typing import Any
 
-from kernel.resource.memory.state import text_contents
+def estimate_tokens(text: object) -> int:
+    """A stable budget estimate. Provider billing can differ."""
+
+    body = text if isinstance(text, str) else ""
+    if not body:
+        return 0
+    return max(1, (len(body) + 3) // 4)
 
 
-def count_state(model: str, state: dict[str, Any] | None) -> int:
-    """A derived size. The stored rows stay text and metadata."""
-
-    from kernel.calculate.measure import count_tokens
-
-    total = 0
-    for content in text_contents(state or {}):
-        total += count_tokens(model, content)
-    return total
+def count_texts(texts: list[object]) -> int:
+    return sum(estimate_tokens(text) for text in texts)

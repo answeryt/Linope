@@ -19,7 +19,7 @@
 
 共享的笔记本是同一个记忆实体。这次启动在 `shared` 里点名 `memory`，并且声明用的是同一个 scope 时，[`kernel/resource`](../resource/README.cn.md) 给出这一个实体。行和真名存在 [`kernel/resource/memory`](../resource/memory/README.cn.md)。本目录为每个还持有该实体的进程保留一张自己的地址表。
 
-`access.py` 把这些表放在 `_MAPS` 里，先按进程 id 和资源 id，再按类。`remember` 让记忆模块追加一行。真名由实体自己的计数器给出，先是 `message/0`，再是 `message/1`。`_map_real` 把这个真名追加到每一个当前持有者的表上，条件是它的 `space` 包含这个类：
+`MemoryRuntime` 把这些表放在每个进程的页表里，先按进程 id 和资源 id，再按类。页表可以随记忆后端保存。运行时缓存被释放时，已提交的行仍在。`remember` 让记忆模块追加一行。真名由实体自己的计数器给出，先是 `message/0`，再是 `message/1`。`_map_real` 把这个真名追加到每一个当前持有者的表上，条件是它的 `space` 包含这个类：
 
 ```python
 for pid, grant in holders:
@@ -61,4 +61,4 @@ A 的 `message/1` 和 B 的 `message/0` 是同一行。某个类不在一个进�
 ## 已知限制与暂缓事项
 
 - **一个回合没有步骤上限** — `turn` 一直走，直到模型回答或调用失败。
-- **地址表只在这次运行里** — 新的一次运行里 `_MAPS` 是空的。已经存下的行仍在记忆字典里。之后的写入只把这一次的真名追加进去，所以该进程的 `message/0` 是这一新行。已经存下的行用带 scope 的地址来读，例如 `chat/message/0`。
+- **新进程的页表从空开始** — 已经提交的行仍在 `MemoryStore`。这个进程的 `message/0` 是它持有期间写下的下一行。已经存下的行用带 scope 的地址来读，例如 `chat/message/0`。

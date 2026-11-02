@@ -132,11 +132,9 @@ def test_a_read_pointer_expands_its_range() -> None:
     assert step == Step("read", "message/0 message/1")
 
 
-def test_a_read_outside_the_page_is_refused() -> None:
+def test_a_read_does_not_need_an_address_catalog() -> None:
     step = verify(json.dumps({"state": "continue", "pointer": "message/0-9"}), _start_page())
-    assert isinstance(step, Rejection)
-    assert step.field == "pointer"
-    assert "message/3" in step.error
+    assert step == Step("read", " ".join(f"message/{index}" for index in range(10)))
 
 
 def test_a_start_that_is_not_offered_lists_what_is() -> None:
