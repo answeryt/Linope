@@ -3,10 +3,9 @@ import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const separator = process.platform === 'win32' ? ';' : ':'
-const current = process.env.PYTHONPATH?.trim()
-const pythonPath = current ? `${root}${separator}${current}` : root
+const hinted = process.env.LINOPE_ROOT?.trim()
+const root = hinted ? resolve(hinted) : resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const pythonPath = root
 const child = spawn(process.env.LINOPE_PYTHON?.trim() || process.env.PYTHON?.trim() || 'python', ['-m', 'tui.launch', ...process.argv.slice(2)], {
   cwd: process.cwd(),
   env: {

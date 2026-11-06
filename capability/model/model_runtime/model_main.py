@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -142,7 +143,17 @@ async def load_named_card_async(
         messages=messages,
         **{**forwarded, **extras},
     )
-    return await _collect(runtime, card_id, result)
+    return _for_door(await _collect(runtime, card_id, result))
+
+
+def _for_door(result: Any) -> Any:
+    """A turn that asks for a tool is one JSON line, so the command door keeps every block."""
+    if not isinstance(result, dict) or result.get("type") != "model_turn":
+        return result
+    blocks = result.get("blocks") or []
+    if any(isinstance(block, dict) and block.get("type") == "tool-call" for block in blocks):
+        return json.dumps(result, ensure_ascii=False)
+    return result
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

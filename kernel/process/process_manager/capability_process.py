@@ -126,6 +126,7 @@ class CapabilityProcess:
         message: dict[str, Any],
         timeout: float | None = 10.0,
         on_notice: Callable[[dict[str, Any]], None] | None = None,
+        on_command: Callable[[str], str] | None = None,
     ) -> dict[str, Any] | None:
         """Send one line and wait for its reply.
 
@@ -168,6 +169,9 @@ class CapabilityProcess:
             if not isinstance(reply, dict):
                 self._mark_dead()
                 return None
+            if reply.get("event") == "command":
+                _answer_command(child, reply, on_command)
+                continue
             chosen = _reply_line(message, reply, on_notice)
             if chosen is not None:
                 return chosen
@@ -368,6 +372,34 @@ class CapabilityProcess:
         return payload
 
 
+def _answer_command(
+    child: subprocess.Popen[str],
+    reply: dict[str, Any],
+    on_command: Callable[[str], str] | None,
+) -> None:
+    """Run one command line the capability wrote, then hand the text back."""
+    line = str(reply.get("line") or "")
+    error = ""
+    result = ""
+    if on_command is None:
+        error = "This process cannot run a command from here"
+    else:
+        try:
+            result = str(on_command(line) or "")
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+    if child.stdin is None:
+        return
+    child.stdin.write(
+        json.dumps(
+            {"event": "command_result", "result": result, "error": error},
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    child.stdin.flush()
+
+
 def _reply_for(message: dict[str, Any]) -> dict[str, Any]:
     return {"event": "result", "operation": message.get("operation")}
 
@@ -377,8 +409,8 @@ def _reply_line(
     reply: dict[str, Any],
     on_notice: Callable[[dict[str, Any]], None] | None,
 ) -> dict[str, Any] | None:
-    """A text fragment is shown and skipped. A late pong is not this load's reply."""
-    if "event" not in reply and reply.get("type") in {"text", "text-delta"}:
+    """A text fragment or status line is shown and skipped. A late pong is not this load's reply."""
+    if "event" not in reply and reply.get("type") in {"text", "text-delta", "status"}:
         if on_notice is not None:
             on_notice(reply)
         return None
@@ -409,20 +441,34 @@ def _child_env(secret_names: tuple[str, ...]) -> dict[str, str]:
     current = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = root if not current else root + os.pathsep + current
     env["PYTHONIOENCODING"] = "utf-8"
+    env["LINOPE_COMMAND_DOOR"] = "1"
     return env
 
 
-def spawn_runtime(secret_names: tuple[str, ...] = ()) -> subprocess.Popen[str]:
-    """Start the capability program and return it before any account is opened."""
+def spawn_runtime(
+    secret_names: tuple[str, ...] = (),
+    argv: tuple[str, ...] | list[str] | None = None,
+) -> subprocess.Popen[str]:
+    """Start the command from the capability table."""
+    if not argv:
+        raise RuntimeError("This capability has no command")
+    command = list(argv)
+    program = Path(command[0]).name.lower()
+    if program in {"python", "python.exe", "python3", "python3.exe"}:
+        command[0] = sys.executable
+    if command[0] == "node" and len(command) > 1:
+        script = _repo_root() / command[1]
+        if script.is_file():
+            command[1] = str(script)
     return subprocess.Popen(
-        [sys.executable, "-m", "kernel.process.process_runtime"],
+        command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         env=_child_env(secret_names),
-        cwd=str(_repo_root()),
+        cwd=os.getcwd(),
     )
 
 

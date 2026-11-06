@@ -2,34 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
-from pathlib import Path
 from typing import Any
 
 from kernel.environment import KernelEnvironment, bind_room
 from kernel.environment.policy import HostExecutionPolicy
 from kernel.environment.shell import ProcessEnvironment
 from kernel.thread.contracts import ClaimedRequest, ThreadPolicy
-
-
-def _load_modules(module_paths: tuple[str, ...], pid: int = 0) -> list[Any]:
-    loaded = []
-    for index, raw_path in enumerate(module_paths):
-        path = Path(raw_path)
-        name = f"capability_runtime_{pid}_{index}_{path.stem}"
-        spec = importlib.util.spec_from_file_location(name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            sys.modules.pop(name, None)
-            raise
-        loaded.append(module)
-    return loaded
 
 
 def _create_adapter(modules: list[Any]) -> Any | None:
@@ -40,19 +19,17 @@ def _create_adapter(modules: list[Any]) -> Any | None:
     return None
 
 
-def open_adapter(activation: dict[str, Any]) -> Any | None:
-    """Load the capability and leave its adapter up until the process closes."""
+def open_adapter(activation: dict[str, Any], modules: list[Any] | None = None) -> Any | None:
+    """Bind the room and the modules the capability program already loaded."""
     from kernel.resource.handle_view import ResourceContext
 
+    if not modules:
+        raise RuntimeError("The capability program loads its own modules")
     room = _room_from_activation(activation)
     bind_room(room)
     adapter = None
     try:
         room.apply()
-        modules = _load_modules(
-            tuple(activation["module_paths"]),
-            int(activation.get("pid") or 0),
-        )
         adapter = _create_adapter(modules)
         if adapter is not None:
             adapter.initialize(
@@ -75,18 +52,35 @@ def close_adapter(adapter: Any | None) -> None:
     bind_room(None)
 
 
-def serve_capability(activation: dict[str, Any], on_exit: Any | None = None) -> None:
-    """Load one capability from its activation, then close its resource account."""
+def serve_capability(
+    activation: dict[str, Any],
+    on_exit: Any | None = None,
+    modules: list[Any] | None = None,
+) -> None:
+    """Close the resource account for modules the capability program already loaded."""
     adapter = None
     try:
-        adapter = open_adapter(activation)
+        adapter = open_adapter(activation, modules)
     finally:
         close_adapter(adapter)
         if on_exit is not None:
             on_exit(int(activation["pid"]))
 
 
-def serve_stdio(stdin: Any | None = None, stdout: Any | None = None) -> None:
+def serve_loaded(
+    modules: list[Any],
+    stdin: Any | None = None,
+    stdout: Any | None = None,
+) -> None:
+    """Answer the kernel with modules the capability program already loaded."""
+    serve_stdio(stdin, stdout, modules)
+
+
+def serve_stdio(
+    stdin: Any | None = None,
+    stdout: Any | None = None,
+    modules: list[Any] | None = None,
+) -> None:
     """Wait for one startup line, then answer each later line until the pipe closes.
 
     This program does not decide whether the caller stops after one job.
@@ -111,7 +105,7 @@ def serve_stdio(stdin: Any | None = None, stdout: Any | None = None) -> None:
         return
     adapter = None
     try:
-        adapter = open_adapter(activation)
+        adapter = open_adapter(activation, modules)
     except Exception as exc:
         _write_line(outgoing, {"event": "error", "error": str(exc)})
         return

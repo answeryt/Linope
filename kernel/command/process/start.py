@@ -207,7 +207,7 @@ def launch_capability(options: tuple) -> int:
     """Open one capability and hold it until it stops."""
     try:
         running = open_capability(options)
-    except (ProfileUnavailable, ValueError, KeyError) as exc:
+    except (ProfileUnavailable, ValueError, KeyError, RuntimeError) as exc:
         print(exc, file=sys.stderr)
         return 1
     once = len(options) > 10 and bool(options[10])

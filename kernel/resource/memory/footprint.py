@@ -35,8 +35,6 @@ def footprint(
 
 
 def context_limit_for(model: str) -> int:
-    from capability.model.model_API.model_paramaters.context_limits.context_limits import (
-        resolve_default_context_length,
-    )
+    from kernel.calculate.measure import resolve_default_context_length
 
     return int(resolve_default_context_length(model or "unknown/model"))

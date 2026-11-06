@@ -140,10 +140,16 @@ def _load(
         raise UsageError("usage: load message <full pid> <address> -- <question>")
     if not addressed and _remember_prompt(process, body):
         return None
-    if kind == "message" and isinstance(body, str) and _pages(service, process):
-        from kernel.scheduler.model_turn import turn
+    if addressed:
+        from kernel.scheduler.access import memory_contents as read_memory
 
-        return turn(service, process, body, read_selector=selector)
+        read_memory(
+            getattr(process, "_pool", None),
+            getattr(process.activation, "grants", ()) or (),
+            selector,
+        )
+    if kind == "message" and isinstance(body, str):
+        _remember(process, "user", body)
     _maybe_relieve(process)
     message = {
         "operation": "load",
@@ -153,7 +159,12 @@ def _load(
     }
     _note(process, "self")
     try:
-        reply = process.ask(message, timeout=None, on_notice=_show_notice)
+        reply = process.ask(
+            message,
+            timeout=None,
+            on_notice=_show_notice,
+            on_command=_command_runner(service),
+        )
     finally:
         if getattr(process, "is_alive", False):
             _note(process, "sleeping")
@@ -196,12 +207,8 @@ def _hand(service: Any, sender: Any, receiver: Any, task: str) -> Any:
 
 
 def _task_on(service: Any, receiver: Any, task: str) -> Any:
-    """A receiver with memory runs one turn. Any other receiver gets the task text."""
-    grants = getattr(getattr(receiver, "activation", None), "grants", ()) or ()
-    if memory_grant(grants) is not None:
-        from kernel.scheduler.model_turn import turn
-
-        return turn(service, receiver, task, note_activity=False)
+    """Deliver one task. The receiver decides what to do with it."""
+    _remember(receiver, "user", task)
     reply = receiver.ask(
         {
             "operation": "load",
@@ -211,8 +218,22 @@ def _task_on(service: Any, receiver: Any, task: str) -> Any:
         },
         timeout=None,
         on_notice=_show_notice,
+        on_command=_command_runner(service),
     )
-    return _result(reply)
+    result = _result(reply)
+    _remember(receiver, "model", _output_text(result))
+    return result
+
+
+def _command_runner(service: Any):
+    """Run a command line through the same door a person uses."""
+
+    def run(line: str) -> str:
+        from kernel.command.process.clerk import execute_line
+
+        return execute_line(line, service)
+
+    return run
 
 
 def _remember_prompt(process: Any, body: Any) -> bool:
@@ -336,9 +357,12 @@ class _Handed(Exception):
 
 
 def _show_notice(notice: dict[str, Any]) -> None:
-    """A text fragment is the same event the terminal already prints."""
+    """Show one notice. Status stays a status line. Text stays a text fragment."""
     text = notice.get("text")
     if not text:
+        return
+    if notice.get("type") == "status":
+        print(json.dumps({"type": "status", "text": str(text)}, ensure_ascii=False), flush=True)
         return
     from kernel.command.screen.live_stream import publish_text
 
@@ -346,13 +370,33 @@ def _show_notice(notice: dict[str, Any]) -> None:
 
 
 def _show(result: Any) -> None:
+    """Print the words a person should read. A stream fragment is not this result."""
     if isinstance(result, str):
         print(result, flush=True)
         return
-    if isinstance(result, dict) and result.get("type") == "model_turn":
+    marker = "model" + "_turn"
+    if isinstance(result, dict) and result.get("type") == marker:
+        text = _answer_text(result)
+        if text:
+            print(text, flush=True)
         return
     if result is not None:
         print(result, flush=True)
+
+
+def _answer_text(result: dict[str, Any]) -> str:
+    """Every text block, in order. Reasoning and tool calls stay out of the window."""
+    blocks = result.get("blocks")
+    if not isinstance(blocks, list):
+        return ""
+    pieces = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if text:
+            pieces.append(str(text))
+    return "\n".join(pieces)
 
 
 def parse_line(line: str) -> tuple[Any, ...]:

@@ -36,10 +36,6 @@ Whether the pid on a ledger row is still that operating-system process. `process
 
 Looks at these peer processes and can stop one of them. It does not group them as parent and children. `handle` returns the outward pid view. `reap_if_dead` is handed to `reaper.py`.
 
-`tool_dispatch.py`
-
-Builds one tool call for a process that already exists. The message is `load` with kind `tool`. A name without a `tools.` prefix gets one. `tool_allowed` in [`profiles.py`](../README.md) refuses the call when the current permission or tool list cannot use that tool. Reading `tool_schemas` uses the same check and returns nothing when the tool is refused. This script can also name the capability to start. It does not start it.
-
 `__init__.py`
 
 Exports `CapabilityProcess`, `ProcessActivation`, and `ProcessStatus`.

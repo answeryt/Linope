@@ -65,8 +65,19 @@ def private_temp(root: str, pid: int = 0) -> str:
     return str(path)
 
 
+_SECRET_RULE: Any = None
+
+
+def register_secret_rule(rule: Any) -> None:
+    """Use the sandbox program's secret-path rule when it has registered one."""
+    global _SECRET_RULE
+    _SECRET_RULE = rule
+
+
 def blocked(path: Path) -> bool:
     """Git metadata, secret files, and a home directory stay out of the view."""
+    if _SECRET_RULE is not None:
+        return bool(_SECRET_RULE(str(path)))
     resolved = path.expanduser()
     if _is_home(resolved):
         return True

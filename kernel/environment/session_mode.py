@@ -1,47 +1,32 @@
-"""Read the session sandbox mode from capability/sandbox. No second fold."""
+"""Read the session sandbox mode. The sandbox program owns the mode names."""
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import os
 from typing import Any
 
-
-_PLUGIN = (
-    Path(__file__).resolve().parents[2]
-    / "capability"
-    / "sandbox"
-    / "sandbox-policy"
-    / "src"
-    / "session_mode_plugin.py"
-)
-_CACHE: Any = None
-
-
-def _plugin() -> Any:
-    global _CACHE
-    if _CACHE is None:
-        spec = importlib.util.spec_from_file_location("linope_sandbox_session_mode", _PLUGIN)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Cannot open the session sandbox mode: {_PLUGIN}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _CACHE = module
-    return _CACHE
+from kernel.environment.sandbox_vocab import check_mode
+from kernel.trace.journal import Journal, journal_path
 
 
 def effective_mode(events: Any) -> str | None:
     """The last sandbox/mode event, or None when the session never switched."""
-    return _plugin().effective_sandbox_mode(events)
+    found: str | None = None
+    seen = False
+    for event in events or []:
+        if not isinstance(event, dict) or str(event.get("type") or "") != "sandbox/mode":
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        mode = data.get("mode")
+        seen = True
+        found = None if mode is None else str(mode)
+    if not seen or found is None:
+        return None
+    return check_mode(found)
 
 
 def remember_mode(folder: str | None, mode: str) -> None:
     """Append one sandbox/mode event. The event is the session mode."""
-    import os
-
-    from kernel.environment.sandbox_vocab import check_mode
-    from kernel.trace.journal import Journal, journal_path
-
     checked = check_mode(mode)
     event = {"type": "sandbox/mode", "data": {"mode": checked}}
     seen: set[str] = set()

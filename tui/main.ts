@@ -1,5 +1,6 @@
 import readline from 'node:readline'
 
+import { copyText, readText } from './clipboard.js'
 import {
   backspace,
   createEditor,
@@ -10,6 +11,7 @@ import {
   moveCursor,
   moveCursorEnd,
   moveCursorHome,
+  normalizePaste,
   recordSubmission,
   type EditorState
 } from './editor.js'
@@ -17,7 +19,6 @@ import { startTerminalSession, type TerminalLink } from './link/session.js'
 import { bindingFor, type Focus } from './focus.js'
 import {
   helpText,
-  historyHit,
   historyLayout,
   noteProcessText,
   pushEvent,
@@ -26,11 +27,26 @@ import {
   applyScroll,
   followBottom,
   retainScroll,
+  scrollbarThumb,
+  scrollToTrack,
+  cursorIndexAt,
   displayWidth,
+  highlightColumns,
+  inputRow,
+  stripAnsi,
   type HistoryScroll,
   type LiveProcess,
   type Turn
 } from './screen.js'
+import {
+  drag,
+  idleGesture,
+  press,
+  release,
+  selectionText,
+  spanOnRow,
+  type Cell
+} from './select.js'
 import { fg, reset, theme } from './theme.js'
 import { takeKey, type Key } from './keys.js'
 
@@ -40,6 +56,8 @@ let busy = false
 let link: TerminalLink | null = null
 let focus: Focus = 'input'
 let view: HistoryScroll = { scrollY: 0, follow: true }
+let gesture = idleGesture()
+let notice = ''
 let editor: EditorState = createEditor()
 let cwd = process.cwd()
 let clerk: 'here' | 'away' = 'here'
@@ -71,6 +89,7 @@ const screenState = () => ({
   rows: termRows(),
   scrollY: view.scrollY,
   follow: view.follow,
+  notice,
   status,
   turns
 })
@@ -80,6 +99,9 @@ let lastColumns = 0
 let lastRows = 0
 let resizeTimer: ReturnType<typeof setTimeout> | undefined
 let drawTimer: ReturnType<typeof setTimeout> | undefined
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+let pasteTimer: ReturnType<typeof setTimeout> | undefined
+let pastedAt = 0
 const DRAW_WAIT_MS = 30
 
 const shutdown = (code: number) => {
@@ -96,13 +118,23 @@ const shutdown = (code: number) => {
     drawTimer = undefined
   }
 
+  if (noticeTimer) {
+    clearTimeout(noticeTimer)
+    noticeTimer = undefined
+  }
+
+  if (pasteTimer) {
+    clearTimeout(pasteTimer)
+    pasteTimer = undefined
+  }
+
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false)
   }
 
   link?.stop()
   if (process.stdout.isTTY) {
-    process.stdout.write(`${reset}\x1b[?25h\x1b[?1000l\x1b[?1006l\x1b[?1049l`)
+    process.stdout.write(`${reset}\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?1049l`)
   } else {
     process.stdout.write(`${reset}\x1b[?25h\n`)
   }
@@ -119,12 +151,16 @@ const draw = () => {
   lastRows = termRows()
   const { total, room } = metrics()
   view = retainScroll(view, total, room)
-  const frame = renderScreen(screenState()).replaceAll('\n', '\x1b[K\n')
+  const raw = renderScreen(screenState())
+  const body = raw.replace(/\n$/, '').split('\n')
+  const painted = `${body.map((line, index) => paintLine(index + 1, line)).join('\n')}\n`
+  const frame = painted.replaceAll('\n', '\x1b[K\n')
 
   // Cover the previous frame from the top. Each line erases its old tail, and
   // the final erase drops rows the new frame no longer uses.
   process.stdout.write(`\x1b[H${frame}\x1b[J`)
-  process.stdout.write(fg(focus === 'history' ? theme.muted : theme.accent, '❯ ') + editor.input)
+  const prompt = fg(focus === 'history' ? theme.muted : theme.accent, PROMPT)
+  process.stdout.write(paintLine(inputRow(screenState()), prompt + editor.input))
 
   if (focus === 'history') {
     process.stdout.write('\x1b[?25l')
@@ -267,20 +303,304 @@ const edit = (key: Key) => {
   }
 }
 
-const onKey = (key: Key) => {
-  if (key.name === 'wheel-up' || key.name === 'wheel-down') {
-    const { layout, total, room } = metrics()
+const PROMPT = '❯ '
 
-    if (!historyHit(layout, key.row ?? 0, key.column ?? 0)) {
+let barDrag: { offset: number } | null = null
+
+const trackIndex = (row: number | undefined) => {
+  const { layout } = metrics()
+
+  return (row ?? 0) - layout.historyRow
+}
+
+const onBar = (key: Key) => {
+  const { layout } = metrics()
+  const row = key.row ?? 0
+  const column = key.column ?? 0
+
+  return (
+    column >= layout.scrollbarColumn &&
+    row >= layout.historyRow &&
+    row < layout.historyRow + layout.historyRows
+  )
+}
+
+const barColumn = (row: number) => {
+  const { layout } = metrics()
+
+  if (row < layout.historyRow || row >= layout.historyRow + layout.historyRows) {
+    return 0
+  }
+
+  return layout.scrollbarColumn
+}
+
+const omitBar = (row: number, column: number) => {
+  const bar = barColumn(row)
+
+  return bar > 0 && column >= bar
+}
+
+const paintLine = (row: number, line: string) => {
+  if (!gesture.mark) {
+    return line
+  }
+
+  const span = spanOnRow(row, gesture.mark)
+
+  if (!span) {
+    return line
+  }
+
+  const bar = barColumn(row)
+  const end = bar > 0 ? Math.min(span.end, bar - 1) : span.end
+
+  if (span.start > end) {
+    return line
+  }
+
+  return highlightColumns(line, span.start, end)
+}
+
+const plainRows = () => {
+  const lines = renderScreen(screenState()).replace(/\n$/, '').split('\n').map(stripAnsi)
+
+  lines.push(`${PROMPT}${editor.input}`)
+
+  return lines
+}
+
+const pointerCell = (key: Key): Cell => ({
+  row: Math.max(1, key.row ?? 1),
+  column: Math.max(1, key.column ?? 1)
+})
+
+const showNotice = (text: string) => {
+  notice = text
+
+  if (noticeTimer) {
+    clearTimeout(noticeTimer)
+  }
+
+  noticeTimer = setTimeout(() => {
+    noticeTimer = undefined
+    notice = ''
+
+    if (!stopping) {
+      draw()
+    }
+  }, 1500)
+}
+
+const clearNotice = () => {
+  notice = ''
+
+  if (noticeTimer) {
+    clearTimeout(noticeTimer)
+    noticeTimer = undefined
+  }
+}
+
+const dropSelection = () => {
+  const had = gesture.mark !== null
+
+  gesture = idleGesture()
+
+  if (had) {
+    clearNotice()
+  }
+
+  return had
+}
+
+const placeCaret = (column: number) => {
+  const at = cursorIndexAt(editor.input, column - displayWidth(PROMPT))
+
+  focus = 'input'
+  editor = moveCursor(editor, at - editor.cursor)
+}
+
+const cancelPaste = () => {
+  if (pasteTimer) {
+    clearTimeout(pasteTimer)
+    pasteTimer = undefined
+  }
+}
+
+const insertPaste = (text: string) => {
+  cancelPaste()
+
+  if (busy || stopping) {
+    return
+  }
+
+  const cleaned = normalizePaste(text)
+
+  if (!cleaned) {
+    return
+  }
+
+  pastedAt = Date.now()
+  gesture = idleGesture()
+  clearNotice()
+  focus = 'input'
+  editor = insertText(editor, cleaned)
+  draw()
+}
+
+const pasteClipboard = () => {
+  // A right-click can also arrive as a bracketed paste in the same chunk.
+  // Wait one beat, and skip the clipboard read when that paste already landed.
+  if (busy || stopping || Date.now() - pastedAt < 100) {
+    return
+  }
+
+  cancelPaste()
+  pasteTimer = setTimeout(() => {
+    pasteTimer = undefined
+
+    if (busy || stopping) {
       return
     }
 
+    void readText().then(text => {
+      insertPaste(text)
+    })
+  }, 30)
+}
+
+const copyMark = () => {
+  if (!gesture.mark) {
+    return
+  }
+
+  const text = selectionText(plainRows(), gesture.mark, omitBar)
+
+  if (!text) {
+    gesture = { ...gesture, mark: null }
+
+    return
+  }
+
+  copyText(text)
+  showNotice('copied')
+}
+
+const placeThumb = (index: number) => {
+  const { total, room } = metrics()
+  const thumb = scrollbarThumb(total, room, view.scrollY, room)
+  const offset = barDrag?.offset ?? Math.floor((thumb?.size ?? 1) / 2)
+
+  view = scrollToTrack(total, room, index - offset)
+}
+
+const onTrack = (key: Key) => {
+  const { total, room } = metrics()
+  const index = trackIndex(key.row)
+  const thumb = scrollbarThumb(total, room, view.scrollY, room)
+
+  if (!thumb) {
+    draw()
+
+    return
+  }
+
+  if (index >= thumb.start && index < thumb.start + thumb.size) {
+    barDrag = { offset: index - thumb.start }
+    placeThumb(index)
+    draw()
+
+    return
+  }
+
+  barDrag = null
+  view = applyScroll(view, index < thumb.start ? -room : room, total, room)
+  draw()
+}
+
+const onKey = (key: Key) => {
+  if (key.name === 'paste') {
+    insertPaste(key.text)
+
+    return
+  }
+
+  if (key.name === 'ctrl-v' || key.name === 'mouse-right' || key.name === 'mouse-middle') {
+    gesture = { ...gesture, anchor: null, dragging: false }
+    pasteClipboard()
+
+    return
+  }
+
+  if (key.name === 'wheel-up' || key.name === 'wheel-down') {
+    dropSelection()
+    const { total, room } = metrics()
+
+    barDrag = null
     view = applyScroll(view, key.name === 'wheel-up' ? -WHEEL_STEP : WHEEL_STEP, total, room)
     draw()
 
     return
   }
 
+  if (key.name === 'mouse-up') {
+    if (gesture.anchor) {
+      gesture = drag(gesture, pointerCell(key))
+    }
+
+    const result = release(gesture)
+
+    gesture = result.gesture
+    barDrag = null
+
+    if (result.copy) {
+      copyMark()
+    } else if (result.cell && result.cell.row === inputRow(screenState()) && !busy) {
+      placeCaret(result.cell.column)
+    }
+
+    draw()
+
+    return
+  }
+
+  if (key.name === 'mouse-drag') {
+    if (barDrag) {
+      placeThumb(trackIndex(key.row))
+      draw()
+
+      return
+    }
+
+    if (gesture.anchor) {
+      gesture = drag(gesture, pointerCell(key))
+      draw()
+    }
+
+    return
+  }
+
+  if (key.name === 'mouse-down') {
+    if (onBar(key)) {
+      dropSelection()
+      onTrack(key)
+
+      return
+    }
+
+    barDrag = null
+    clearNotice()
+    gesture = press(gesture, pointerCell(key), Date.now(), plainRows(), omitBar)
+    draw()
+
+    return
+  }
+
+  if (key.name === 'ignore') {
+    return
+  }
+
+  const hadMark = dropSelection()
   const command = bindingFor(focus, key)
 
   if (command.type === 'quit') {
@@ -292,6 +612,8 @@ const onKey = (key: Key) => {
   if (command.type === 'ctrl-d') {
     if (!editor.input) {
       shutdown(0)
+    } else if (hadMark) {
+      draw()
     }
 
     return
@@ -323,6 +645,10 @@ const onKey = (key: Key) => {
   }
 
   if (busy || (command.type !== 'editor' && command.type !== 'submit')) {
+    if (hadMark) {
+      draw()
+    }
+
     return
   }
 
@@ -354,7 +680,7 @@ const onData = (chunk: string) => {
 }
 
 if (process.stdin.isTTY) {
-  process.stdout.write('\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H')
+  process.stdout.write('\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?1007l\x1b[?2004h\x1b[2J\x1b[H')
   readline.emitKeypressEvents(process.stdin)
   process.stdin.setRawMode(true)
   process.stdin.setEncoding('utf8')
@@ -388,6 +714,7 @@ process.stdout.on('resize', () => {
       return
     }
 
+    gesture = { ...gesture, anchor: null, mark: null, dragging: false }
     draw()
   }, 100)
 })
@@ -417,6 +744,10 @@ link = startTerminalSession(event => {
 
   if (event.type === 'done') {
     busy = false
+  }
+
+  if (!gesture.anchor && gesture.mark) {
+    gesture = { ...gesture, mark: null }
   }
 
   if (!stopping) {

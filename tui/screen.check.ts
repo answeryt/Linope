@@ -12,6 +12,7 @@ import {
   renderScreen,
   retainScroll,
   scrollbarThumb,
+  scrollToTrack,
   wrapText,
   type Turn
 } from './screen.ts'
@@ -75,6 +76,8 @@ assert.equal(lifted.scrollY, 9)
 assert.deepEqual(applyScroll(lifted, 100, 30, 10), { scrollY: 20, follow: true })
 assert.deepEqual(scrollbarThumb(5, 10, 0, 10), null)
 assert.ok(scrollbarThumb(30, 10, 0, 10))
+assert.deepEqual(scrollToTrack(30, 10, 0), { scrollY: 0, follow: false })
+assert.equal(scrollToTrack(30, 10, 99).follow, true)
 
 let streamed = pushEvent([], { type: 'text-delta', text: '第一段' }).turns
 streamed = pushEvent(streamed, { type: 'text-delta', text: '第二段' }).turns

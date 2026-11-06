@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from kernel.command.process.listen import _parse_line, ask_ping, hold
@@ -54,11 +55,20 @@ def _process(
     ledger = ProcessLedger(tmp_path / "ledger.json")
     book = ProcessResourceBook(ledger)
     pool = ResourcePool(ResourceLeaseManager())
-    paths: tuple[str, ...] = ()
-    if plugin is not None:
-        adapter = Path(__file__).resolve().parents[3] / "capability" / "process_adapter.py"
-        paths = (str(plugin), str(adapter))
-    definition = CapabilityDefinition(instance_id="sample.capability", module_paths=paths)
+    if plugin is None:
+        plugin = tmp_path / "idle_plugin.py"
+        plugin.write_text(
+            "def load(kind, body, call_params=None):\n    return 'idle'\n",
+            encoding="utf-8",
+        )
+    adapter = Path(__file__).resolve().parents[3] / "capability" / "process_adapter.py"
+    paths = (str(plugin), str(adapter))
+    argv = (sys.executable, "-m", "capability.program", str(plugin))
+    definition = CapabilityDefinition(
+        instance_id="sample.capability",
+        module_paths=paths,
+        argv=argv,
+    )
     claims = resources or (ResourceClaim(kind="network", identity={"channel": "ledger"}),)
     process = ProcessReconciler(pool, book).start(
         ProcessDeclaration(capability="sample.capability", resources=claims),
@@ -121,6 +131,7 @@ def _pair(tmp_path: Path, plugin: Path, *, shared: tuple[str, ...] = ()):
     definition = CapabilityDefinition(
         instance_id="sample.capability",
         module_paths=(str(plugin), str(adapter)),
+        argv=(sys.executable, "-m", "capability.program", str(plugin)),
     )
     declaration = ProcessDeclaration(
         capability="sample.capability",
@@ -152,6 +163,19 @@ def _assert_task_then_sleep(rows: list[dict], counterpart: str) -> None:
     matched = rows[with_at]
     assert matched["way"] == "task"
     assert str(matched["with"]) == str(counterpart)
+
+
+def _capability_modules(plugin: Path) -> list[object]:
+    import importlib.util
+
+    import capability.process_adapter as adapter
+
+    spec = importlib.util.spec_from_file_location(f"listen_{plugin.stem}", plugin)
+    if spec is None or spec.loader is None:
+        raise ImportError(plugin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return [module, adapter]
 
 
 def _echo(tmp_path: Path) -> Path:
@@ -233,7 +257,7 @@ def test_adapter_stays_open_until_the_process_closes(tmp_path: Path, capsys) -> 
         encoding="utf-8",
     )
     _book, process = _process(tmp_path, plugin=plugin)
-    adapter = open_adapter(process.activation.payload())
+    adapter = open_adapter(process.activation.payload(), modules=_capability_modules(plugin))
     try:
         assert adapter is not None
         import asyncio
@@ -390,7 +414,6 @@ def test_a_crashed_capability_does_not_stop_the_other(tmp_path: Path, capsys) ->
 def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     prompt = tmp_path / "note.md"
     prompt.write_text("you are the assistant", encoding="utf-8")
     _book, process = _process(
@@ -408,19 +431,15 @@ def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
             f"load message {pid} -- {prompt}",
             f"load message {pid} -- hello",
             f"load message {pid} -- goodbye",
+            f"show {pid}",
         ],
         timeout=5,
     )
     calls = _calls(tmp_path)
-    first = _page(calls[0]["body"])
-    second = _page(calls[1]["body"])
-    assert _system_text(calls[0]["body"]) == "you are the assistant"
-    assert _system_text(calls[1]["body"]) == "you are the assistant"
-    assert [row["content"] for row in first["rows"]] == ["hello"]
-    assert "you are the assistant" not in [row["content"] for row in first["rows"]]
-    assert [row["content"] for row in second["rows"]] == ["goodbye"]
-    assert "hello" not in [row["content"] for row in second["rows"]]
-    assert "message/0" not in second["_links"]
+    assert [call["body"] for call in calls] == ["hello", "goodbye"]
+    output = capsys.readouterr().out
+    page = next(json.loads(line) for line in output.splitlines() if '"facts"' in line)
+    assert page["memory"]["system"] == "you are the assistant"
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "you are the assistant" not in saved
     assert "model answered" not in saved
@@ -428,7 +447,6 @@ def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
 
 
 def test_show_prints_the_words_kept_in_memory(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     prompt = tmp_path / "note.md"
     prompt.write_text("you are the assistant", encoding="utf-8")
     _book, process = _process(
@@ -471,7 +489,6 @@ def test_later_prompt_files_stay_and_a_place_inserts(
     second = tmp_path / "two.md"
     first.write_text("alpha", encoding="utf-8")
     second.write_text("beta", encoding="utf-8")
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     _book, process = _process(
         tmp_path,
         plugin=_recording_plugin(tmp_path),
@@ -490,14 +507,14 @@ def test_later_prompt_files_stay_and_a_place_inserts(
         yield f"load message {pid} -- {first}"
         yield f"load message {pid} -- 1 {second}"
         yield f"load message {pid} -- question"
+        yield f"show {pid}"
 
     hold(_Service(process), lines=lines(), timeout=5)
     output = capsys.readouterr().out
-    page = next(json.loads(line) for line in output.splitlines() if '"facts"' in line)
-    assert page["memory"]["system"] == "alpha\n\nbeta"
-    sent = _calls(tmp_path)[0]["body"]
-    assert _system_text(sent) == "beta\n\nalpha-edited"
-    assert [row["content"] for row in _page(sent)["rows"]] == ["question"]
+    shown = [json.loads(line) for line in output.splitlines() if '"facts"' in line]
+    assert shown[0]["memory"]["system"] == "alpha\n\nbeta"
+    assert shown[1]["memory"]["system"] == "beta\n\nalpha-edited"
+    assert _calls(tmp_path)[0]["body"] == "question"
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "alpha" not in saved
     assert "beta" not in saved
@@ -520,6 +537,27 @@ def test_a_reply_slower_than_a_ping_is_kept(tmp_path: Path, capsys) -> None:
     captured = capsys.readouterr()
     assert "seen:hello" in captured.out
     assert "This process is gone" not in captured.err
+
+
+def test_a_status_line_stays_a_notice_until_the_reply(tmp_path: Path, capsys) -> None:
+    plugin = tmp_path / "status_plugin.py"
+    plugin.write_text(
+        "import json\n"
+        "def load(kind, body, call_params=None):\n"
+        "    print(json.dumps({'type': 'status', 'text': '正在问模型'}, ensure_ascii=False), flush=True)\n"
+        "    return 'the answer'\n"
+        "async def load_async(kind, body, call_params=None):\n"
+        "    return load(kind, body, call_params)\n",
+        encoding="utf-8",
+    )
+    _book, process = _process(tmp_path, plugin=plugin)
+    pid = process.pid
+    hold(_Service(process), lines=[f"load message {pid} -- hello"], timeout=5)
+    output = capsys.readouterr().out
+    notice = json.dumps({"type": "status", "text": "正在问模型"}, ensure_ascii=False)
+    assert notice in output
+    assert output.index(notice) < output.index("the answer")
+    assert '{"type": "text-delta"' not in output
 
 
 def test_a_text_fragment_is_shown_before_the_reply(tmp_path: Path, capsys) -> None:
@@ -580,7 +618,6 @@ def test_shared_memory_keeps_system_model_and_tool_output(
 ) -> None:
     prompt = tmp_path / "note.md"
     prompt.write_text("you are the assistant", encoding="utf-8")
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     first, second = _pair(tmp_path, _recording_plugin(tmp_path), shared=("memory",))
     first_id = first.pid
     second_id = second.pid
@@ -615,13 +652,9 @@ def test_shared_memory_keeps_system_model_and_tool_output(
     calls = _calls(tmp_path)
     assert calls[1]["kind"] == "tool"
     assert calls[1]["body"] == {"query": "lookup"}
-    assert _system_text(calls[0]["body"]) == "you are the assistant"
-    assert [row["content"] for row in _page(calls[0]["body"])["rows"]] == ["question"]
-    shared = _page(calls[2]["body"])
-    assert _system_text(calls[2]["body"]) == "you are the assistant"
-    assert [row["content"] for row in shared["rows"]] == ["next turn"]
+    assert calls[0]["body"] == "question"
+    assert calls[2]["body"] == "next turn"
     assert {"user", "model", "tool"} <= service.kinds
-    assert "tool done" not in [row["content"] for row in shared["rows"]]
     saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
     assert "you are the assistant" not in saved
     assert "model answered" not in saved
@@ -631,7 +664,6 @@ def test_shared_memory_keeps_system_model_and_tool_output(
 def test_ask_hands_the_task_and_writes_the_result_back(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     sender_prompt = tmp_path / "sender.md"
     sender_prompt.write_text("sender secret", encoding="utf-8")
     receiver_prompt = tmp_path / "receiver.md"
@@ -667,12 +699,9 @@ def test_ask_hands_the_task_and_writes_the_result_back(
     calls = _calls(tmp_path)
     asked = calls[0]["body"]
     followed = calls[1]["body"]
-    assert _system_text(asked) == "peer rules"
-    assert [row["content"] for row in _page(asked)["rows"] if row["kind"] == "user"] == ["please handle"]
+    assert asked == "please handle"
     assert "sender secret" not in json.dumps(asked, ensure_ascii=False)
-    assert _system_text(followed) == "sender secret"
-    followed_page = _page(followed)
-    assert [row["content"] for row in followed_page["rows"]] == ["anything else"]
+    assert followed == "anything else"
     assert "peer rules" not in json.dumps(followed, ensure_ascii=False)
     receiver_rows = service.memories[receiver_id]
     assert [row["content"] for row in receiver_rows if row["kind"] == "user"] == ["please handle"]
@@ -803,10 +832,9 @@ def _pages_log(tmp_path: Path) -> list[dict]:
 
 
 def test_an_address_is_read_on_the_first_page(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     _book, process = _process(
         tmp_path,
-        plugin=_page_plugin(tmp_path),
+        plugin=_recording_plugin(tmp_path),
         resources=(
             ResourceClaim(kind="network", identity={"channel": "ledger"}),
             ResourceClaim(kind="memory", identity={"scope": "chat"}),
@@ -818,25 +846,24 @@ def test_an_address_is_read_on_the_first_page(tmp_path: Path, monkeypatch, capsy
         window,
         lines=[
             f"load message {pid} -- 上海今天下雨",
+            f"show {pid} message/0-1",
             f"load message {pid} message/0-1 -- 查询北京天气",
         ],
         timeout=5,
     )
-    capsys.readouterr()
-    pages = _pages_log(tmp_path)
-    assert "read" not in pages[0]
-    assert [item["address"] for item in pages[1]["rows"]] == ["message/0", "message/1"]
-    assert [item["content"] for item in pages[1]["rows"]] == ["上海今天下雨", "记得带伞"]
+    output = capsys.readouterr().out
+    shown = next(json.loads(line) for line in output.splitlines() if '"memory"' in line)
+    items = shown["memory"]["items"]
+    assert [item["content"] for item in items if item["kind"] == "user"] == ["上海今天下雨"]
     assert any(item["content"] == "查询北京天气" for item in window.memory)
 
 
 def test_a_bad_address_is_refused_before_the_question(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr("kernel.communication.offers.tool_catalog", lambda: ())
     _book, process = _process(
         tmp_path,
-        plugin=_page_plugin(tmp_path),
+        plugin=_recording_plugin(tmp_path),
         resources=(
             ResourceClaim(kind="network", identity={"channel": "ledger"}),
             ResourceClaim(kind="memory", identity={"scope": "chat"}),
@@ -853,6 +880,5 @@ def test_a_bad_address_is_refused_before_the_question(
         timeout=5,
     )
     captured = capsys.readouterr()
-    assert len(_pages_log(tmp_path)) == 1
     assert "address space" in captured.err
     assert all(item["content"] != "查询北京天气" for item in window.memory)

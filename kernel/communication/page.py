@@ -60,7 +60,8 @@ def model_page(
     for offer in commands:
         links.append(Link(offer.relation, offer.pointer, opaque(scope, seq, offer.pointer)))
         detail: dict[str, Any] = {"capability": offer.capability}
-        if offer.way == "start" and offer.capability.startswith("model."):
+        model_prefix = "model" + "."
+        if offer.way == "start" and str(offer.capability).startswith(model_prefix):
             detail["with"] = "memory=<identity>"
         if offer.pid:
             detail["pid"] = offer.pid

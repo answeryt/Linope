@@ -46,6 +46,7 @@ def test_started_process_uses_that_env_file(tmp_path: Path) -> None:
         definition=CapabilityDefinition(
             instance_id="sample.capability",
             module_paths=(str(plugin),),
+            secret_names=("OPENAI_API_KEY",),
         ),
         env_file=str(env),
         pid=401,
@@ -69,6 +70,7 @@ def test_the_capability_program_gets_only_its_own_secret(tmp_path: Path) -> None
         definition=CapabilityDefinition(
             instance_id="sample.capability",
             module_paths=(str(plugin),),
+            secret_names=("OPENAI_API_KEY",),
         ),
         env_file=str(env),
         pid=402,

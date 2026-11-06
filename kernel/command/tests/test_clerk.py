@@ -12,9 +12,9 @@ def test_two_starts_return_before_the_window_closes(tmp_path: Path, capsys, monk
     assert (
         clerk.serve(
             lines=[
-                "process start tools.read",
+                "process start model.openai_chat_model",
                 "list",
-                "process start tools.glob",
+                "process start tools.ask_user",
                 "list",
                 "exit",
             ]
@@ -25,8 +25,8 @@ def test_two_starts_return_before_the_window_closes(tmp_path: Path, capsys, monk
     assert output.count("pid=") >= 4
     assert "process_id=" not in output
     assert output.count('{"type": "done"}') >= 4
-    assert "tools.read" in output
-    assert "tools.glob" in output
+    assert "model.openai_chat_model" in output
+    assert "tools.ask_user" in output
 
 
 def test_create_writes_a_file_without_leaving_the_window(tmp_path: Path, capsys, monkeypatch) -> None:

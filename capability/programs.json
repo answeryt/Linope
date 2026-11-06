@@ -1,0 +1,1744 @@
+{
+  "agent_loop": {
+    "argv": [
+      "node",
+      "capability/agent_loop/pi/main.mjs"
+    ],
+    "changes": [
+      "model"
+    ],
+    "entrypoint": "load",
+    "module_paths": [],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "scope": "chat"
+        },
+        "kind": "memory"
+      }
+    ],
+    "secret_names": [],
+    "settings": {
+      "model": "model.openai_chat_model",
+      "tools": [
+        "tools.read",
+        "tools.write",
+        "tools.edit",
+        "tools.glob",
+        "tools.grep",
+        "tools.pwsh",
+        "tools.ddgs",
+        "tools.ask_user",
+        "tools.mcp_tool_manager"
+      ]
+    }
+  },
+  "model.anthropic_model": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/model/model_provider/anthropic_model/anthropic_model_plugin.py"
+    ],
+    "changes": [
+      "base_url",
+      "max_tokens",
+      "model",
+      "provider",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/model/model_provider/anthropic_model/anthropic_model_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "secret_names": [
+      "ANTHROPIC_API_KEY"
+    ],
+    "settings": {
+      "id": "claude-opus-5",
+      "max_tokens": 128000,
+      "provider": "anthropic"
+    }
+  },
+  "model.gemini_model": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/model/model_provider/gemini_model/gemini_model_plugin.py"
+    ],
+    "changes": [
+      "base_url",
+      "max_tokens",
+      "model",
+      "provider",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/model/model_provider/gemini_model/gemini_model_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "secret_names": [
+      "GEMINI_API_KEY"
+    ],
+    "settings": {
+      "id": "your-gemini-model",
+      "provider": "gemini"
+    }
+  },
+  "model.openai_chat_model": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py"
+    ],
+    "changes": [
+      "base_url",
+      "max_tokens",
+      "model",
+      "parallel_tool_calls",
+      "provider",
+      "reasoning_effort",
+      "temperature",
+      "thinking_enable",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "secret_names": [
+      "OPENAI_API_KEY"
+    ],
+    "settings": {
+      "id": "deepseek-flash",
+      "provider": "openai"
+    }
+  },
+  "model.openai_response_model": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/model/model_provider/openai_response_model/openai_response_model_plugin.py"
+    ],
+    "changes": [
+      "base_url",
+      "max_tokens",
+      "model",
+      "parallel_tool_calls",
+      "provider",
+      "reasoning_effort",
+      "temperature",
+      "thinking_enable",
+      "tool_choice",
+      "tools",
+      "top_p"
+    ],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/model/model_provider/openai_response_model/openai_response_model_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "secret_names": [
+      "OPENAI_API_KEY"
+    ],
+    "settings": {
+      "id": "gpt-6-astra",
+      "provider": "openai",
+      "reasoning_effort": "high"
+    }
+  },
+  "sandbox.sandbox": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/sandbox/sandbox/src/sandbox_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/sandbox/sandbox/src/sandbox_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.ask_user": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/interaction_tools/ask_user_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/interaction_tools/ask_user_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.ask_user"
+        },
+        "kind": "tool"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. Send one or more questions, each with a stable id that will be echoed in the answer.",
+        "name": "ask_user_question",
+        "parameters": {
+          "properties": {
+            "questions": {
+              "description": "Questions to ask the user before continuing.",
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "header": {
+                    "description": "Optional short heading, such as \"Confirm\" or \"Choose Mode\".",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "Stable id for this question; echoed in the answer.",
+                    "type": "string"
+                  },
+                  "multi_select": {
+                    "description": "Whether the user may select more than one option. Defaults to false.",
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "description": "Optional choices to show the user. If you recommend one, put it first and append \"(Recommended)\" to that label.",
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "description": {
+                          "description": "One sentence explaining the tradeoff or impact.",
+                          "type": "string"
+                        },
+                        "label": {
+                          "description": "Short user-facing option label.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "question": {
+                    "description": "The specific question to ask the user.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "question"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "questions"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.bash": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/shell_tools/bash_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/shell_tools/bash_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.bash"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Execute a bash command (`bash -c`) and return its stdout/stderr. Each call runs in a fresh shell: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. Non-zero exits are reported as `[exit code: N]`. Long output is truncated to its tail. Set `run_in_background: true` for long-running commands: the call returns a job id immediately. The job stays with this tool; there is no separate tool to read or stop it.",
+        "name": "bash",
+        "parameters": {
+          "properties": {
+            "command": {
+              "description": "The bash command to execute.",
+              "type": "string"
+            },
+            "description": {
+              "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI).",
+              "type": "string"
+            },
+            "run_in_background": {
+              "description": "Run in the background and return a job id immediately. No timeout applies. There is no separate tool to read or stop it.",
+              "type": "boolean"
+            },
+            "timeoutMs": {
+              "description": "Timeout in milliseconds. The executor applies its configured default and cap, and kills the command on expiry.",
+              "type": "number"
+            },
+            "workdir": {
+              "description": "Working directory for this command. Defaults to the session workspace; a relative path is resolved against it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "description"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.bash_persistent": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/shell_tools/bash_persistent_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/shell_tools/bash_persistent_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.bash_persistent"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Run commands in a persistent bash shell. State, including the current directory and exported environment variables, persists across calls for this agent.",
+        "name": "bash",
+        "parameters": {
+          "properties": {
+            "command": {
+              "description": "The bash command to run. Relative path is preferred in the command.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.brave_free": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/brave_free_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/brave_free_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.brave_free"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with Brave Search. Returns titles, URLs, and descriptions.",
+        "name": "brave_free",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.ddgs": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/ddgs_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/ddgs_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.ddgs"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with DuckDuckGo via the ddgs package. Returns titles, URLs, and descriptions.",
+        "name": "ddgs",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.edit": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/edit_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/edit_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.edit"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Edit an existing UTF-8 text file by replacing literal text.",
+        "name": "edit",
+        "parameters": {
+          "properties": {
+            "file_path": {
+              "description": "Path to edit, resolved by the filesystem backend.",
+              "type": "string"
+            },
+            "new_string": {
+              "description": "Literal replacement text. Use an empty string to delete the match.",
+              "type": "string"
+            },
+            "old_string": {
+              "description": "Literal text to replace. Must match exactly.",
+              "type": "string"
+            },
+            "replace_all": {
+              "description": "Replace all matches. Defaults to false; when false, old_string must appear exactly once.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "file_path",
+            "old_string",
+            "new_string"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.exa": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/exa_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/exa_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.exa"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with Exa. Returns titles, URLs, and descriptions.",
+        "name": "exa",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.firecrawl": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/firecrawl_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/firecrawl_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.firecrawl"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with Firecrawl. Returns titles, URLs, and descriptions.",
+        "name": "firecrawl",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.glob": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/glob_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/glob_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.glob"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "read-only"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Find files whose paths match a glob pattern. Returns matching file paths — never directories — including hidden and ignored files (VCS metadata directories are excluded). Up to 100 paths come back in modification-time order.",
+        "name": "glob",
+        "parameters": {
+          "properties": {
+            "path": {
+              "description": "Directory to search in. Defaults to the session workspace; a relative path resolves against it.",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "Glob pattern to match file paths against (e.g. \"**/*.ts\"). A pattern with no \"/\" matches the basename at any depth.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.grep": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/grep_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/grep_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.grep"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "read-only"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search file contents with a regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline. Use read on a matched file for surrounding context.",
+        "name": "grep",
+        "parameters": {
+          "properties": {
+            "include": {
+              "description": "One glob filter for which files to search (e.g. \"*.ts\").",
+              "type": "string"
+            },
+            "path": {
+              "description": "File or directory to search. Defaults to the session workspace; a relative path resolves against it.",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "Regular expression to search for (ripgrep syntax when rg is available).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pattern"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.mcp_tool_manager": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/external_tools/mcp/mcp_tool_manager_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/external_tools/mcp/mcp_tool_manager_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.mcp_tool_manager"
+        },
+        "kind": "tool"
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.parallel": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/parallel_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/parallel_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.parallel"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with Parallel. Returns titles, URLs, and descriptions.",
+        "name": "parallel",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.pwsh": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/shell_tools/pwsh_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/shell_tools/pwsh_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.pwsh"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Execute a PowerShell command (`pwsh -Command`) and return its stdout/stderr. Each call runs in a fresh process: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. Paths use native Windows form (`C:\\...`); read environment variables with `$env:NAME`. Non-zero exits are reported as `[exit code: N]`. Long output is truncated to its tail. Set `run_in_background: true` for long-running commands: the call returns a job id immediately. The job stays with this tool; there is no separate tool to read or stop it.",
+        "name": "pwsh",
+        "parameters": {
+          "properties": {
+            "command": {
+              "description": "The PowerShell command to execute.",
+              "type": "string"
+            },
+            "description": {
+              "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI).",
+              "type": "string"
+            },
+            "run_in_background": {
+              "description": "Run in the background and return a job id immediately. No timeout applies. There is no separate tool to read or stop it.",
+              "type": "boolean"
+            },
+            "timeoutMs": {
+              "description": "Timeout in milliseconds. The executor applies its configured default and cap, and kills the command on expiry.",
+              "type": "number"
+            },
+            "workdir": {
+              "description": "Working directory for this command. Defaults to the session workspace; a relative path is resolved against it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "description"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.read": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/read_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/read_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.read"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "read-only"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Read a UTF-8 text file and return line-numbered content.",
+        "name": "read",
+        "parameters": {
+          "properties": {
+            "file_path": {
+              "description": "Path to read, resolved by the filesystem backend.",
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of lines to return. Defaults to 2000.",
+              "type": "number"
+            },
+            "offset": {
+              "description": "1-based first line to return. Defaults to 1.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "file_path"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.read_image": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/read_image_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/read_image_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.read_image"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "read-only"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Read a PNG/JPEG/WebP/GIF file and return the image itself. Requires the current model to accept image input.",
+        "name": "read_image",
+        "parameters": {
+          "properties": {
+            "file_path": {
+              "description": "Path to the image file, resolved by the filesystem backend.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "file_path"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.run_code": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/code_tools/run_code_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/code_tools/run_code_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.run_code"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Execute a Python program against the available tools. Takes two required arguments: `code`, the body of a function (`return` works), and `description`, a short summary of what the program does. Call tools as `tools.name({...})`. Answer with `print(...)` and/or `return <value>` — only that comes back, so curate it.",
+        "name": "run_code",
+        "parameters": {
+          "properties": {
+            "code": {
+              "description": "The program: the body of a Python function.",
+              "type": "string"
+            },
+            "description": {
+              "description": "Clear, concise description of what this program does in active voice, 5-10 words (shown in the UI).",
+              "type": "string"
+            },
+            "timeoutMs": {
+              "description": "Timeout in milliseconds. Defaults to 60000.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "code",
+            "description"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.searxng": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/searxng_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/searxng_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.searxng"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with a SearXNG instance. Returns titles, URLs, and descriptions.",
+        "name": "searxng",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.str_replace_editor": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/str_replace_editor_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/str_replace_editor_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.str_replace_editor"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Custom editing tool for viewing, creating and editing files. If `path` is a file, `view` displays `cat -n` output. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep. `create` fails when the path already exists as a file. `str_replace` requires `old_str` to match exactly once unless it is unique context.",
+        "name": "str_replace_editor",
+        "parameters": {
+          "properties": {
+            "command": {
+              "description": "The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`.",
+              "enum": [
+                "view",
+                "create",
+                "str_replace",
+                "insert"
+              ],
+              "type": "string"
+            },
+            "file_text": {
+              "description": "Required parameter of `create` command, with the content of the file to be created.",
+              "type": "string"
+            },
+            "insert_line": {
+              "description": "Required parameter of `insert`. `new_str` is inserted AFTER this line.",
+              "type": "integer"
+            },
+            "new_str": {
+              "description": "Replacement or insert text.",
+              "type": "string"
+            },
+            "old_str": {
+              "description": "Required parameter of `str_replace` containing the string in `path` to replace.",
+              "type": "string"
+            },
+            "path": {
+              "description": "Absolute path to file or directory, e.g. `/repo/file.py` or `/repo`.",
+              "type": "string"
+            },
+            "view_range": {
+              "description": "Optional `view` line range, e.g. [11, 12]. Indexing starts at 1. `[start_line, -1]` shows through the end of the file.",
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "command",
+            "path"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.tavily": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/web_search_tools/tavily_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/web_search_tools/tavily_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.tavily"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {},
+        "identity": {
+          "channel": "ledger"
+        },
+        "kind": "network"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Search the web with Tavily. Returns titles, URLs, and descriptions.",
+        "name": "tavily",
+        "parameters": {
+          "properties": {
+            "limit": {
+              "default": 5,
+              "description": "Maximum number of results. Defaults to 5.",
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "The search query.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_close_session": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_close_session_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_close_session_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_close_session"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Close one persistent terminal and wait until its captured owned process tree is gone.",
+        "name": "terminal_close",
+        "parameters": {
+          "properties": {
+            "sessionId": {
+              "description": "Terminal session id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_list": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_list_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_list_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_list"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "List persistent terminal sessions owned by the current agent.",
+        "name": "terminal_list",
+        "parameters": {
+          "properties": {},
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_open": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_open_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_open_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_open"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Create a persistent, owner-isolated terminal session from a registered backend type. Use this for shell or REPL state that must survive across tool calls.",
+        "name": "terminal_open",
+        "parameters": {
+          "properties": {
+            "cwd": {
+              "description": "Initial working directory. Defaults to the deployment workspace root.",
+              "type": "string"
+            },
+            "name": {
+              "description": "Optional owner-local display name such as \"main\" or \"gdb\".",
+              "type": "string"
+            },
+            "type": {
+              "description": "Registered terminal backend type, usually \"shell\".",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_read_session": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_read_session_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_read_session_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_read_session"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Read a bounded page of retained output from a persistent terminal without sending input.",
+        "name": "terminal_read",
+        "parameters": {
+          "properties": {
+            "count": {
+              "description": "Requested line count (default 500; backend caps apply).",
+              "type": "number"
+            },
+            "offset": {
+              "description": "Newest-relative line offset (default 0).",
+              "type": "number"
+            },
+            "sessionId": {
+              "description": "Terminal session id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_send": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_send_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_send_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_send"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Send text to a persistent terminal. By default Enter is submitted and the call waits for a prompt, stdin wait, output silence, timeout, or session exit. Background mode returns a job id immediately.",
+        "name": "terminal_send",
+        "parameters": {
+          "properties": {
+            "run_in_background": {
+              "description": "Return a job id immediately. There is no separate tool to read or stop it.",
+              "type": "boolean"
+            },
+            "sessionId": {
+              "description": "Terminal session id returned by terminal_open or terminal_list.",
+              "type": "string"
+            },
+            "submit": {
+              "description": "Submit Enter after text (default true). Set false for control characters or incomplete REPL input.",
+              "type": "boolean"
+            },
+            "text": {
+              "description": "UTF-8 text to write to the terminal.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId",
+            "text"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_signal": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_signal_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_signal_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_signal"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Send an allowed signal to the current foreground process group of a persistent terminal.",
+        "name": "terminal_signal",
+        "parameters": {
+          "properties": {
+            "sessionId": {
+              "description": "Terminal session id.",
+              "type": "string"
+            },
+            "signal": {
+              "description": "Signal to deliver. Shell-targeted SIGKILL is rejected; use terminal_close.",
+              "enum": [
+                "SIGINT",
+                "SIGTERM",
+                "SIGKILL",
+                "SIGTSTP",
+                "SIGHUP"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId",
+            "signal"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.write": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/write_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/write_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.write"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write"
+        },
+        "identity": {
+          "root": "."
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Create or fully replace a UTF-8 text file.",
+        "name": "write",
+        "parameters": {
+          "properties": {
+            "content": {
+              "description": "Full UTF-8 text content to write.",
+              "type": "string"
+            },
+            "file_path": {
+              "description": "Path to write, resolved by the filesystem backend.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "file_path",
+            "content"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  }
+}

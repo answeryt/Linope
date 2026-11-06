@@ -39,9 +39,7 @@ def declaration_from_modules(
 
 
 def load_declaration(capability_id: str, changes: Sequence[Change]) -> tuple[Any, Any]:
-    """Load one capability once, then ask it for a declaration."""
-    from kernel.process.process_creat.instances import load_capability
+    """Read the capability table. Do not load the plugin here."""
+    from kernel.process.process_creat.instances import described
 
-    modules, definition = load_capability(capability_id)
-    declaration = declaration_from_modules(modules, capability_id, changes)
-    return declaration, definition
+    return described(capability_id, changes)

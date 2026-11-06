@@ -36,10 +36,6 @@
 
 看这些对等进程，并可以停掉其中一个。它不把它们收成父子关系。`handle` 取出对外的 pid 视图。`reap_if_dead` 交给 `reaper.py`。
 
-`tool_dispatch.py`
-
-给一个已经存在的进程准备一次工具调用，消息是 `load`、种类 `tool`。名字前面没有 `tools.` 会补上。[`profiles.py`](../README.cn.md) 的 `tool_allowed` 在当前权限或工具名单不允许时直接拒绝。读取 `tool_schemas` 用同一条检查，被拒绝的工具不返回说明。也可以只给出该启动的能力名，不在这里启动。
-
 `__init__.py`
 
 对外给出 `CapabilityProcess`、`ProcessActivation`、`ProcessStatus`。

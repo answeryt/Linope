@@ -1,69 +1,93 @@
-"""Sandbox mode and writable-root rules, loaded from capability/sandbox.
+"""Sandbox mode and writable-root rules, answered by the sandbox program.
 
-This module is an adapter. It does not define a second mode list or a second
-writable-root rule.
+This module does not define a second mode list or load a plugin file itself.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import os
-from pathlib import Path
+import json
+import subprocess
+import sys
 from typing import Any
 
 
-_ROOT = Path(__file__).resolve().parents[2]
-_SANDBOX = _ROOT / "capability" / "sandbox" / "sandbox" / "src"
-_CACHE: tuple[Any, Any] | None = None
+_VOCAB: dict[str, Any] | None = None
+_MODES: Any = None
+_ROOTS: Any = None
 
 
-def _load(name: str, filename: str) -> Any:
-    path = _SANDBOX / filename
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot open the sandbox vocabulary: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _gate(payload: dict[str, Any]) -> Any:
+    completed = subprocess.run(
+        [sys.executable, "-m", "capability.sandbox.gate"],
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "sandbox gate failed"
+        raise RuntimeError(detail)
+    text = completed.stdout.strip()
+    if not text:
+        return None
+    return json.loads(text)
 
 
-def vocabulary() -> tuple[Any, Any]:
-    """The sandbox mode module and the writable-root module."""
-    global _CACHE
-    if _CACHE is None:
-        _CACHE = (
-            _load("linope_sandbox_vocab", "sandbox_plugin.py"),
-            _load("linope_sandbox_roots_vocab", "roots_plugin.py"),
-        )
-    return _CACHE
+def register_vocabulary(modes: Any, roots: Any) -> None:
+    """Remember the sandbox modules a capability program already loaded."""
+    global _MODES, _ROOTS, _VOCAB
+    _MODES = modes
+    _ROOTS = roots
+    _VOCAB = {
+        "read_only": modes.READ_ONLY,
+        "workspace_write": modes.WORKSPACE_WRITE,
+        "danger_full_access": modes.DANGER_FULL_ACCESS,
+        "modes": list(modes.SANDBOX_MODES),
+        "confined": list(getattr(modes, "CONFINED_MODES", ()) or (modes.READ_ONLY, modes.WORKSPACE_WRITE)),
+    }
 
 
-def _modes() -> Any:
-    return vocabulary()[0]
+def vocabulary() -> dict[str, Any]:
+    """The mode names the sandbox program publishes."""
+    global _VOCAB
+    if _VOCAB is None:
+        found = _gate({"op": "vocabulary"})
+        if not isinstance(found, dict):
+            raise RuntimeError("sandbox gate did not name its modes")
+        _VOCAB = found
+    return _VOCAB
 
 
-def _roots() -> Any:
-    return vocabulary()[1]
+READ_ONLY = "read-only"
+WORKSPACE_WRITE = "workspace-write"
+DANGER_FULL_ACCESS = "danger-full-access"
 
 
-READ_ONLY = _modes().READ_ONLY
-WORKSPACE_WRITE = _modes().WORKSPACE_WRITE
-DANGER_FULL_ACCESS = _modes().DANGER_FULL_ACCESS
-MODES = _modes().SANDBOX_MODES
-CONFINED = _modes().CONFINED_MODES
+def _modes() -> tuple[str, ...]:
+    return tuple(str(item) for item in vocabulary().get("modes") or ())
+
+
+def _confined() -> tuple[str, ...]:
+    return tuple(str(item) for item in vocabulary().get("confined") or ())
+
+
+def modes() -> tuple[str, ...]:
+    return _modes()
 
 
 def check_mode(mode: str) -> str:
     """Reject a mode the sandbox vocabulary does not define."""
     text = str(mode)
-    if text not in MODES:
+    known = _modes() or (READ_ONLY, WORKSPACE_WRITE, DANGER_FULL_ACCESS)
+    if text not in known:
         raise ValueError("File mode must be read-only, workspace-write, or skip wrapping")
     return text
 
 
 def confines(mode: str) -> bool:
-    """Whether an external command must be wrapped. The sandbox plugin decides."""
-    return bool(_modes().requires_confine(check_mode(mode)))
+    """Whether an external command must be wrapped."""
+    return check_mode(mode) in (_confined() or (READ_ONLY, WORKSPACE_WRITE))
 
 
 def writes(mode: str) -> bool:
@@ -71,23 +95,54 @@ def writes(mode: str) -> bool:
     text = check_mode(mode)
     if not confines(text):
         return True
-    return bool(writable_roots({"mode": text, "workspace_root": os.devnull or "."}))
+    return bool(writable_roots({"mode": text, "workspace_root": "."}))
 
 
 def writable_roots(policy: dict[str, Any]) -> list[str]:
     """The sandbox allow-list for one file-effect policy."""
-    return list(_roots().writable_roots(policy))
+    if _ROOTS is not None:
+        return list(_ROOTS.writable_roots(policy))
+    found = _gate({"op": "writable-roots", "policy": policy})
+    return list(found or [])
 
 
 def canonical_path(path: str) -> str:
     """The path identity the sandbox uses when comparing roots."""
-    return str(_roots().canonical_path(path))
+    if _ROOTS is not None:
+        return str(_ROOTS.canonical_path(path))
+    return str(_gate({"op": "canonical-path", "path": path}) or "")
 
 
 def narrower(left: str, right: str) -> str:
-    """The stricter of two sandbox modes. Order comes from SANDBOX_MODES."""
+    """The stricter of two sandbox modes. Order comes from the sandbox mode list."""
     first = check_mode(left)
     second = check_mode(right)
-    if MODES.index(first) <= MODES.index(second):
+    order = _modes() or (READ_ONLY, WORKSPACE_WRITE, DANGER_FULL_ACCESS)
+    if order.index(first) <= order.index(second):
         return first
     return second
+
+
+# Callers import MODES as a tuple. Fill it on first use via a tuple subclass that reads late.
+class _ModeTuple(tuple):
+    def __new__(cls) -> "_ModeTuple":
+        return tuple.__new__(cls, ())
+
+    def __iter__(self):
+        return iter(_modes())
+
+    def __contains__(self, item: object) -> bool:
+        return item in _modes()
+
+    def __len__(self) -> int:
+        return len(_modes())
+
+    def __getitem__(self, item):
+        return _modes()[item]
+
+    def index(self, value: Any, *args: Any) -> int:
+        return _modes().index(value, *args)
+
+
+MODES = _ModeTuple()
+CONFINED = _ModeTuple()

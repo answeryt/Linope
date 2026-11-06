@@ -1,35 +1,19 @@
-"""Scheduling lives in one package. The older modules only forward to it."""
+"""Scheduling routes requests and admits threads. The model loop lives with the capability."""
 
 import inspect
 
-from kernel.communication.verify import Step
 from kernel.hypermedia.link import Link
 from kernel.hypermedia.representation import Representation
-from kernel.scheduler.requests import ActionCall, Answer, MemoryRead, classify
 
 
-def test_a_read_an_action_and_an_answer_stay_different() -> None:
-    assert isinstance(classify(Step("read", "message/0-2")), MemoryRead)
-    assert isinstance(classify(Step("answer", "answer", "ok")), Answer)
-    action = classify(Step("tool", "load tool 7 -- ", pid=7, capability="tools.ddgs"))
-    assert isinstance(action, ActionCall)
-    assert action.way == "tool"
-    assert action.pid == 7
-
-
-def test_the_model_loop_and_the_route_have_one_home() -> None:
-    import importlib.util
-
+def test_the_route_lives_with_the_scheduler() -> None:
     import kernel.load_balancing.route as balancing
-    import kernel.scheduler.model_turn as turns
     import kernel.scheduler.route as routing
     import kernel.scheduler.threads as threads
     import kernel.thread.runtime as runtime
 
-    assert importlib.util.find_spec("kernel.communication.follow") is None
     assert balancing.route is routing.route
     assert "def route" not in inspect.getsource(balancing)
-    assert "while True" in inspect.getsource(turns)
     assert "def route" in inspect.getsource(routing)
     assert "while not stopping" not in inspect.getsource(runtime.ThreadRuntime.run)
     assert "while not stopping" in inspect.getsource(threads.run_runtime)

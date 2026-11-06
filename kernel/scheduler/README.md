@@ -2,14 +2,12 @@
 
 English | [中文](README.cn.md)
 
-One scheduler for model turns, pointer steps, resource routing, and thread admission. The raw memory dict is [`kernel/resource/memory`](../resource/memory/README.md). Which peer is chosen is [`kernel/load_balancing`](../load_balancing/README.md).
+One scheduler for resource routing and thread admission. The model turn lives in [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). The raw memory dict is [`kernel/resource/memory`](../resource/memory/README.md). Which peer is chosen is [`kernel/load_balancing`](../load_balancing/README.md).
 
 ## Contract
 
 | Entry | Role |
 |---|---|
-| `turn` | Runs one `load message` until the model answers. Returns what the terminal shows. |
-| `classify` | Splits one checked step into `MemoryRead`, `ActionCall`, or `Answer`. Parsing does not run the step. |
 | `route` | Hands a body to a peer that holds the named resource kind and identity. The caller supplies the channel and the opener. |
 | `run_runtime` | Claims and admits requests onto one process runtime until that process asks to stop. |
 
@@ -54,11 +52,10 @@ A read that names a scope, such as `chat/message/0`, does not use the private li
 
 `access.py` approves and performs that access. `capacity_full` is true when the token count is at least a positive context limit. The token number comes from [`kernel/calculate`](../calculate/README.md). The address lists stay in `_MAPS` for this run. The memory dict keeps the rows.
 
-`turn` gives the model one page from [`kernel/communication`](../communication/README.md). Every `load message` for a process with memory enters `turn`, and so does an `ask` whose receiver has memory. Whether the window can launch another process only decides whether the page offers `process start`. The reply is checked in communication, then this directory decides whether it may run. A read stays a read: it does not start a process or call a tool. Only a step that passes is executed. The result is written back to memory, and the next page is given. There is no step limit.
+Asking the model, reading memory, and calling a tool are command lines written by [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). This directory does not build that page and does not choose the next step.
 
 `route` refuses a missing channel and a process limit below 1. It does not take a lease. A new process, when one is required, is started by the opener the caller supplies. That opener is the existing reconciler.
 
 ## Known Limitations and Deferred Work
 
-- **A turn has no step cap** — `turn` keeps walking until the model answers or the call fails.
 - **A new process starts with an empty page table** — Committed rows remain in the `MemoryStore`. This process's `message/0` is the next row written while it holds the memory. Rows already stored are read with a scoped address such as `chat/message/0`.

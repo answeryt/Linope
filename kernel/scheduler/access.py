@@ -161,14 +161,18 @@ def memory_contents(
     return {"system": system, "items": rows}
 
 
+def _spoken(kind: str, content: str) -> dict[str, str]:
+    return {"role": kind, "content": content}
+
+
 def page_messages(pool: Any, grants: Any, page: dict[str, Any]) -> list[dict[str, str]]:
     """The rules, then this page. The page carries only what this turn is showing."""
 
     messages: list[dict[str, str]] = []
     system = memory_system(pool, grants)
     if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": json.dumps(page, ensure_ascii=False)})
+        messages.append(_spoken("system", system))
+    messages.append(_spoken("user", json.dumps(page, ensure_ascii=False)))
     return messages
 
 

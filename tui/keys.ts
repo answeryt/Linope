@@ -8,7 +8,14 @@ export type KeyName =
   | 'end'
   | 'home'
   | 'ignore'
+  | 'ctrl-v'
   | 'left'
+  | 'mouse-down'
+  | 'mouse-drag'
+  | 'mouse-middle'
+  | 'mouse-right'
+  | 'mouse-up'
+  | 'paste'
   | 'page down'
   | 'page up'
   | 'return'
@@ -41,10 +48,74 @@ const escapeNames: Record<string, KeyName> = {
   '\x1b[5~': 'page up',
   '\x1b[6~': 'page down',
   '\x1b[Z': 'shift-tab',
-  '\x1b[1;2A': 'shift-up'
+  '\x1b[1;2A': 'shift-up',
+  '\x1b[2;2~': 'ctrl-v'
 }
 
+const mouseName = (button: number, release: boolean): KeyName => {
+  // Bits 2–4 are Shift, Alt, and Ctrl. Bit 5 is drag. 64/65 are the wheel.
+  const code = button & ~0b11100
+  const dragged = (code & 32) !== 0
+  const wheel = code & ~32
+
+  if (!release && (wheel === 64 || wheel === 65)) {
+    return wheel === 64 ? 'wheel-up' : 'wheel-down'
+  }
+
+  if (release || (code & 3) === 3) {
+    return 'mouse-up'
+  }
+
+  const buttonId = code & 3
+
+  if (buttonId === 2 && !dragged) {
+    return 'mouse-right'
+  }
+
+  if (buttonId === 1 && !dragged) {
+    return 'mouse-middle'
+  }
+
+  if (buttonId !== 0) {
+    return 'ignore'
+  }
+
+  return dragged ? 'mouse-drag' : 'mouse-down'
+}
+
+const mouseKey = (name: KeyName, raw: string, column: number, row: number): Key => ({
+  name,
+  raw,
+  text: '',
+  column,
+  row
+})
+
 const wheelKey = (buffer: string): Key | null => {
+  if (buffer.startsWith('\x1b[M')) {
+    if (buffer.length < 6) {
+      return null
+    }
+
+    return mouseKey(
+      mouseName(buffer.charCodeAt(3) - 32, false),
+      buffer.slice(0, 6),
+      buffer.charCodeAt(4) - 32,
+      buffer.charCodeAt(5) - 32
+    )
+  }
+
+  const urxvt = /^\x1b\[(\d+);(\d+);(\d+)M/.exec(buffer)
+
+  if (urxvt && !buffer.startsWith('\x1b[<')) {
+    return mouseKey(
+      mouseName(Number(urxvt[1]), false),
+      urxvt[0],
+      Number(urxvt[2]),
+      Number(urxvt[3])
+    )
+  }
+
   if (!buffer.startsWith('\x1b[<')) {
     return null
   }
@@ -63,24 +134,12 @@ const wheelKey = (buffer: string): Key | null => {
     return buffer.length >= 32 ? { name: 'ignore', raw: buffer.slice(0, 32), text: '' } : null
   }
 
-  const button = Number(match[1])
-  const column = Number(match[2])
-  const row = Number(match[3])
-  const raw = match[0]
-  // Bits 2–4 are Shift, Alt, and Ctrl. 64 is wheel up and 65 is wheel down.
-  const code = button & ~0b11100
-
-  if (match[4] === 'M' && (code === 64 || code === 65)) {
-    return {
-      name: code === 64 ? 'wheel-up' : 'wheel-down',
-      raw,
-      text: '',
-      column,
-      row
-    }
-  }
-
-  return { name: 'ignore', raw, text: '', column, row }
+  return mouseKey(
+    mouseName(Number(match[1]), match[4] === 'm'),
+    match[0],
+    Number(match[2]),
+    Number(match[3])
+  )
 }
 
 export const takeKey = (buffer: string): Key | null => {
@@ -96,6 +155,7 @@ export const takeKey = (buffer: string): Key | null => {
         text === '\x7f' || text === '\b' ? 'backspace' :
         text === '\x03' ? 'ctrl-c' :
         text === '\x04' ? 'ctrl-d' :
+        text === '\x16' ? 'ctrl-v' :
         text === '\t' ? 'tab' :
         'char',
       raw: text,
@@ -120,9 +180,25 @@ export const takeKey = (buffer: string): Key | null => {
     return { name: 'ignore', raw: buffer.slice(0, 1), text: '' }
   }
 
+  // Bracketed paste is one key. The generic CSI scan would swallow the opener
+  // and then type the pasted bytes one by one.
+  if (buffer.startsWith('\x1b[200~')) {
+    const end = buffer.indexOf('\x1b[201~', 6)
+
+    if (end < 0) {
+      return buffer.length > 1_048_576 ? { name: 'ignore', raw: buffer, text: '' } : null
+    }
+
+    return {
+      name: 'paste',
+      raw: buffer.slice(0, end + 6),
+      text: buffer.slice(6, end)
+    }
+  }
+
   const wheel = wheelKey(buffer)
 
-  if (wheel || buffer.startsWith('\x1b[<')) {
+  if (wheel || buffer.startsWith('\x1b[<') || buffer.startsWith('\x1b[M')) {
     return wheel
   }
 

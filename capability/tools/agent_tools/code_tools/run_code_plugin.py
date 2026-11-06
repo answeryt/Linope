@@ -267,6 +267,6 @@ def _error(message: str, **details: Any) -> str:
 
 def capability_profile(capability_id, changes):
     """This process leases a tool and the shared project workspace."""
-    from kernel.process.profiles import tool_with_workspace
+    from capability.tools.profile import workspace_tool
 
-    return tool_with_workspace(capability_id, changes)
+    return workspace_tool(capability_id, changes, "workspace-write")

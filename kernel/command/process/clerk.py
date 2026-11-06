@@ -209,6 +209,47 @@ def _note_line(clerk: Clerk, text: str) -> None:
     Journal(path).append({"kind": "line", "text": text})
 
 
+def execute_line(text: str, service: Any = None) -> str:
+    """Run one command line and return the text it wrote."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    captured = io.StringIO()
+    with redirect_stdout(captured), redirect_stderr(captured):
+        window = None
+        from kernel.command.window import current_window
+
+        window = current_window()
+        if window is not None and hasattr(window, "_command"):
+            window._command(text)
+        elif service is not None:
+            from kernel.command.process.listen import PING_TIMEOUT, _one_line
+
+            _one_line(service, text, PING_TIMEOUT, emit_done=False)
+        else:
+            raise RuntimeError("No window is open")
+    return _visible_text(captured.getvalue())
+
+
+def _visible_text(captured: str) -> str:
+    """The command's own text. Stream fragments and the done mark are not part of it."""
+    kept = [line for line in captured.splitlines() if not _stream_line(line)]
+    return "\n".join(kept).strip()
+
+
+def _stream_line(line: str) -> bool:
+    text = line.strip()
+    if text == '{"type": "done"}':
+        return True
+    if not text.startswith("{"):
+        return False
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("type") in {"text", "text-delta", "done"}
+
+
 def _done() -> None:
     print(json.dumps({"type": "done"}, ensure_ascii=False), flush=True)
 

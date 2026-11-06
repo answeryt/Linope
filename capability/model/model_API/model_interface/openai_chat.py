@@ -12,6 +12,34 @@ def _omit(value: object) -> bool:
     return value is None or value == "UNSET"
 
 
+def _accept_brotli_limit() -> None:
+    """httpx2 passes output_buffer_limit to brotli.process, which rejects the keyword."""
+    try:
+        import brotli
+    except ImportError:
+        return
+    sample = brotli.Decompressor()
+    if hasattr(sample, "decompress"):
+        return
+    original = brotli.Decompressor
+
+    class Decompressor:
+        def __init__(self) -> None:
+            self._inner = original()
+
+        def decompress(self, data: bytes, output_buffer_limit: int | None = None) -> bytes:
+            del output_buffer_limit
+            return self._inner.process(data)
+
+        def process(self, data: bytes) -> bytes:
+            return self._inner.process(data)
+
+    brotli.Decompressor = Decompressor
+
+
+_accept_brotli_limit()
+
+
 def _param_leaf(folder: str, filename: str) -> Any:
     key = f"{folder}/{filename}"
     cached = _PARAM_CACHE.get(key)

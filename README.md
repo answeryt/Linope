@@ -6,11 +6,9 @@
 
 English | [中文](README.zh.md)
 
-Linope is an agent kernel. A model, a search tool, file handling, and context handling are capabilities. One capability is one peer process, and that process holds its own resource leases. There is no parent-child process tree.
+Linope is a flexible, general, lightweight agent kernel. A model, a search tool, file handling, and context handling are capabilities. One capability is one peer process, and that process holds its own resource leases. There is no parent-child process tree.
 
-The kernel creates and reclaims these processes, checks permission, and passes requests between them. Whether to search, read a file, or answer directly is the model's choice from the current page. The kernel does not contain one agent's business workflow.
-
-The same kernel can do different work when the model, tools, prompts, and permissions change. The kernel manages four agent resources: `memory`, `tool`, `sandbox`, and `network`. The CPU, disk, and network devices remain with the host operating system.
+Linope builds an agent kernel with the development ideas of a traditional operating-system kernel. As models keep being replaced, the logic and mechanisms inside many agent architectures have to change with them, which frustrates many developers. Linope aims to avoid that by maintaining a kernel that stays flexible and stable. The stable mechanisms live in the kernel, so later development is mainly maintaining that kernel.
 
 [The technical report](<linope-agent-kernel (2).pdf>) explains why a capability is a process, why there is no parent-child process tree, and how memory and pages fit together.
 
@@ -36,23 +34,15 @@ Inside the window, create the secrets file, load it, then start the process. Wri
 ```text
 create capability/.env -- OPENAI_API_KEY=your-api-key
 load env capability/.env
-process start model.openai_chat_model --change base_url=https://your-api-endpoint --change model=your-model --with memory=search
+process start agent_loop
 ```
 
-A process that is already running keeps its old endpoint and model until you `process start` again.
+Note the agent_loop process id. If you forget it, use the `list` command.
 
-Note the model process id. If you forget it, use the `list` command.
-
-Load [example/linope.md](example/linope.md) into that model:
+The runtime supplies the core model protocol automatically.
 
 ```text
-load message <model-process-id> -- example/linope.md
-```
-
-Then send a message with the same command:
-
-```text
-load message <model-process-id> -- your message
+load message <agent-loop-process-id> -- your message
 ```
 
 Directory notes:

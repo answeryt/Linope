@@ -7,7 +7,6 @@ from pathlib import Path
 
 from kernel.process.declaration import ProcessDeclaration
 from kernel.environment import HostExecutionPolicy, ProcessEnvironment
-from kernel.environment.shell import api_key_names
 from kernel.process.process_creat.activation import ProcessActivation
 from kernel.process.process_creat.instances import CapabilityDefinition, describe_instance
 from kernel.process.process_manager.capability_process import CapabilityProcess, spawn_runtime
@@ -62,7 +61,7 @@ class ProcessReconciler:
         pid_value = None if pid is None else int(pid)
         try:
             if pid_value is None:
-                child = spawn_runtime(chosen_keys)
+                child = spawn_runtime(chosen_keys, definition.command())
                 pid_value = int(child.pid or 0)
                 if child is not None:
                     from kernel.environment.host_adapter import apply_host_limits
@@ -193,7 +192,7 @@ def _held(grants, leases):
 
 
 def _room_facts(grants, environment) -> dict:
-    mode = "workspace-write"
+    mode = "read-only"
     channel = ""
     for grant in grants:
         name = kind_name(grant.kind)
@@ -225,7 +224,7 @@ def _env_selection(
         return "", ()
     if env_file_keys:
         return chosen, env_file_keys
-    names = api_key_names(tuple(definition.module_paths))
+    names = tuple(definition.secret_names)
     if not names:
         return "", ()
     return chosen, names

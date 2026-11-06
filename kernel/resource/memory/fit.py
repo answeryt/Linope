@@ -86,35 +86,29 @@ def _advise(rows: list[MemoryRow], budget: int) -> list[MemoryRow]:
 
 
 def sliding_window_fit(rows: list[MemoryRow], budget: int) -> list[MemoryRow]:
-    """Use the existing tail cut when it imports. Original rows stay put."""
+    """Use the existing tail cut. Original rows stay put."""
+    import json
+    import subprocess
+    import sys
 
-    from capability.context.context_compression.sliding_window.tail_token_cut import (
-        find_tail_cut_by_tokens,
+    messages: list[dict[str, Any]] = [
+        {"role": part, "content": row.content} for part, row in (("user", row) for row in rows)
+    ]
+    weights = [row.tokens or estimate_tokens(row.content) for row in rows]
+    completed = subprocess.run(
+        [sys.executable, "-m", "capability.queries", "tail-cut"],
+        input=json.dumps({"messages": messages, "budget": max(1, budget), "tokens": weights}),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
-
-    messages: list[dict[str, Any]] = [{"role": "user", "content": row.content} for row in rows]
-
-    def estimate(message: dict[str, Any]) -> int:
-        return estimate_tokens(message.get("content"))
-
-    def same(_messages: list[dict[str, Any]], index: int) -> int:
-        return index
-
-    def keep(_messages: list[dict[str, Any]], cut: int, _head: int) -> int:
-        return cut
-
-    cut = find_tail_cut_by_tokens(
-        messages,
-        0,
-        token_budget=max(1, budget),
-        protect_last_n=1,
-        estimate_message_tokens=estimate,
-        align_boundary_backward=same,
-        align_boundary_forward=same,
-        ensure_last_user_message_in_tail=keep,
-        ensure_last_assistant_message_in_tail=keep,
-        min_tail_user_messages=1,
-    )
+    cut = 0
+    if completed.returncode == 0:
+        try:
+            cut = int(json.loads(completed.stdout).get("cut") or 0)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            cut = 0
     if cut <= 0:
         return list(rows)
     omitted = ", ".join(row.real for row in rows[:cut])

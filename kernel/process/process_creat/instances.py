@@ -1,29 +1,36 @@
-"""Resolve one capability name to one loadable plugin."""
+"""Resolve one capability name to the command that starts it.
+
+The capability tree writes the table. This module only reads that file.
+"""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 from kernel.resource.definition import ResourceDefinition
 
 
+TABLE_NAME = "programs.json"
+
+
 @dataclass(frozen=True)
 class CapabilityDefinition:
     instance_id: str
-    module_paths: tuple[str, ...]
+    module_paths: tuple[str, ...] = ()
     entrypoint: str | None = "load"
     resource_requirements: tuple[ResourceDefinition, ...] = ()
+    argv: tuple[str, ...] = ()
+    secret_names: tuple[str, ...] = ()
 
     def activation(self) -> dict[str, Any]:
         return {
             "instance_id": self.instance_id,
             "module_paths": self.module_paths,
             "entrypoint": self.entrypoint,
+            "argv": list(self.argv),
             "resource_requirements": [
                 {
                     "kind": str(getattr(item.kind, "value", item.kind)),
@@ -33,6 +40,11 @@ class CapabilityDefinition:
                 for item in self.resource_requirements
             ],
         }
+
+    def command(self) -> tuple[str, ...]:
+        if not self.argv:
+            raise RuntimeError(f"This capability has no command: {self.instance_id}")
+        return self.argv
 
 
 def repo_root() -> Path:
@@ -44,72 +56,21 @@ def capability_root() -> Path:
 
 
 def discover_instances(root: Path | None = None) -> dict[str, list[Path]]:
-    """Return one plugin path per capability id.
-
-    Discovery intentionally recognizes only explicit entry files. It does not
-    scan a directory as a multi-plugin manifest and does not load context
-    compressors or other historical capability families.
-    """
-    root = root or capability_root()
-    found: dict[str, list[Path]] = {}
-
-    for plugin in sorted(root.rglob("*_plugin.py")):
-        if _defines_load(plugin):
-            capability_id = _capability_id(root, plugin)
-            found[capability_id] = [plugin]
-
-    for main in sorted(root.rglob("prompt_main.py")):
-        if _defines_load(main):
-            relative = main.relative_to(root / "prompt")
-            group = relative.parts[0] if len(relative.parts) > 1 else main.parent.name
-            found[f"prompt.{group.replace(' ', '_')}"] = [main]
-
-    return found
-
-
-def _capability_id(root: Path, plugin: Path) -> str:
-    relative = plugin.relative_to(root)
-    parts = list(relative.parts)
-    parts.pop()
-    stem = plugin.name[: -len("_plugin.py")]
-    if parts and parts[0] == "model":
-        return f"model.{parts[-1]}"
-    if parts and parts[0] == "tools":
-        return f"tools.{stem}"
-    if parts and parts[0] == "sandbox":
-        return "sandbox.sandbox" if len(parts) > 1 else f"sandbox.{stem}"
-    return f"{parts[0] if parts else 'capability'}.{stem}"
-
-
-def _defines_load(path: Path) -> bool:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "def load(" in text or "async def load(" in text
-
-
-def adapter_module_path() -> Path:
-    return capability_root() / "process_adapter.py"
+    """Return one program path per capability id."""
+    table = load_table(root)
+    return {
+        key: [Path(item) for item in row.get("module_paths") or ()]
+        for key, row in table.items()
+        if isinstance(row, dict)
+    }
 
 
 def describe_instance(
     instance_id: str,
-    catalog: dict[str, list[Path]] | None = None,
+    catalog: dict[str, Any] | None = None,
 ) -> CapabilityDefinition:
-    catalog = discover_instances() if catalog is None else catalog
-    resolved = resolve_instance_id(instance_id, catalog)
-    return CapabilityDefinition(
-        instance_id=resolved,
-        module_paths=_with_adapter((str(catalog[resolved][0]),)),
-    )
-
-
-def _with_adapter(module_paths: tuple[str, ...]) -> tuple[str, ...]:
-    adapter = adapter_module_path()
-    if not adapter.is_file():
-        return module_paths
-    return module_paths + (str(adapter),)
+    table = load_table() if catalog is None else catalog
+    return _definition(instance_id, _row(table, instance_id))
 
 
 def resolve_instance_id(
@@ -123,29 +84,87 @@ def resolve_instance_id(
     return instance_id
 
 
-def load_capability(
-    instance_id: str,
-) -> tuple[list[ModuleType], CapabilityDefinition]:
-    catalog = discover_instances()
-    definition = describe_instance(instance_id, catalog)
-    loaded: list[ModuleType] = []
-    for index, raw_path in enumerate(definition.module_paths):
-        path = Path(raw_path)
-        module_name = f"capability_instance_{index}_{path.stem}"
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            sys.modules.pop(module_name, None)
-            raise
-        loaded.append(module)
-    return loaded, definition
+def described(instance_id: str, changes: Any = ()) -> tuple[Any, CapabilityDefinition]:
+    """The declaration and the command for one capability, including startup changes."""
+    from kernel.process.declaration import ProcessDeclaration
+
+    table = load_table()
+    row = _row(table, instance_id)
+    definition = _definition(instance_id, row)
+    payload = _declaration_payload(instance_id, row, changes)
+    return ProcessDeclaration.from_payload(payload), definition
 
 
-def load_instance(instance_id: str) -> list[ModuleType]:
+def load_capability(instance_id: str) -> tuple[list[Any], CapabilityDefinition]:
+    """The program loads its own modules. The kernel only keeps the command."""
+    definition = describe_instance(instance_id)
+    return [], definition
+
+
+def load_instance(instance_id: str) -> list[Any]:
     modules, _definition = load_capability(instance_id)
     return modules
+
+
+def load_table(root: Path | None = None) -> dict[str, Any]:
+    """Read the table the capability tree already wrote."""
+    path = (capability_root() if root is None else Path(root)) / TABLE_NAME
+    if not path.is_file():
+        raise RuntimeError(f"The capability table is missing: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"The capability table is unreadable: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"The capability table is unreadable: {path}")
+    return payload
+
+
+def _row(table: dict[str, Any], instance_id: str) -> dict[str, Any]:
+    row = table.get(instance_id)
+    if not isinstance(row, dict):
+        known = ", ".join(sorted(key for key, value in table.items() if isinstance(value, dict)))
+        raise KeyError(f"Unknown capability instance {instance_id!r}. Known: {known}")
+    return row
+
+
+def _definition(instance_id: str, row: dict[str, Any]) -> CapabilityDefinition:
+    repo = capability_root().parent
+    paths = tuple(_resolve(repo, item) for item in row.get("module_paths") or ())
+    argv = tuple(str(item) for item in row.get("argv") or ())
+    return CapabilityDefinition(
+        instance_id=instance_id,
+        module_paths=paths,
+        entrypoint=str(row.get("entrypoint") or "load"),
+        argv=argv,
+        secret_names=tuple(str(item) for item in row.get("secret_names") or ()),
+    )
+
+
+def _declaration_payload(instance_id: str, row: dict[str, Any], changes: Any) -> dict[str, Any]:
+    settings = dict(row.get("settings") or {})
+    allowed = {str(item) for item in row.get("changes") or ()}
+    for topic, raw in changes or ():
+        name = str(topic)
+        if name not in allowed:
+            raise ValueError(f"Unknown topic: {name}")
+        settings[name] = _parse_value(str(raw))
+    return {
+        "capability": instance_id,
+        "resources": list(row.get("resources") or ()),
+        "settings": settings,
+    }
+
+
+def _resolve(repo: Path, value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str((repo / value).resolve())
+
+
+def _parse_value(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw

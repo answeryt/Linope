@@ -97,6 +97,25 @@ export const moveCursorEnd = (state: EditorState): EditorState => {
   return withInput(next, next.input)
 }
 
+export const normalizePaste = (text: string): string => {
+  const lines = text
+    .replace(/\u0000/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[ \t]+$/g, ''))
+
+  while (lines.length > 0 && lines[0] === '') {
+    lines.shift()
+  }
+
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+
+  return lines.join(' ')
+}
+
 export const insertText = (state: EditorState, text: string): EditorState => {
   const next = leaveHistory(state)
   const chars = charsOf(next.input)

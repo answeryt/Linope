@@ -6,6 +6,7 @@ import {
   historyUp,
   insertText,
   moveCursor,
+  normalizePaste,
   recordSubmission
 } from './editor.ts'
 import { takeKey } from './keys.ts'
@@ -60,6 +61,30 @@ equal(takeKey('\x1b[1;2A')?.name, 'shift-up')
 deepEqual(takeKey('\x1b[<64;12;5M'), { name: 'wheel-up', raw: '\x1b[<64;12;5M', text: '', column: 12, row: 5 })
 deepEqual(takeKey('\x1b[<65;3;9M'), { name: 'wheel-down', raw: '\x1b[<65;3;9M', text: '', column: 3, row: 9 })
 deepEqual(takeKey('\x1b[<68;2;4M'), { name: 'wheel-up', raw: '\x1b[<68;2;4M', text: '', column: 2, row: 4 })
+deepEqual(takeKey('\x1b[<0;8;4M')?.name, 'mouse-down')
+deepEqual(takeKey('\x1b[<32;8;6M')?.name, 'mouse-drag')
+deepEqual(takeKey('\x1b[<0;8;6m')?.name, 'mouse-up')
+deepEqual(takeKey('\x1b[M' + String.fromCharCode(96, 44, 37)), {
+  name: 'wheel-up',
+  raw: '\x1b[M' + String.fromCharCode(96, 44, 37),
+  text: '',
+  column: 12,
+  row: 5
+})
 deepEqual(takeKey('🙂'), { name: 'char', raw: '🙂', text: '🙂' })
+equal(takeKey('\x16')?.name, 'ctrl-v')
+equal(takeKey('\x1b[2;2~')?.name, 'ctrl-v')
+equal(takeKey('\x1b[<2;8;4M')?.name, 'mouse-right')
+equal(takeKey('\x1b[<6;8;4M')?.name, 'mouse-right')
+equal(takeKey('\x1b[<1;3;9M')?.name, 'mouse-middle')
+equal(takeKey('\x1b[200~hello'), null)
+deepEqual(takeKey('\x1b[200~hello\nthere\x1b[201~next'), {
+  name: 'paste',
+  raw: '\x1b[200~hello\nthere\x1b[201~',
+  text: 'hello\nthere'
+})
+equal(normalizePaste('  hello\r\nworld \n'), '  hello world')
+equal(normalizePaste('\n\n仅一行\n'), '仅一行')
+equal(normalizePaste('keep\u0000me'), 'keepme')
 
 console.log('tui editor checks passed')

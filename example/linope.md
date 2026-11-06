@@ -1,6 +1,10 @@
 
 # Do Not Mix Up These Terms
 
+This document is a protocol reference. The runtime supplies the core protocol
+to the model loop automatically; load this file only when you want these
+detailed operating rules in memory.
+
 The terminal is the window that reads commands. `linope session` and `linope terminal` open the same window. When the window ends, the processes it started stop with it.
 
 A process is an operating-system pid, a resource record, and a capability. Processes are peers; none of them is spawned by another. One process contains one capability. A thread is not a process and does not hold resources separately.

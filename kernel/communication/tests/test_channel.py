@@ -7,7 +7,6 @@ import pytest
 
 from kernel.communication import channel as channel_module
 from kernel.communication.channel import MemoryChannel, deliver, publish
-from kernel.scheduler.model_turn import turn
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.ledger import ProcessLedger
 from kernel.process.process_creat.instances import CapabilityDefinition
@@ -23,7 +22,7 @@ def test_the_kernel_does_not_name_a_transport() -> None:
     assert "grpc" not in source
     assert "zeromq" not in source
     assert "nats" not in source
-    assert "MemoryChannel" in inspect.getsource(turn)
+    assert "class MemoryChannel" in inspect.getsource(channel_module)
 
 
 def test_memory_channel_reads_every_row_after_a_seq(tmp_path: Path) -> None:

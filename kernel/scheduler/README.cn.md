@@ -2,14 +2,12 @@
 
 [English](README.md) | 中文
 
-一个调度器，负责模型回合、指针步骤、资源路由和线程准入。原始记忆字典在 [`kernel/resource/memory`](../resource/memory/README.cn.md)。选择哪一个对等进程在 [`kernel/load_balancing`](../load_balancing/README.cn.md)。
+一个调度器，负责资源路由和线程准入。模型回合在 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs)。原始记忆字典在 [`kernel/resource/memory`](../resource/memory/README.cn.md)。选择哪一个对等进程在 [`kernel/load_balancing`](../load_balancing/README.cn.md)。
 
 ## 契约
 
 | 入口 | 职责 |
 |---|---|
-| `turn` | 跑完一次 `load message`，直到模型回答。返回终端要显示的内容。 |
-| `classify` | 把一个已检查的步骤分成 `MemoryRead`、`ActionCall` 或 `Answer`。解析不运行该步骤。 |
 | `route` | 把正文交给持有所点名资源种类和身份的对等进程。调用方提供通道和打开器。 |
 | `run_runtime` | 认领并准入请求到一个进程运行时，直到该进程要求停止。 |
 
@@ -54,11 +52,10 @@ A 的 `message/1` 和 B 的 `message/0` 是同一行。某个类不在一个进�
 
 `access.py` 批准并执行这些访问。token 数达到一个正的上下文上限时，`capacity_full` 为真。token 数来自 [`kernel/calculate`](../calculate/README.cn.md)。地址表留在这次运行的 `_MAPS` 里。记忆字典保存那些行。
 
-`turn` 给模型一页，页面来自 [`kernel/communication`](../communication/README.cn.md)。有记忆的进程，每一次 `load message` 都进入 `turn`；接收方有记忆的 `ask` 也是接收方自己的 `turn`。窗口能不能启动另一个进程，只决定页面是否提供 `process start`。回复在 communication 里检查，然后本目录决定它是否可以运行。一次读取仍是读取：它不启动进程，也不调用工具。只有通过的步骤才会执行。结果写回记忆，然后给出下一页。没有步骤上限。
+问模型、读记忆、调用工具，由 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs) 写成命令行。本目录不组页面，也不决定下一步。
 
 `route` 拒绝缺失的通道，以及低于 1 的进程上限。它不取得租约。需要新进程时，由调用方提供的打开器启动。那个打开器是现有的协调器。
 
 ## 已知限制与暂缓事项
 
-- **一个回合没有步骤上限** — `turn` 一直走，直到模型回答或调用失败。
 - **新进程的页表从空开始** — 已经提交的行仍在 `MemoryStore`。这个进程的 `message/0` 是它持有期间写下的下一行。已经存下的行用带 scope 的地址来读，例如 `chat/message/0`。

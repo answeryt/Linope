@@ -73,6 +73,39 @@ class ModelMainTest(unittest.TestCase):
         self.assertNotIn("capabilities", kwargs)
         self.assertEqual(kwargs["temperature"], 0.2)
 
+    def test_a_tool_call_is_one_json_line_for_the_command_door(self) -> None:
+        import asyncio
+        import json
+
+        main = _load()
+        turn = {
+            "type": "model_turn",
+            "blocks": [
+                {"type": "text", "text": "reading"},
+                {"type": "tool-call", "id": "call-1", "name": "tools.read", "arguments": {"file_path": "a.py"}},
+            ],
+            "finish_reason": "tool_calls",
+        }
+        runtime = SimpleNamespace(
+            call_model=AsyncMock(return_value=turn),
+            load_interface=lambda _card: SimpleNamespace(
+                parse_response_turn=lambda result: result,
+                parse_response=lambda result: None,
+            ),
+        )
+        with patch("capability.model.model_runtime.call_model.call_model", runtime.call_model):
+            with patch("capability.model.model_runtime.call_model.load_interface", runtime.load_interface):
+                result = asyncio.run(
+                    main.load_named_card_async(
+                        "openai_chat_model",
+                        "message",
+                        {"messages": [{"role": "user", "content": "read a.py"}], "tools": [{"name": "tools.read"}]},
+                    )
+                )
+        payload = json.loads(result)
+        self.assertEqual(payload["blocks"][1]["name"], "tools.read")
+        self.assertEqual(payload["blocks"][0]["text"], "reading")
+
 
 if __name__ == "__main__":
     unittest.main()

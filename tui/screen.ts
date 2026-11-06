@@ -41,10 +41,118 @@ export type ScreenState = {
   follow?: boolean
   focus?: Focus
   status: 'ready' | 'running'
+  notice?: string
   turns: Turn[]
 }
 
 const ANSI = /\x1b\[[0-9;]*m/g
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, '')
+}
+
+export type CellChar = {
+  char: string
+  column: number
+  width: number
+}
+
+export function columnCells(text: string): CellChar[] {
+  const cells: CellChar[] = []
+  let column = 1
+
+  for (const char of stripAnsi(text)) {
+    const width = charWidth(char)
+
+    if (width === 0) {
+      const last = cells.at(-1)
+
+      if (last) {
+        last.char += char
+      }
+
+      continue
+    }
+
+    cells.push({ char, column, width })
+    column += width
+  }
+
+  return cells
+}
+
+export function cursorIndexAt(text: string, column: number): number {
+  let index = 0
+
+  for (const cell of columnCells(text)) {
+    if (column < cell.column + cell.width) {
+      const after = column >= cell.column + cell.width / 2
+
+      return index + (after ? Array.from(cell.char).length : 0)
+    }
+
+    index += Array.from(cell.char).length
+  }
+
+  return index
+}
+
+export function highlightColumns(line: string, start: number, end: number): string {
+  if (end < start || start < 1) {
+    return line
+  }
+
+  let column = 1
+  let index = 0
+  let out = ''
+  let reversed = false
+
+  const setReversed = (on: boolean) => {
+    if (on === reversed) {
+      return
+    }
+
+    out += on ? '\x1b[7m' : '\x1b[27m'
+    reversed = on
+  }
+
+  while (index < line.length) {
+    if (line[index] === '\x1b') {
+      const match = /^\x1b\[[0-9;]*m/.exec(line.slice(index))
+
+      if (match) {
+        out += match[0]
+        index += match[0].length
+
+        if (reversed) {
+          out += '\x1b[7m'
+        }
+
+        continue
+      }
+    }
+
+    const code = line.codePointAt(index) ?? 0
+    const char = String.fromCodePoint(code)
+    const width = charWidth(char)
+    const overlaps = width > 0 && column + width - 1 >= start && column <= end
+
+    setReversed(overlaps)
+    out += char
+
+    if (width > 0) {
+      column += width
+    }
+
+    index += char.length
+  }
+
+  if (reversed) {
+    out += '\x1b[27m'
+  }
+
+  return out
+}
 
 export function displayWidth(text: string): number {
   let width = 0
@@ -442,7 +550,8 @@ const statusLine = (state: ScreenState, width: number) => {
   const focusLabel = state.focus === 'history' ? 'history' : 'input'
   const paused = state.follow === false ? ' │ follow paused' : ''
   const clerk = state.clerk === 'here' ? 'clerk here' : 'clerk away'
-  const full = `${state.status} │ ${clerk} │ ${focusLabel}${paused} │ /help`
+  const note = state.notice ? ` │ ${state.notice}` : ''
+  const full = `${state.status} │ ${clerk} │ ${focusLabel}${paused}${note} │ /help`
   const maxText = Math.max(8, width - 6)
   const text = ` ${clip(full, maxText)} `
   const fillWidth = Math.max(2, width - displayWidth(text))
@@ -470,6 +579,13 @@ export function historyLayout(state: ScreenState): HistoryLayout {
 
 export function historyRoom(state: ScreenState): number {
   return historyLayout(state).historyRows
+}
+
+export function inputRow(state: ScreenState): number {
+  const layout = historyLayout(state)
+
+  // The frame ends on the status line. main.ts draws the input on the next row.
+  return layout.historyTop + layout.historyRows + 2
 }
 
 export function historyHit(layout: HistoryLayout, row: number, column: number): boolean {
@@ -502,6 +618,26 @@ export function scrollbarThumb(
   const start = maxOffset === 0 ? 0 : Math.round((maxStart * clamped) / maxOffset)
 
   return { start, size }
+}
+
+export function scrollToTrack(
+  total: number,
+  room: number,
+  thumbTop: number
+): HistoryScroll {
+  const track = Math.max(0, room)
+  const thumb = scrollbarThumb(total, room, 0, track)
+  const limit = maxScroll(total, room)
+
+  if (!thumb || limit === 0) {
+    return { scrollY: 0, follow: true }
+  }
+
+  const maxStart = track - thumb.size
+  const start = Math.max(0, Math.min(thumbTop, maxStart))
+  const scrollY = maxStart === 0 ? 0 : Math.round((start * limit) / maxStart)
+
+  return { scrollY, follow: scrollY >= limit }
 }
 
 export function applyScroll(view: HistoryScroll, delta: number, total: number, room: number): HistoryScroll {
@@ -577,7 +713,12 @@ export const helpText = [
   '← / →               input: move the cursor',
   'Home / End          input: move the cursor; history: jump to the top or bottom',
   'PageUp / PageDown   history: one page',
-  'wheel               scroll the history pane without changing focus',
+  'wheel               scroll the history wherever the pointer is',
+  'drag the bar        drag the history scrollbar, or click its track to page',
+  'drag                select text and copy it when you release',
+  'double-click        copy the word under the pointer',
+  'triple-click        copy the whole line under the pointer',
+  'right-click / Ctrl+V  paste into the input line',
   'Every other line goes to the Linope terminal, for example process list or create file.md'
 ].join('\n')
 

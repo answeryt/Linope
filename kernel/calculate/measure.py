@@ -5,9 +5,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from capability.model.model_API.model_paramaters.context_limits.context_limits import (
-    resolve_default_context_length,
-)
+def resolve_default_context_length(model: str) -> int:
+    """Ask the capability program for one model's context limit."""
+    import json
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "capability.queries", "context-limit", model or "unknown/model"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if completed.returncode != 0:
+        return 0
+    try:
+        return int(completed.stdout.strip())
+    except ValueError:
+        return 0
 
 
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -25,6 +41,10 @@ class Pressure:
     activity: str
 
 
+def _spoken(kind: str, content: Any) -> dict[str, Any]:
+    return {"role": kind, "content": content}
+
+
 def count_tokens(model: str, content: Any) -> int:
     """Token count for one piece of text, code, or one image."""
     import litellm
@@ -36,12 +56,7 @@ def count_tokens(model: str, content: Any) -> int:
             litellm,
             name,
             messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": url}},
-                    ],
-                }
+                _spoken("user", [{"type": "image_url", "image_url": {"url": url}}]),
             ],
             use_default_image_token_count=True,
         )

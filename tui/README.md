@@ -22,12 +22,13 @@ This directory is the blue terminal. It draws one screen, reads the keyboard, an
 | `screen.check.ts` | Checks width, wrapping, scrolling, the scrollbar, and process lines |
 | `editor.check.ts` | Checks the input line, the history, and key parsing |
 | `focus.check.ts` | Checks which key scrolls and which key edits |
+| `select.check.ts` | Checks mouse selection, the copied text, and where a click places the cursor |
 
-`bin.js` is what Node runs first. It puts the repository root on `PYTHONPATH`, sets `PYTHONIOENCODING` and `PYTHONUTF8` to UTF-8, and starts `python -m tui.launch` with the arguments it was given. `LINOPE_PYTHON` or `PYTHON` names the interpreter. Otherwise the command is `python`. The child's exit code is this process's exit code.
+`bin.js` is what Node runs first. It puts one directory on `PYTHONPATH`, sets `PYTHONIOENCODING` and `PYTHONUTF8` to UTF-8, and starts `python -m tui.launch` with the arguments it was given. `LINOPE_ROOT` is that directory when it is set. Otherwise the directory is the install next to this file. One launch uses that one tree. Inside this checkout, `python -m tui.launch` runs this tree and does not go through an installed `linope`. An installed `linope` is that install, unless `LINOPE_ROOT` names another directory. `LINOPE_PYTHON` or `PYTHON` names the interpreter. Otherwise the command is `python`. The child's exit code is this process's exit code.
 
 `launch.py` looks at those arguments. No arguments, or the single argument `terminal`, opens the screen. Any other arguments go to `kernel.command.dispatch` and this screen stays closed. Opening the screen needs Node.js. It runs `tui/main.ts` with the `tsx` installed under `ui-tui/node_modules`. When that copy is missing, it tries `npx --yes tsx`. On Windows it waits for that process. Elsewhere it replaces this process with it.
 
-`main.ts` is the screen while it is open. On a terminal it switches to the alternate screen, sets the window title to `Linope`, turns on SGR mouse tracking, and reads keys one by one. Without a terminal it reads whole lines. Each key goes through `keys.ts` into `focus.ts`. The binding edits the input or scrolls the history, then the frame is drawn again.
+`main.ts` is the screen while it is open. On a terminal it switches to the alternate screen, sets the window title to `Linope`, turns on SGR mouse tracking and bracketed paste, and reads keys one by one. Without a terminal it reads whole lines. Each key goes through `keys.ts` into `focus.ts`. The binding edits the input or scrolls the history, then the frame is drawn again. Mouse tracking keeps the terminal from starting its own selection, so a drag on this screen selects the text itself and copies it on release.
 
 | Key or line | What happens |
 |---|---|
@@ -41,12 +42,16 @@ This directory is the blue terminal. It draws one screen, reads the keyboard, an
 | ← / → | Moves the input cursor |
 | Home / End | In the input, moves the cursor. In the history pane, jumps to the top or the bottom |
 | PageUp / PageDown | In the history pane, moves one page |
-| Wheel over the history pane | Scrolls that pane and does not move focus |
-| A line that is still running | Editing keys wait. Focus and scrolling still work |
+| Wheel | Scrolls the history wherever the pointer is, and does not move focus |
+| Drag the scrollbar | Drags the history thumb. A click on the track moves one page |
+| Drag | Selects the text under the pointer and copies it when you release |
+| Double-click / triple-click | Copies the word, or the whole line |
+| Right-click, middle-click, or Ctrl+V | Pastes into the input line. A newline in the paste becomes a space |
+| A line that is still running | Editing keys wait. Focus, scrolling, and copying still work |
 
-A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does not paint once per piece. Any other event paints immediately. New lines stay at the bottom while follow is on. Scrolling up, including Shift+↑, pauses follow. Reaching the bottom again turns it back on. A window resize paints again after 100 milliseconds when the size actually changed. Leaving the screen turns the cursor back on, turns mouse tracking off, and leaves the alternate screen.
+A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does not paint once per piece. Any other event paints immediately. New lines stay at the bottom while follow is on. Scrolling up, including Shift+↑, pauses follow. Reaching the bottom again turns it back on. A window resize paints again after 100 milliseconds when the size actually changed. Leaving the screen turns the cursor back on, turns mouse tracking and bracketed paste off, and leaves the alternate screen.
 
-`keys.ts` is `takeKey`. It takes the bytes waiting in the input and returns one key plus the bytes that key used. A plain character, Enter, Backspace, Tab, Ctrl-C, and Ctrl-D are recognized on the first byte. Arrows, Home, End, Delete, PageUp, PageDown, Shift+Tab, and Shift+Up arrive as escape sequences. A wheel movement arrives as an SGR mouse sequence and carries the row and column. A sequence that has not finished yet returns nothing, and the caller keeps the bytes. A sequence this table does not name is `ignore`.
+`keys.ts` is `takeKey`. It takes the bytes waiting in the input and returns one key plus the bytes that key used. A plain character, Enter, Backspace, Tab, Ctrl-C, and Ctrl-D are recognized on the first byte. Arrows, Home, End, Delete, PageUp, PageDown, Shift+Tab, and Shift+Up arrive as escape sequences. A wheel movement, a mouse press, a drag, and a release arrive as SGR mouse sequences and carry the row and column. Bracketed paste arrives as one `paste` key, from the opening `\x1b[200~` through the closing `\x1b[201~`. A sequence that has not finished yet returns nothing, and the caller keeps the bytes. A sequence this table does not name is `ignore`.
 
 `editor.ts` keeps the line you are typing. The cursor is a character index, so a Chinese character counts as one step. `insertText`, `backspace`, and `deleteForward` edit at that index. Submitted lines are remembered, up to 100, and a line that repeats the previous one is not stored twice. ↑ walks back through that list and keeps the unfinished line as a draft. ↓ walks forward and, at the end, puts the draft back. Moving the cursor or editing leaves the history walk.
 
@@ -76,4 +81,4 @@ The info box shows four fields: whether the clerk is here (`clerk` / `here`), ho
 
 `link/events.ts` is `parseEvent`. A line that does not start with `{` is not an event. A JSON object with `type` becomes one of `done`, `image`, `session`, `text`, `text-delta`, `status`, or `error`. An `image` without `href`, or JSON that does not parse, is dropped.
 
-`screen.check.ts` checks display width, wrapping, which part of a long transcript a scroll position shows, when the scrollbar appears, how follow pauses and resumes, how streamed text becomes one assistant turn, and how `pid=` lines update the process list. `editor.check.ts` checks inserting, deleting, the history draft, and `takeKey`. `focus.check.ts` checks that ↑ edits from the input, scrolls from the history pane, and that Shift+↑ scrolls from either focus.
+`screen.check.ts` checks display width, wrapping, which part of a long transcript a scroll position shows, when the scrollbar appears, how follow pauses and resumes, how streamed text becomes one assistant turn, and how `pid=` lines update the process list. `editor.check.ts` checks inserting, deleting, the history draft, and `takeKey`. `focus.check.ts` checks that ↑ edits from the input, scrolls from the history pane, and that Shift+↑ scrolls from either focus. `select.check.ts` checks which cells a drag, a double-click, and a triple-click cover, and that the copied words are the ones on screen.

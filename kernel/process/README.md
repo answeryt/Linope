@@ -25,29 +25,12 @@ Files in this directory own the record. The start command is [`kernel/command/pr
 | `reconcile.py` | `ProcessReconciler` compiles the declaration, binds leases, builds the room from the record, then spawns. A failed step drops that record. |
 | `resource_record.py` | One in-memory account per pid. Status is `opening`, `ready`, `closing`, or `closed`. |
 | `ledger.py` | One file copy of those accounts, default `.linope/processes.json`. Call results and file bodies stay out of the file. |
-| `profiles.py` | Which tools a model may be offered, and the sandbox mode a tool process leases. The rule is below. This is not `capability_profile`. |
 
 ## Which tools a model may use
 
-The class is the name after `tools.`. A folder under [`capability/tools`](../../capability/tools/README.md) only places the file.
+A folder under [`capability/tools`](../../capability/tools/README.md) only places the file. Which commands a page offers is decided by [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). The kernel does not choose by tool name, and it does not mark a tool read-only because of that name.
 
-| Class | Names | Sandbox on the tool process |
-|---|---|---|
-| read | `read`, `glob`, `grep`, `read_image` | `read-only`, and it cannot be raised |
-| command | `bash`, `pwsh`, `bash_persistent`, `run_code`, `terminal`, and any name that starts with `terminal_` | ceiling `danger-full-access`, default `workspace-write` |
-| write | every other tool name, including `write` and `edit` | same ceiling and default as command |
-
-`tool_allowed` is what [`kernel/communication`](../communication/README.md) `offers.py` and [`process_manager`](process_manager/README.md) `tool_dispatch.py` call. A name outside `tools.` is left alone. When the model start included a `capabilities` list, only names on that list remain. `permission` `read-only` then keeps the read class. `workspace-write` and `danger-full-access` leave the class list in place.
-
-Both values are `--change` topics on the model start:
-
-```text
-linope process start model.openai_chat_model --change permission=read-only --change capabilities=read,glob
-```
-
-`permission` is `read-only`, `workspace-write`, or `danger-full-access`. `capabilities` is optional. With no list, every tool that permission still allows is offered. The model card stores both on `settings`. A permission also leases a sandbox in that mode. `reconcile.py` records that mode as a `sandbox/mode` event for the session.
-
-`tool_with_workspace` leases a tool, a sandbox, and the ledger channel when the tool process itself starts. A read tool stays `read-only`. A write or command tool starts at `workspace-write` unless this launch names a mode, and the result stays inside the tool's ceiling and inside the session mode already recorded. [`kernel/environment`](../environment/README.md) enforces the mode on the room: a read-only room rejects file writes, and a confined mode wraps external commands. `tool_only` leases a tool and the ledger channel, with no sandbox.
+Sandbox modes live in [`capability/sandbox`](../../capability/sandbox/README.md). When nobody names one, the default is `read-only`. `permission` is still a `--change` on start. `reconcile.py` records it as a `sandbox/mode` event for the session. [`kernel/environment`](../environment/README.md) enforces the mode on the room: a read-only room rejects file writes, and a confined mode wraps external commands.
 
 Creation order is: take the operating-system pid, open an empty record, write leases from the claims, build the room, then mark the record ready.
 

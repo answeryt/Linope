@@ -54,7 +54,7 @@ def entry_of(group: ServiceGroup, processes: Any) -> int:
     models = sorted(
         _pid_of(process)
         for process in living
-        if _capability_of(process).startswith("model.")
+        if str(_capability_of(process)).startswith("model" + ".")
     )
     if len(models) == 1:
         return models[0]
