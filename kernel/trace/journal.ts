@@ -1,5 +1,6 @@
 /** An append-only journal of turns. Scheduling does not read it. */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -23,11 +24,30 @@ function pyJson(value: unknown): string {
   throw new TypeError(`Object of type ${typeof value} is not JSON serializable`)
 }
 
+/** Python datetime.isoformat() for an aware UTC time, including real microseconds. */
+export function formatUtcIso(epochMs: number): string {
+  const negative = epochMs < 0
+  const abs = Math.abs(epochMs)
+  let wholeMs = Math.trunc(abs)
+  let extraMicros = Math.round((abs - wholeMs) * 1000)
+  if (extraMicros === 1000) {
+    wholeMs += 1
+    extraMicros = 0
+  }
+  let seconds = Math.trunc(wholeMs / 1000)
+  let micros = (wholeMs % 1000) * 1000 + extraMicros
+  if (micros >= 1_000_000) {
+    seconds += 1
+    micros -= 1_000_000
+  }
+  if (negative) seconds = -seconds
+  const head = new Date(seconds * 1000).toISOString().slice(0, 19)
+  if (micros === 0) return `${head}+00:00`
+  return `${head}.${String(micros).padStart(6, '0')}+00:00`
+}
+
 function utcNowIso(): string {
-  const iso = new Date().toISOString()
-  const [head, rest] = iso.split('.')
-  const millis = (rest || '000Z').slice(0, 3)
-  return `${head}.${millis}000+00:00`
+  return formatUtcIso(performance.timeOrigin + performance.now())
 }
 
 function splitLines(text: string): string[] {
@@ -103,5 +123,37 @@ export class Journal {
       found.push(JSON.parse(raw) as Record<string, unknown>)
     }
     return found
+  }
+}
+
+type ContextFrame<T> = { value: T; parent?: ContextFrame<T>; empty?: boolean }
+
+/** Python contextvars.ContextVar. The window and its current line use this. */
+export class ContextVar<T> {
+  private readonly als = new AsyncLocalStorage<ContextFrame<T>>()
+
+  constructor(
+    readonly name: string,
+    private readonly fallback: T
+  ) {}
+
+  get(): T {
+    const frame = this.als.getStore()
+    if (!frame || frame.empty) return this.fallback
+    return frame.value
+  }
+
+  set(value: T): ContextFrame<T> {
+    const frame: ContextFrame<T> = { value, parent: this.als.getStore() }
+    this.als.enterWith(frame)
+    return frame
+  }
+
+  reset(token: ContextFrame<T>): void {
+    if (this.als.getStore() !== token) {
+      throw new Error(`<Token var=${this.name} was created in a different Context>`)
+    }
+    if (token.parent) this.als.enterWith(token.parent)
+    else this.als.enterWith({ value: this.fallback, empty: true })
   }
 }

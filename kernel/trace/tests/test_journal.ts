@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { run } from '../../command/log.ts'
-import { Journal, journal_path } from '../journal.ts'
+import { formatUtcIso, Journal, journal_path } from '../journal.ts'
 
 function capture(fn: () => void): { out: string; err: string } {
   let out = ''
@@ -28,6 +28,14 @@ function capture(fn: () => void): { out: string; err: string } {
   }
   return { out, err }
 }
+
+test('utc timestamps use python isoformat microseconds', () => {
+  const base = Date.UTC(2026, 10, 7, 14, 47, 30)
+  assert.equal(formatUtcIso(base), '2026-11-07T14:47:30+00:00')
+  assert.equal(formatUtcIso(base + 723.858), '2026-11-07T14:47:30.723858+00:00')
+  assert.equal(formatUtcIso(base + 0.858), '2026-11-07T14:47:30.000858+00:00')
+  assert.equal(formatUtcIso(base + 723), '2026-11-07T14:47:30.723000+00:00')
+})
 
 test('two appends come back in order', () => {
   const root = mkdtempSync(join(tmpdir(), 'linope-journal-'))

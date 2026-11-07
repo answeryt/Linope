@@ -17,10 +17,27 @@ function pyJson(value: unknown): string {
   throw new TypeError(`Object of type ${typeof value} is not JSON serializable`)
 }
 
+function formatUtcIso(epochMs: number): string {
+  const abs = Math.abs(epochMs)
+  let wholeMs = Math.trunc(abs)
+  let extraMicros = Math.round((abs - wholeMs) * 1000)
+  if (extraMicros === 1000) {
+    wholeMs += 1
+    extraMicros = 0
+  }
+  let seconds = Math.trunc(wholeMs / 1000)
+  let micros = (wholeMs % 1000) * 1000 + extraMicros
+  if (micros >= 1_000_000) {
+    seconds += 1
+    micros -= 1_000_000
+  }
+  const head = new Date((epochMs < 0 ? -seconds : seconds) * 1000).toISOString().slice(0, 19)
+  if (micros === 0) return `${head}+00:00`
+  return `${head}.${String(micros).padStart(6, '0')}+00:00`
+}
+
 function utcNowIso(): string {
-  const iso = new Date().toISOString()
-  const [head, rest] = iso.split('.')
-  return `${head}.${(rest || '000Z').slice(0, 3)}000+00:00`
+  return formatUtcIso(performance.timeOrigin + performance.now())
 }
 
 function splitLines(text: string): string[] {

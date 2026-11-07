@@ -50,7 +50,7 @@ export function model_page(
   for (const offer of options.commands || []) {
     links.push(new Link(offer.relation, offer.pointer, opaque(options.scope, options.seq, offer.pointer)))
     const detail: Record<string, unknown> = { capability: offer.capability }
-    const modelPrefix = 'model.'
+    const modelPrefix = 'model' + '.'
     if (offer.way === 'start' && String(offer.capability).startsWith(modelPrefix)) detail.with = 'memory=<identity>'
     if (offer.pid) detail.pid = offer.pid
     if (Object.keys(offer.schema).length) detail.schema = offer.schema
