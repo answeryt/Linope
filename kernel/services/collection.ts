@@ -1,6 +1,28 @@
 /** A service is a saved list of process ids. It is not a process. */
 
-import { dumps, isRecord, loads, Path, replaceFile, ValueError } from '../trace/journal.ts'
+import fs from 'node:fs'
+import path from 'node:path'
+
+class ValueError extends Error {
+  constructor(message = '') {
+    super(message)
+    this.name = 'ValueError'
+  }
+}
+
+function pyJson(value: unknown, sortKeys = false): string {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : JSON.stringify(value)
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(item => pyJson(item, sortKeys)).join(', ')}]`
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (sortKeys) entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}: ${pyJson(item, sortKeys)}`).join(', ')}}`
+  }
+  throw new TypeError(`Object of type ${typeof value} is not JSON serializable`)
+}
 
 export class ServiceGroup {
   constructor(
@@ -10,27 +32,32 @@ export class ServiceGroup {
 }
 
 export class ServiceBook {
-  readonly path: Path
+  readonly path: string
 
-  constructor(file: string | Path) {
-    this.path = new Path(file)
+  constructor(file: string) {
+    this.path = file
   }
 
   groups(): ServiceGroup[] {
-    if (!this.path.is_file()) return []
-    const body = loads(this.path.read_text())
-    if (!isRecord(body)) throw new ValueError('The service list has a record that cannot be read')
+    if (!fs.existsSync(this.path) || !fs.statSync(this.path).isFile()) return []
+    const body = JSON.parse(fs.readFileSync(this.path, 'utf8')) as { services?: unknown }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new ValueError('The service list has a record that cannot be read')
+    }
     const found: ServiceGroup[] = []
     const services = Array.isArray(body.services) ? body.services : []
     for (const item of services) {
-      if (!isRecord(item)) throw new ValueError('The service list has a record that cannot be read')
-      const extra = Object.keys(item).filter(key => key !== 'id' && key !== 'pids')
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        throw new ValueError('The service list has a record that cannot be read')
+      }
+      const record = item as Record<string, unknown>
+      const extra = Object.keys(record).filter(key => key !== 'id' && key !== 'pids')
       if (extra.length) {
         throw new ValueError(`The service list has fields that must not be saved: ${extra.sort().join(', ')}`)
       }
-      if (!('id' in item) || !('pids' in item)) throw new ValueError('The service list is missing fields')
-      const serviceId = Number(item.id)
-      const pids = Array.isArray(item.pids) ? item.pids.map(pid => Number(pid)) : []
+      if (!('id' in record) || !('pids' in record)) throw new ValueError('The service list is missing fields')
+      const serviceId = Number(record.id)
+      const pids = Array.isArray(record.pids) ? record.pids.map(pid => Number(pid)) : []
       if (serviceId <= 0 || !pids.length || pids.some(pid => pid <= 0)) {
         throw new ValueError('A pid in the service list is invalid')
       }
@@ -64,9 +91,9 @@ export class ServiceBook {
     const body = {
       services: groups.map(item => ({ id: item.service_id, pids: [...item.pids] }))
     }
-    this.path.parent.mkdir({ parents: true, exist_ok: true })
-    const temporary = this.path.with_suffix(`${this.path.suffix}.tmp`)
-    temporary.write_text(dumps(body, { sortKeys: true }))
-    replaceFile(temporary, this.path)
+    fs.mkdirSync(path.dirname(this.path), { recursive: true })
+    const temporary = `${this.path}.tmp`
+    fs.writeFileSync(temporary, pyJson(body, true), 'utf8')
+    fs.renameSync(temporary, this.path)
   }
 }

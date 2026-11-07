@@ -1,6 +1,11 @@
 /** Shapes for logical memory. These are not physical pages. */
 
-import { ValueError } from '../../trace/journal.ts'
+class ValueError extends Error {
+  constructor(message = '') {
+    super(message)
+    this.name = 'ValueError'
+  }
+}
 
 export const KIND_CLASS: Record<string, string> = {
   user: 'message',

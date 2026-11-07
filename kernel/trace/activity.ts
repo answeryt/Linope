@@ -1,16 +1,76 @@
 /** One append-only trail of what each capability is doing. */
 
-import { dumps, isRecord, loads, Path, splitLines, utcNowIso } from './journal.ts'
+import fs from 'node:fs'
+import path from 'node:path'
+
+function pyJson(value: unknown): string {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : JSON.stringify(value)
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(item => pyJson(item)).join(', ')}]`
+  if (typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${JSON.stringify(key)}: ${pyJson(item)}`)
+      .join(', ')}}`
+  }
+  throw new TypeError(`Object of type ${typeof value} is not JSON serializable`)
+}
+
+function utcNowIso(): string {
+  const iso = new Date().toISOString()
+  const [head, rest] = iso.split('.')
+  return `${head}.${(rest || '000Z').slice(0, 3)}000+00:00`
+}
+
+function splitLines(text: string): string[] {
+  if (!text) return []
+  const parts = text.split(/\r\n|\r|\n/)
+  if (parts.length > 0 && parts[parts.length - 1] === '' && /(?:\r\n|\r|\n)$/.test(text)) parts.pop()
+  return parts
+}
+
+class ActivityPath {
+  constructor(readonly raw: string) {}
+
+  get parent(): ActivityPath {
+    return new ActivityPath(path.dirname(this.raw))
+  }
+
+  is_file(): boolean {
+    try {
+      return fs.statSync(this.raw).isFile()
+    } catch {
+      return false
+    }
+  }
+
+  read_text(): string {
+    return fs.readFileSync(this.raw, 'utf8')
+  }
+
+  write_text(data: string): void {
+    fs.writeFileSync(this.raw, data, 'utf8')
+  }
+
+  append_text(data: string): void {
+    fs.appendFileSync(this.raw, data, 'utf8')
+  }
+
+  mkdir(): void {
+    fs.mkdirSync(this.raw, { recursive: true })
+  }
+}
 
 export class ActivityLog {
-  readonly path: Path
+  readonly path: ActivityPath
 
-  constructor(file: string | Path) {
-    this.path = new Path(file)
+  constructor(file: string) {
+    this.path = new ActivityPath(file)
   }
 
   append(pid: number, activity: string, counterpart = '', way = ''): void {
-    this.path.parent.mkdir({ parents: true, exist_ok: true })
+    this.path.parent.mkdir()
     const line = {
       time: utcNowIso(),
       pid: Number(pid),
@@ -18,7 +78,7 @@ export class ActivityLog {
       with: counterpart,
       way
     }
-    this.path.append_text(`${dumps(line)}\n`)
+    this.path.append_text(`${pyJson(line)}\n`)
   }
 
   forget(pid: number): void {
@@ -26,8 +86,8 @@ export class ActivityLog {
     const kept: string[] = []
     for (const raw of splitLines(this.path.read_text())) {
       if (!raw.trim()) continue
-      const item = loads(raw)
-      if (isRecord(item) && Number(item.pid || 0) === Number(pid)) continue
+      const item = JSON.parse(raw) as { pid?: number }
+      if (Number(item.pid || 0) === Number(pid)) continue
       kept.push(raw)
     }
     this.path.write_text(kept.length ? `${kept.join('\n')}\n` : '')
@@ -38,8 +98,8 @@ export class ActivityLog {
     const found: Array<Record<string, unknown>> = []
     for (const raw of splitLines(this.path.read_text())) {
       if (!raw.trim()) continue
-      const item = loads(raw)
-      if (isRecord(item) && Number(item.pid || 0) === Number(pid)) found.push(item)
+      const item = JSON.parse(raw) as { pid?: number }
+      if (Number(item.pid || 0) === Number(pid)) found.push(item as Record<string, unknown>)
     }
     return found
   }

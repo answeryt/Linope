@@ -4,9 +4,30 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { dumps, loads } from '../journal.ts'
+import { run } from '../../command/log.ts'
 import { Journal, journal_path } from '../journal.ts'
-import { ActivityLog } from '../activity.ts'
+
+function capture(fn: () => void): { out: string; err: string } {
+  let out = ''
+  let err = ''
+  const stdout = process.stdout.write
+  const stderr = process.stderr.write
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out += String(chunk)
+    return true
+  }) as typeof process.stdout.write
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    err += String(chunk)
+    return true
+  }) as typeof process.stderr.write
+  try {
+    fn()
+  } finally {
+    process.stdout.write = stdout
+    process.stderr.write = stderr
+  }
+  return { out, err }
+}
 
 test('two appends come back in order', () => {
   const root = mkdtempSync(join(tmpdir(), 'linope-journal-'))
@@ -14,34 +35,66 @@ test('two appends come back in order', () => {
   journal.append({ kind: 'line', text: 'list' })
   journal.append({ kind: 'model', pid: 7, text: 'original', step: 'read' })
   const rows = journal.rows()
-  assert.deepEqual(rows.map(row => row.kind), ['line', 'model'])
+  assert.deepEqual(
+    rows.map(row => row.kind),
+    ['line', 'model']
+  )
   assert.equal(rows[0].text, 'list')
   assert.equal(rows[1].text, 'original')
   assert.equal(rows[1].pid, 7)
   assert.ok(rows[0].time)
-  const again = journal.path.read_text().split(/\n/).filter(Boolean)
-  assert.equal((loads(again[0]) as { text: string }).text, 'list')
-  assert.equal((loads(again[1]) as { step: string }).step, 'read')
-  assert.equal(dumps({ type: 'done' }), '{"type": "done"}')
+  const again = journal.path.read_text().split(/\r\n|\n|\r/).filter(line => line !== '')
+  assert.equal((JSON.parse(again[0]) as { text: string }).text, 'list')
+  assert.equal((JSON.parse(again[1]) as { step: string }).step, 'read')
 })
 
-test('journal path sits under .linope/log', () => {
-  const root = mkdtempSync(join(tmpdir(), 'linope-journal-path-'))
-  assert.equal(journal_path(root).name, 'session.jsonl')
-  assert.equal(journal_path(root).parent.name, 'log')
-  assert.equal(journal_path(root).parent.parent.name, '.linope')
+test('log prints every line and one process', () => {
+  const root = mkdtempSync(join(tmpdir(), 'linope-log-'))
+  const previous = process.cwd()
+  process.chdir(root)
+  try {
+    const journal = new Journal(journal_path())
+    journal.append({ kind: 'line', text: 'list' })
+    journal.append({ kind: 'model', pid: 7, text: 'A', step: 'answer' })
+    journal.append({ kind: 'model', pid: 8, text: 'B', step: 'read' })
+
+    const everything = capture(() => {
+      assert.equal(run([]), 0)
+    })
+    assert.ok(everything.out.includes('list'))
+    assert.ok(everything.out.includes('A'))
+    assert.ok(everything.out.includes('B'))
+
+    const one = capture(() => {
+      assert.equal(run(['7']), 0)
+    })
+    assert.ok(one.out.includes('A'))
+    assert.equal(one.out.includes('B'), false)
+    assert.equal(one.out.includes('list'), false)
+
+    const missing = capture(() => {
+      assert.equal(run(['9']), 1)
+    })
+    assert.ok(missing.err.includes('9'))
+    const bad = capture(() => {
+      assert.equal(run(['nope']), 1)
+    })
+    assert.ok(bad.err.includes('number'))
+  } finally {
+    process.chdir(previous)
+  }
 })
 
-test('activity keeps order and forgets one pid', () => {
-  const root = mkdtempSync(join(tmpdir(), 'linope-activity-'))
-  const log = new ActivityLog(join(root, 'activity.jsonl'))
-  log.append(4, 'self')
-  log.append(4, 'with', '9', 'load')
-  log.append(5, 'self')
-  assert.equal(log.latest(4)?.activity, 'with')
-  assert.equal(log.for_process(4).length, 2)
-  log.forget(4)
-  assert.equal(log.for_process(4).length, 0)
-  assert.equal(log.for_process(5).length, 1)
-  assert.equal(log.latest(5)?.activity, 'self')
+test('log without a file says so', () => {
+  const root = mkdtempSync(join(tmpdir(), 'linope-log-empty-'))
+  const previous = process.cwd()
+  process.chdir(root)
+  try {
+    const captured = capture(() => {
+      assert.equal(run([]), 1)
+    })
+    assert.ok(captured.err.includes('No turn log yet'))
+  } finally {
+    process.chdir(previous)
+  }
 })

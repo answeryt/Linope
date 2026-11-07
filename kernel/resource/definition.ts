@@ -1,6 +1,26 @@
 /** Definitions and grants for resources owned by one capability process. */
 
-import { enumValue, ValueError, TypeError as PyTypeError } from '../trace/journal.ts'
+class ValueError extends Error {
+  constructor(message = '') {
+    super(message)
+    this.name = 'ValueError'
+  }
+}
+
+class PyTypeError extends Error {
+  constructor(message = '') {
+    super(message)
+    this.name = 'TypeError'
+  }
+}
+
+function enumValue(value: unknown): string {
+  if (typeof value === 'object' && value !== null && 'value' in value) {
+    const inner = (value as { value: unknown }).value
+    if (typeof inner === 'string' || typeof inner === 'number') return String(inner)
+  }
+  return String(value ?? '')
+}
 
 export class ResourceKind {
   static readonly MEMORY = new ResourceKind('memory')
