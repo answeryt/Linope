@@ -78,13 +78,13 @@ Write a resource kind after `--share`. Only the kinds named in this invocation a
 
 If `--count` is omitted, it is 1. Without `--once`, the process remains until the window ends. With `--once`, its record is closed after one `load` completes. `--ping` asks only the process itself; it replies `pong` without calling the model. If it does not reply, its record is closed and the command fails.
 
-On success, the command value is one object:
+On success, each process prints:
 
-```json
-{"processes":[{"pid":0,"capability":"<capability name>"}]}
+```text
+pid=<number> capability=<capability name>
 ```
 
-Use `pid` from that object in later commands. The same object is recorded on the next page. Angle brackets and numbers in examples only show the format; replace them with the values on the current page each time.
+Record these two fields. Use the number in later commands. Angle brackets and numbers in examples only show the format; replace them with the values on the current page each time.
 
 "This capability has no usable card" means that the capability's card cannot be used this time. Keep the capability name unchanged; do not work around it by changing to another command. Report the failed line together with this error.
 
@@ -111,7 +111,7 @@ load tool <search process id> -- {"query":"search term","limit":5}
 
 On success, the result is JSON with `success` set to `true` and entries in `data.web`. Each entry has `title`, `url`, `description`, and `position`. On failure, `success` is `false` and the reason is in `error`. Missing credentials, an empty query, and a timeout must all be written in `error`; do not rephrase them as something else.
 
-A `load tool` returns its result and records it on the process that received the call. After a `load tool` written by you passes validation, its result is also written to your memory and appears on your next page; do not paste it again.
+For a manually entered `load tool`, the result is printed in the terminal and recorded in the process that received the `load tool`. After a `load tool` written by you passes validation, its result is also written to your memory and appears on your next page; do not paste it again.
 
 ```text
 ask <other process id> -- <task>
@@ -133,11 +133,11 @@ log <process id>
 ping <process id>
 ```
 
-`list` returns a list of objects. Each object has `pid`, `activity`, `status`, and `capability`. When referring to a process in an answer, use the pid from that object; do not invent one from memory.
+Each `list` line contains `pid=`, `activity=`, and `status=`. When referring to a process in an answer, use the pid shown here; do not invent one from memory.
 
-When the window is still open and the process has memory, `show` returns the page, `memory.system`, and the bodies in time order. After the window closes, only the process ledger is visible; the conversation is not. An address can be `system`, `message`, `task`, or `artifact`, or a range such as `message/0` or `message/0-2`. If you specify another process's memory name, it shows that memory rather than your own `system`.
+When the window is still open and the process has memory, `show` prints the page, `memory.system`, and the bodies in time order. After the window closes, only the process ledger is visible; the conversation is not. An address can be `system`, `message`, `task`, or `artifact`, or a range such as `message/0` or `message/0-2`. If you specify another process's memory name, it shows that memory rather than your own `system`.
 
-`trace` returns the process's activity record, showing whether it is busy or idle. `log` returns the round-by-round records from `.linope/log/session.jsonl`: every line entered by the human, plus the raw text and decision each time the model finishes writing. `log <process id>` returns only records for that process. A line entered by the human has no process id and appears only in `log` without a process id. `ping` waits for `pong`. No response, a wrong sequence number, or a mismatched pid all produce "this process did not respond".
+`trace` prints the process's activity record, showing whether it is busy or idle. `log` prints the round-by-round stream from `.linope/log/session.jsonl`: every line entered by the human, plus the raw text and decision each time the model finishes writing. `log <process id>` prints only lines for that process. A line entered by the human has no process id and appears only in `log` without a process id. `ping` waits for `pong`. No response, a wrong sequence number, or a mismatched pid all produce "this process did not respond".
 
 ## Services
 
@@ -147,7 +147,7 @@ When both processes are still in this window, register them as a service:
 service start <model process id> <search process id>
 ```
 
-On success, the command value is `{"service_id": <number>, "processes": [{"pid": <number>, "capability": "<capability name>"}]}`. If the same id is written twice, or an id is no longer present, the command fails and the list is not written. `exit` or `quit` stops the processes in the window; the list remains in the file, but these ids are no longer running.
+On success, it first prints `service=<number>`, followed by one `pid=` and `capability=` line for each process. If the same id is written twice, or an id is no longer present, the command fails and the list is not written. `exit` or `quit` stops the processes in the window; the list remains in the file, but these ids are no longer running.
 
 To talk to a service, write:
 
@@ -167,7 +167,7 @@ If the process you need is not yet on the page, write only its startup command t
 process start <capability name>
 ```
 
-The next page has `state` set to `resulted`, a row whose content is the start value `{"processes":[{"pid":<number>,"capability":"<capability name>"}]}`, and a pointer in `_links` for sending a body to that process. Next time, write only that line, using the process id from that value and putting the body after ` -- `:
+The next page has `state` set to `resulted`, an additional `pid=<number> capability=<capability name>` line in `rows`, and a pointer in `_links` for sending a body to that process. Next time, write only that line, using the process id just printed on the page and putting the body after ` -- `:
 
 ```text
 load tool <number> -- {"参数":"值"}
