@@ -90,6 +90,9 @@ class ProcessResourceBook:
         if current is not None and current.status != RecordStatus.CLOSED:
             raise RuntimeError(f"This process already has a record: {pid}")
         self._forget_activity(pid)
+        from kernel.thread.task import close_process_threads
+
+        close_process_threads(pid)
         record = ProcessResourceRecord(
             pid=pid,
             capability_id=capability_id,

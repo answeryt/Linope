@@ -43,7 +43,7 @@ async def load_async(kind, body, call_params=None):
 
 
 def capability_profile(capability_id, changes):
-    """Expose this plugin's card as a process profile."""
+    """Expose this plugin's card to the model scheduler."""
     from capability.model.model_provider.card_profile import declaration_from_card
 
     return declaration_from_card(capability_id, CARD_CONFIG, changes)

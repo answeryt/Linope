@@ -36,9 +36,13 @@ def test_an_approved_mode_is_the_mode_that_was_named() -> None:
 
 def test_the_agent_loop_does_not_choose_a_sandbox_mode() -> None:
     root = Path(__file__).resolve().parents[3]
-    source = (root / "capability" / "agent_loop" / "pi" / "main.mjs").read_text(encoding="utf-8")
-    loop = (root / "capability" / "agent_loop" / "pi" / "loop.mjs").read_text(encoding="utf-8")
-    for text in (source, loop):
+    texts = [
+        (root / "capability" / "agent_loop" / "pi" / "main.mjs").read_text(encoding="utf-8"),
+        (root / "capability" / "agent_loop" / "pi" / "loop.mjs").read_text(encoding="utf-8"),
+        (root / "capability" / "agent_loop" / "linope" / "__main__.py").read_text(encoding="utf-8"),
+        (root / "capability" / "agent_loop" / "linope" / "loop.py").read_text(encoding="utf-8"),
+    ]
+    for text in texts:
         assert "workspace-write" not in text
         assert "danger-full-access" not in text
         assert "confine(" not in text

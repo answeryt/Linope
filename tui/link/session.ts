@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 
-import { type DisplayEvent, parseEvent } from './events.js'
+import { type KernelEvent, parseKernelEvent } from './protocol.js'
 
 export type TerminalLink = {
   send: (text: string) => void
@@ -10,7 +10,7 @@ export type TerminalLink = {
 
 const pythonCommand = () => process.env.LINOPE_PYTHON?.trim() || process.env.PYTHON?.trim() || 'python'
 
-export function startTerminalSession(onEvent: (event: DisplayEvent) => void): TerminalLink {
+export function startTerminalSession(onEvent: (event: KernelEvent) => void): TerminalLink {
   let stderr = ''
   const emitStderr = () => {
     const text = stderr.trim()
@@ -18,7 +18,12 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
     stderr = ''
 
     if (text) {
-      onEvent({ text, type: 'error' })
+      onEvent({
+        data: { message: text, source: 'stderr' },
+        kind: 'diagnostic',
+        seq: Number.MAX_SAFE_INTEGER,
+        version: 1
+      })
     }
   }
   const proc: ChildProcessWithoutNullStreams = spawn(
@@ -37,12 +42,18 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
   )
 
   createInterface({ input: proc.stdout }).on('line', line => {
-    const event = parseEvent(line)
-
-    if (event) {
-      onEvent(event)
-    } else if (line.trim()) {
-      onEvent({ text: line, type: 'text' })
+    if (!line.trim()) {
+      return
+    }
+    try {
+      onEvent(parseKernelEvent(line))
+    } catch (error) {
+      onEvent({
+        data: { message: error instanceof Error ? error.message : String(error), line },
+        kind: 'protocol.error',
+        seq: Number.MAX_SAFE_INTEGER,
+        version: 1
+      })
     }
   })
   proc.stderr.setEncoding('utf8')
@@ -53,24 +64,25 @@ export function startTerminalSession(onEvent: (event: DisplayEvent) => void): Te
       emitStderr()
     }
   })
-  onEvent({
-    cwd: process.cwd(),
-    env: '',
-    store: '',
-    text: '',
-    type: 'session'
-  })
   proc.on('close', () => {
     emitStderr()
-    onEvent({ text: 'left', type: 'status' })
-    onEvent({ type: 'done' })
+    onEvent({
+      data: { reason: 'process_closed' },
+      kind: 'session.closed',
+      seq: Number.MAX_SAFE_INTEGER,
+      version: 1
+    })
   })
 
   return {
     send(text: string) {
       if (proc.exitCode !== null || proc.killed || !proc.stdin.writable) {
-        onEvent({ text: 'The clerk has left', type: 'error' })
-        onEvent({ type: 'done' })
+        onEvent({
+          data: { message: 'The clerk has left' },
+          kind: 'protocol.error',
+          seq: Number.MAX_SAFE_INTEGER,
+          version: 1
+        })
         return
       }
 

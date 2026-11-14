@@ -2,7 +2,7 @@
 
 English | [中文](README.cn.md)
 
-`dispatch.py` reads the first word and hands the rest to that script. An unknown word, or a bad usage line, exits 2.
+`dispatch.py` reads the first word and hands the rest to that script. An unknown word, or a bad usage line, raises `UsageError`. The terminal host turns that into exit code 2. A session emits the failure as a structured event.
 
 There are two layers. The first word names an object: create a file, start a process, look at a process, or record pids that are already running as one service. A short line typed after the window is open talks to a process that is already open, for example `load message`. A short line does not start a process.
 
@@ -12,9 +12,9 @@ This layer does not read a model card, run a tool, or pick a command out of mode
 |---|---|
 | [`file/`](file/README.md) | `create`, `load env` |
 | [`process/`](process/README.md) | `process start`, and the window lines `load`, `ask`, `ping`, `list`, `show`, `trace` |
-| [`screen/`](screen/README.md) | `resource serve`, and printing one fragment of a model reply to the terminal |
+| [`screen/`](screen/README.md) | `resource serve` |
 
-`service` is [`kernel/services`](../services/README.md). The turn journal that `log` prints is [`kernel/trace`](../trace/README.md).
+`service` is [`kernel/services`](../services/README.md). The turn journal that `log` returns is [`kernel/trace`](../trace/README.md).
 
 ## Object commands
 
@@ -26,17 +26,19 @@ Creates a file on this machine. One `name=value` after `--` is written into that
 
 `load env <path>`
 
-Remembers this env file. The next `process start` in the same window uses it when `--env-file` is omitted. The value stays in the file. The command prints the path.
+Remembers this env file. The next `process start` in the same window uses it when `--env-file` is omitted. The value stays in the file. The command returns the resolved path.
 
 `process start <capability>`
 
-Starts a process by capability name. `process start model.openai_chat_model` starts a model process. `process start tools.read` starts the read-file tool process. The capability's `capability_profile` says which resources this start claims. One operating-system pid has one resource record. The command prints `pid=` and stays in the current window, waiting for a body. It does not call the model by itself.
+Starts a non-model capability process by name, such as `process start
+agent_loop` or `process start tools.read`. Model cards use `model use` and
+`model run` instead. One operating-system pid has one resource record.
 
 `--count 2` starts two copies. The copies are peers. `--share memory` is what makes this start share memory. Without it, each copy has its own. `--with memory=chat` claims one extra kind the profile did not already claim. `--once` closes after one `load` has been handed over. `--ping` asks after open, and fails when nobody answers.
 
 `process list`
 
-Lists the processes in the window: pid, busy or idle, record status. It does not start a process.
+Returns process identity, activity, and record status facts. It does not start a process.
 
 `process show <pid> [address]`
 
@@ -54,7 +56,8 @@ Records pids that are already running as one service, in `.linope/services.json`
 
 `service load <service id> -- <body>`
 
-Used inside a window. It finds the single model process in that service that is still open, rewrites the line as `load message <that pid> -- <body>`, and hands it to that process. No model, or two models, is a refusal. The service does not choose the next tool.
+Used inside a session. It hands the body to one living service member. The
+service does not search for a model process or choose the next tool.
 
 `resource serve [--host 127.0.0.1] [--port 0]`
 
@@ -66,7 +69,8 @@ Prints the turn journal in time order: each line a person typed, and the text ea
 
 `terminal` and `session`
 
-Open the same window. The short lines below are typed in that window.
+Launch an external session capability. It sends the commands below to the
+kernel over IPC and owns terminal input and output.
 
 ## Lines inside the window
 
@@ -74,7 +78,12 @@ After `process start` leaves the window open, [`process/listen.py`](process/list
 
 `load message <pid> -- <body>`
 
-Sends that sentence to the model process. The process must already be open, and it must be a model. When it has memory, the sentence is stored there and the question runs as a page turn until the model answers. Older rows stay addresses on that page. The window does not have to be able to launch a process for this turn; `process start` is offered only when it can.
+Sends that sentence to an already open capability process. Model requests use
+`model run -- <body>`; a card must first be installed with `model use`.
+
+`model cores <count>` sets the number of model cores. The default is one.
+The count must be at least 1 and cannot change while a turn is running or
+waiting. `model use` installs the selected card on every core.
 
 `load message <pid> <address> -- <question>`
 

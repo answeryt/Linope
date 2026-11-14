@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-`confine(argv, policy)` 按平台包裹 argv：Linux 先 `bwrap` 再 Landlock；macOS 用 Seatbelt；Windows 用 ACL 的 `runner_plugin.py`。
+`confine(argv, policy)` 按平台包裹 argv：Linux 先 `bwrap` 再 Landlock；macOS 用 Seatbelt；Windows 用 ACL 的 `runner_plugin.py`。`scope=host` 且模式为 `workspace-write` 表示用户明确授予整机写入范围，返回 host enforcement，不再伪装成单目录隔离。
 
 没有可用后端时抛出 `SANDBOX_UNAVAILABLE`。`danger-full-access` 跳过 `confine`。
 

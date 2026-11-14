@@ -1,42 +1,17 @@
-"""A command result is the whole answer, not one stream fragment."""
+"""A command result is a value, never a display byte."""
 
 from kernel.command.process.clerk import execute_line
-from kernel.command.process.listen import _show
-from kernel.command.window import bind_window, reset_window
 
 
-def test_a_turn_prints_every_text_block(capsys) -> None:
-    _show(
-        {
-            "type": "model" + "_turn",
-            "blocks": [
-                {"type": "text", "text": "第一行"},
-                {"type": "reasoning", "text": "hidden"},
-                {"type": "text", "text": "第二行"},
-            ],
-        }
-    )
-    assert capsys.readouterr().out == "第一行\n第二行\n"
-
-
-def test_a_command_result_drops_stream_fragments() -> None:
+def test_nested_command_returns_structured_value() -> None:
     class Window:
-        def _command(self, text: str) -> None:
-            del text
-            print('{"type": "text-delta", "text": "."}', flush=True)
-            _show(
-                {
-                    "type": "model" + "_turn",
-                    "blocks": [
-                        {"type": "text", "text": "第一行"},
-                        {"type": "text", "text": "第二行"},
-                    ],
-                }
-            )
-            print('{"type": "done"}', flush=True)
+        nested = False
 
-    token = bind_window(Window())
-    try:
-        assert execute_line("load message 1 -- hello") == "第一行\n第二行"
-    finally:
-        reset_window(token)
+        def _execute_text(self, text: str, *, request_id: str = "") -> object:
+            del request_id
+            assert text == "process list"
+            return {"processes": [{"pid": 7, "capability": "tools.read"}]}
+
+    assert execute_line("process list", Window()) == {
+        "processes": [{"pid": 7, "capability": "tools.read"}]
+    }

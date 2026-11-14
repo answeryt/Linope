@@ -4,10 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from capability.model.model_provider.card_profile import declaration_from_card
-from capability.model.model_provider.openai_chat_model.openai_chat_model_plugin import (
-    CARD_CONFIG,
-)
 from kernel.command.process.start import _parse_start_options, launch_options
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim, append_chosen
 from kernel.process.ledger import ProcessLedger
@@ -19,46 +15,13 @@ from kernel.resource.pool import ResourcePool
 from kernel.resource.resource_contract import kind_name
 
 
-def _model_declaration() -> ProcessDeclaration:
-    return declaration_from_card("model.openai_chat_model", CARD_CONFIG, ())
-
-
 def test_with_is_parsed_as_extra_resources() -> None:
     options = launch_options(
         _parse_start_options(
-            ["model.openai_chat_model", "--with", "memory=chat", "--with", "tool=files"]
+            ["tools.read", "--with", "memory=chat", "--with", "tool=files"]
         )
     )
     assert options.chosen == ("memory=chat", "tool=files")
-
-
-def test_with_adds_memory_beside_the_model_defaults(tmp_path: Path) -> None:
-    declaration = append_chosen(_model_declaration(), ("memory=chat",))
-    book = ProcessResourceBook(ProcessLedger(tmp_path / "ledger.json"))
-    process = ProcessReconciler(ResourcePool(ResourceLeaseManager()), book).start(
-        declaration,
-        definition=CapabilityDefinition(
-            instance_id="model.openai_chat_model",
-            module_paths=(),
-        ),
-        pid=301,
-    )
-    kinds = [kind_name(grant.kind) for grant in process.activation.grants]
-    assert kinds == ["network", "memory"]
-    memory = process.activation.grants[1]
-    assert memory.metadata["identity"]["scope"] == "chat"
-    saved = (tmp_path / "ledger.json").read_text(encoding="utf-8")
-    assert '"scope": "chat"' in saved or '"scope":"chat"' in saved
-
-
-def test_with_cannot_replace_a_default_resource() -> None:
-    with pytest.raises(ValueError, match="Cannot change the default resource: network"):
-        append_chosen(_model_declaration(), ("network=other",))
-
-
-def test_with_requires_an_identity() -> None:
-    with pytest.raises(ValueError, match="Missing identity"):
-        append_chosen(_model_declaration(), ("memory",))
 
 
 def test_model_is_not_a_resource() -> None:

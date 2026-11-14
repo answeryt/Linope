@@ -176,10 +176,10 @@ def page_messages(pool: Any, grants: Any, page: dict[str, Any]) -> list[dict[str
     return messages
 
 
-def prompt_budget(pool: Any, grants: Any, page: dict[str, Any], model: str = "") -> int:
+def prompt_budget(pool: Any, grants: Any, page: dict[str, Any], context_limit: int = 0) -> int:
     """Room left for one explicit read after the system text and this page."""
 
-    limit = context_limit_for(model)
+    limit = context_limit_for(context_limit)
     system = memory_system(pool, grants)
     action = json.dumps(page, ensure_ascii=False)
     size = footprint(context_limit=limit, system=system, action=action)

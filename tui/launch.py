@@ -11,11 +11,35 @@ from pathlib import Path
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["desktop"]:
+        return open_desktop()
     if not args or args == ["terminal"]:
         return open_tui()
-    from kernel.command.dispatch import main as dispatch
+    from tui.cli import run
 
-    return dispatch(args)
+    return run(args)
+
+
+def open_desktop() -> int:
+    root = Path(__file__).resolve().parents[1]
+    desktop = root / "ui" / "desktop"
+    npm_name = "npm.cmd" if os.name == "nt" else "npm"
+    npm = shutil.which(npm_name)
+    if npm is None:
+        print("Node.js and npm are required to open the Linope desktop.", file=sys.stderr)
+        return 1
+    if not (desktop / "package.json").is_file():
+        print("The Linope desktop files are not available in this checkout.", file=sys.stderr)
+        return 1
+
+    env = os.environ.copy()
+    env["LINOPE_PYTHON"] = sys.executable
+    command = [npm, "run", "desktop"]
+    if os.name == "nt":
+        completed = subprocess.run(command, cwd=desktop, env=env)
+        return int(completed.returncode or 0)
+    os.execvpe(command[0], command, env)
+    return 1
 
 
 def open_tui() -> int:

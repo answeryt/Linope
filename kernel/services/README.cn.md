@@ -31,4 +31,9 @@
 
 一条记录只能有 `id` 和 `pids`。多出来的字段、缺字段、编号或进程号小于等于 0、空的进程号列表、同一个进程号出现两次，都会拒绝这个文件。`add` 先写到旁边的临时文件，再替换正式文件，这样写到一半不会留下半份名单。
 
-进程号是否还开着、一句话交给组里的哪一个模型，在 [`kernel/command/service.py`](../command/service.py)。`service start` 先查进程账本，再调用 `add`。有一个坏的 pid，就什么都不写。`service load` 调用 `get`，然后 `entry_of` 选出该组里仍打开的那一个 `model.` 进程，把这一行改写成 `load message <pid> -- <body>`。没有仍打开的模型，或者多于一个，就拒绝这一行。每个成员保留自己的 pid 和资源记录。见 [`kernel/process`](../process/README.cn.md)。
+进程号是否还开着、正文交给组里的哪一个活进程，在
+[`kernel/command/service.py`](../command/service.py)。`service start` 先查
+进程账本，再调用 `add`。有一个坏的 pid，就什么都不写。`service load`
+从组内活进程中选一个入口；它不寻找模型进程，模型通过
+`model_scheduler` 处理。每个成员保留自己的 pid 和资源记录。见
+[`kernel/process`](../process/README.cn.md)。

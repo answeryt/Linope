@@ -56,7 +56,7 @@ def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
 
 def write_file(file_path: str, content: str, workspace: Optional[str] = None) -> str:
     from kernel.environment import current_room
-    from kernel.environment.file_io import door_for
+    from capability.sandbox.access import door_for
 
     try:
         path = door_for(current_room(), workspace).write_text(

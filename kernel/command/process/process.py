@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from kernel.command.convention import UsageError, guard
 from kernel.command.process.listen import (
     _print_list,
@@ -12,7 +14,6 @@ from kernel.command.process.listen import (
     saved_trace,
 )
 from kernel.command.process.start import START_USAGE, run as start_capability
-from kernel.command.window import current_window
 
 USAGE = (
     "usage: linope process start <capability> [--change topic=value] [--count count] "
@@ -24,12 +25,20 @@ USAGE = (
 
 
 @guard(USAGE)
-def run(argv: list[str]) -> int:
+def run(
+    argv: list[str],
+    *,
+    runtime: Any = None,
+    request: dict[str, Any] | None = None,
+) -> Any:
+    del request
     if not argv:
         raise UsageError(USAGE)
-    window = current_window()
-    if window is not None and _in_window(window, argv):
-        return 0
+    target = runtime
+    if target is not None:
+        result = _in_runtime(target, argv)
+        if result is not False:
+            return result
     if argv[0] == "start":
         return start_capability(argv[1:])
     if argv[0] == "list" and len(argv) == 1:
@@ -41,18 +50,14 @@ def run(argv: list[str]) -> int:
     raise UsageError(USAGE)
 
 
-def _in_window(window: object, argv: list[str]) -> bool:
-    """Run the process command against the living window. False leaves the CLI path."""
+def _in_runtime(runtime: object, argv: list[str]) -> Any:
+    """Run the process command against an explicit kernel runtime."""
     if argv[0] == "start":
-        window.launch(argv[1:])
-        return True
+        return runtime.launch(argv[1:])
     if argv[0] == "list" and len(argv) == 1:
-        _print_list(window)
-        return True
+        return _print_list(runtime)
     if argv[0] == "show" and len(argv) >= 2:
-        _print_show(window, argv[1], " ".join(argv[2:]))
-        return True
+        return _print_show(runtime, argv[1], " ".join(argv[2:]))
     if argv[0] == "trace" and len(argv) == 2:
-        _print_trace(window, argv[1])
-        return True
+        return _print_trace(runtime, argv[1])
     return False

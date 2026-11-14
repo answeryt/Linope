@@ -1,23 +1,19 @@
-"""In-process asynchronous execution and synchronous plugin bridges.
+"""Processes and threads are tasks with their own execution state.
 
-Submodules are intentionally imported explicitly to keep the process
-activation/import graph acyclic.
+Submodules are imported explicitly so loading this package does not pull a
+process runtime into the import graph.
 """
 
-__all__ = ["ClaimedRequest", "ThreadInbox", "ThreadPolicy", "ThreadRuntime"]
+__all__ = ["Task", "ThreadTable", "close_process_threads", "ensure_threads", "note_arrival", "open_process_threads"]
 
 
 def __getattr__(name: str):
-    if name in {"ClaimedRequest", "ThreadInbox", "ThreadPolicy"}:
-        from kernel.thread.contracts import ClaimedRequest, ThreadInbox, ThreadPolicy
+    if name in {"Task", "ThreadTable"}:
+        from kernel.thread.task import Task, ThreadTable
 
-        return {
-            "ClaimedRequest": ClaimedRequest,
-            "ThreadInbox": ThreadInbox,
-            "ThreadPolicy": ThreadPolicy,
-        }[name]
-    if name == "ThreadRuntime":
-        from kernel.thread.runtime import ThreadRuntime
+        return {"Task": Task, "ThreadTable": ThreadTable}[name]
+    if name in {"close_process_threads", "ensure_threads", "note_arrival", "open_process_threads"}:
+        from kernel.thread import task as task_module
 
-        return ThreadRuntime
+        return getattr(task_module, name)
     raise AttributeError(name)

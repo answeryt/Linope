@@ -9,7 +9,6 @@ from kernel.environment import HostExecutionPolicy, KernelEnvironment, ProcessEn
 from kernel.process.process_creat.instances import CapabilityDefinition
 from kernel.resource.handle_view import ResourceContext
 from kernel.resource.definition import ResourceGrant
-from kernel.thread.contracts import ThreadPolicy
 
 
 @dataclass(frozen=True)
@@ -21,8 +20,9 @@ class ProcessActivation:
     pid: int = 0
     environment: ProcessEnvironment | None = None
     host_policy: HostExecutionPolicy = field(default_factory=HostExecutionPolicy)
-    thread_policy: ThreadPolicy = field(default_factory=ThreadPolicy)
+    thread_id: str = ""
     settings: dict[str, Any] = field(default_factory=dict)
+    sandbox_policy: dict[str, Any] | None = None
     resource_context: ResourceContext = field(init=False)
 
     def __post_init__(self) -> None:
@@ -63,13 +63,15 @@ class ProcessActivation:
         room = KernelEnvironment.build(
             shell=shell,
             policy=self.host_policy,
-            max_concurrent_tasks=self.thread_policy.max_concurrent_tasks,
-            max_sync_workers=self.thread_policy.max_sync_workers,
+            max_concurrent_tasks=1,
+            max_sync_workers=1,
             module_paths=self.definition.module_paths,
             grants=self.grants,
+            sandbox_policy=self.sandbox_policy,
         )
         return {
             "pid": self.pid,
+            "thread_id": self.thread_id,
             "instance_id": self.definition.instance_id,
             "module_paths": self.definition.module_paths,
             "entrypoint": self.definition.entrypoint,
@@ -77,5 +79,4 @@ class ProcessActivation:
             "environment": shell.payload(),
             "room": room.payload(),
             "host_policy": self.host_policy.payload(),
-            "thread_policy": self.thread_policy.payload(),
         }

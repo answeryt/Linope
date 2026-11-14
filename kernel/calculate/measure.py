@@ -5,25 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-def resolve_default_context_length(model: str) -> int:
-    """Ask the capability program for one model's context limit."""
-    import json
-    import subprocess
-    import sys
+FALLBACK_CONTEXT_LIMIT = 256_000
 
-    completed = subprocess.run(
-        [sys.executable, "-m", "capability.queries", "context-limit", model or "unknown/model"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if completed.returncode != 0:
-        return 0
-    try:
-        return int(completed.stdout.strip())
-    except ValueError:
-        return 0
+
+def context_limit_from(settings: Any) -> int:
+    """Read a declared context limit. The kernel does not keep a model catalog."""
+
+    if isinstance(settings, dict):
+        raw = settings.get("context_limit")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            return raw
+    return FALLBACK_CONTEXT_LIMIT
 
 
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -41,29 +33,24 @@ class Pressure:
     activity: str
 
 
-def _spoken(kind: str, content: Any) -> dict[str, Any]:
-    return {"role": kind, "content": content}
+_IMAGE_TOKENS = 85
 
 
 def count_tokens(model: str, content: Any) -> int:
-    """Token count for one piece of text, code, or one image."""
-    import litellm
+    """Token count for one piece of text, code, or one image.
 
-    name = model or "gpt-4o"
+    The kernel estimates length itself. It does not import a provider tokenizer.
+    """
+    if not str(model or "").strip():
+        return 0
     if _is_image(content):
-        url = content if isinstance(content, str) else str(content.get("url") or "")
-        return _counter(
-            litellm,
-            name,
-            messages=[
-                _spoken("user", [{"type": "image_url", "image_url": {"url": url}}]),
-            ],
-            use_default_image_token_count=True,
-        )
+        return _IMAGE_TOKENS
     text = content if isinstance(content, str) else ""
     if not text:
         return 0
-    return _counter(litellm, name, text=text)
+    from kernel.resource.memory.token_meter import estimate_tokens
+
+    return estimate_tokens(text)
 
 
 def measure(
@@ -72,16 +59,15 @@ def measure(
     record: Any,
     book: Any | None,
     activity: str,
-    model: str = "",
+    context_limit: int = 0,
 ) -> Pressure:
     """Read this process's memory and the other processes on its channel."""
     leases = tuple(getattr(record, "leases", ()) or ())
-    name = str(model or "")
     from kernel.resource.memory.token_meter import estimate_tokens
     from kernel.scheduler.access import memory_system
 
     tokens = estimate_tokens(memory_system(pool, leases))
-    limit = resolve_default_context_length(name or "unknown/model")
+    limit = context_limit if isinstance(context_limit, int) and context_limit > 0 else FALLBACK_CONTEXT_LIMIT
     channel = _channel(leases)
     return Pressure(
         tokens=tokens,
@@ -91,13 +77,6 @@ def measure(
         peers=_peers(book, record, channel),
         activity=str(activity or "sleeping"),
     )
-
-
-def _counter(litellm: Any, model: str, **kwargs: Any) -> int:
-    try:
-        return int(litellm.token_counter(model=model, **kwargs))
-    except Exception:
-        return int(litellm.token_counter(model="gpt-4o", **kwargs))
 
 
 def _is_image(content: Any) -> bool:

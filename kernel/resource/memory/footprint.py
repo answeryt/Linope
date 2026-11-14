@@ -34,7 +34,11 @@ def footprint(
     )
 
 
-def context_limit_for(model: str) -> int:
-    from kernel.calculate.measure import resolve_default_context_length
+def context_limit_for(limit: int = 0) -> int:
+    """Use a declared limit, or the kernel fallback when none was declared."""
 
-    return int(resolve_default_context_length(model or "unknown/model"))
+    from kernel.calculate.measure import FALLBACK_CONTEXT_LIMIT
+
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        return limit
+    return FALLBACK_CONTEXT_LIMIT

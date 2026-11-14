@@ -29,15 +29,20 @@ def run(argv: list[str]) -> int:
         _write_line(path, key, value)
     elif not path.exists():
         path.write_text("", encoding="utf-8")
-    print(path)
-    return 0
+    return {"path": str(path)}
 
 
 def _path(raw: str) -> Path:
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve()
+    from capability.sandbox.access import resolve_path, resolve_policy
+
+    policy = resolve_policy(
+        {
+            "scope": "host",
+            "mode": "danger-full-access",
+            "cwd": str(Path.cwd()),
+        }
+    )
+    return resolve_path(raw, policy, write=True)
 
 
 def _assignment(raw: str) -> tuple[str, str]:

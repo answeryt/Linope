@@ -24,4 +24,4 @@
 
 ## 已知限制与暂缓事项
 
-- **这个计数是长度启发式** — 它不是提供者的分词器。[`kernel/calculate`](../../../../../kernel/calculate/README.cn.md) 用 `litellm` 做另一套计数。
+- **这个计数是长度启发式** — 它不是提供者的分词器。[`kernel/calculate`](../../../../../kernel/calculate/README.cn.md) 用同一类长度估算做压力计数。

@@ -9,6 +9,7 @@ imports sibling plugins or a platform runner.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -84,17 +85,15 @@ def load(kind, body, call_params=None):
         str(body.get("mode") or ""),
         str(body.get("workspace_root") or extras.get("workspace_root") or ""),
         body.get("session_id"),
+        scope=str(body.get("scope") or extras.get("scope") or "host"),
+        cwd=str(body.get("cwd") or extras.get("cwd") or ""),
     )
 
 
 def capability_profile(capability_id, changes):
-    import os
-
     from kernel.process.declaration import ProcessDeclaration, ResourceClaim
-    from kernel.environment.mount import project_identity, root_from
     from kernel.resource.definition import ResourceKind
 
-    root = root_from(changes, os.getcwd())
     mode = "workspace-write"
     for topic, raw in changes or ():
         if topic == "mode" and str(raw).strip():
@@ -104,8 +103,8 @@ def capability_profile(capability_id, changes):
         resources=(
             ResourceClaim(
                 kind=ResourceKind.SANDBOX,
-                identity=project_identity(root),
-                call_params={"mode": mode},
+                identity={"root": "host"},
+                call_params={"mode": mode, "scope": "host"},
             ),
         ),
     )
@@ -115,17 +114,35 @@ def execution_policy(
     mode: str,
     workspace_root: str,
     session_id: str | None = None,
+    *,
+    scope: str = "host",
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Per-call policy. Root is carried even when the mode does not write."""
     if mode not in SANDBOX_MODES:
         raise ValueError(f"unknown sandbox mode: {mode!r}")
-    policy: dict[str, Any] = {
-        "mode": mode,
-        "workspace_root": workspace_root,
-    }
-    if session_id is not None:
-        policy["session_id"] = session_id
+    from capability.sandbox.access import resolve_policy
+
+    location = cwd or workspace_root
+    if not location or location == "host":
+        location = os.getcwd()
+    policy = resolve_policy(
+        {
+            "mode": mode,
+            "scope": scope,
+            "cwd": location,
+        }
+    )
+    policy["workspace_root"] = workspace_root
+    policy["session_id"] = session_id
     return policy
+
+
+def resolve_policy(request):
+    """Resolve a runtime file and command policy for the host."""
+    from capability.sandbox.access import resolve_policy as _resolve
+
+    return _resolve(request)
 
 
 def confined_argv(

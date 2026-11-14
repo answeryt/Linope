@@ -10,7 +10,7 @@
 
 `capability_process.py`
 
-这个进程本身。`ask` 送一条消息并等回复。`submit` 接一次调用，交回一张 `Receipt`，不往资源账本追加一行。`answer_ping` 只在被问的 pid 就是自己时回答 `pong`，并带上这次的序号；双方都写了通道时，通道也必须一样，否则不回答。序号对不对，由 [`kernel/command/process`](../../command/process/README.cn.md) 再查一次。`stop` 关掉这份资源记录，把租约还回去。
+这个进程本身。`ask` 送一条消息并等回复。`submit` 接一次调用，交回一张 `Receipt`，不往资源账本追加一行。`answer_ping` 只在被问的 pid 就是自己时回答 `pong`，并带上这次的序号；双方都写了通道时，通道也必须一样，否则不回答。序号对不对，由 [`kernel/command/process`](../../command/process/README.cn.md) 再查一次。`stop` 关掉这份资源记录，把租约还回去，并丢掉这个进程的全部 task。命令结果可以带上 task 号，这样同一进程里的两条 task 不会串线。
 
 `lifecycle.py`
 

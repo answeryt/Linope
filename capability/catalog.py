@@ -47,6 +47,8 @@ def build_table(root: Path) -> dict[str, Any]:
         chosen[name] = path
     table: dict[str, Any] = {}
     for name in sorted(chosen):
+        if name.startswith("model."):
+            continue
         row = _plugin_row(repo, name, chosen[name])
         if row is not None:
             table[name] = row

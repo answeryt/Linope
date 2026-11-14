@@ -29,7 +29,7 @@ After it is installed, the next time you use it, type `linope` in the terminal.
 
 ## Create an Environment Variable and Send a Message
 
-Inside the window, create the secrets file, load it, then start the process. Write one variable at a time. The name is `OPENAI_API_KEY`. Put the API endpoint and model name on the start line.
+Inside the window, create the secrets file, load it, then start the process. Write one variable at a time. The name is `OPENAI_API_KEY`. Put the API endpoint and model name on the start line. You can type `linope` from any directory; the launch directory is only a relative-path hint, while file and command access are resolved by `capability/sandbox`. Host scope is high privilege and should be enabled knowingly.
 
 ```text
 create capability/.env -- OPENAI_API_KEY=your-api-key

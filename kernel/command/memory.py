@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from kernel.command.convention import UsageError
@@ -13,20 +12,15 @@ USAGE = "usage: linope memory backend [memory | sqlite --path <file>]"
 
 
 def run(argv: list[str]) -> int:
-    try:
-        if not argv or argv[0] != "backend":
-            raise UsageError(USAGE)
-        return _backend(argv[1:])
-    except UsageError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+    if not argv or argv[0] != "backend":
+        raise UsageError(USAGE)
+    return _backend(argv[1:])
 
 
 def _backend(argv: list[str]) -> int:
     if not argv:
         name, path = configured_backend()
-        print(f"memory_backend={name}" if not path else f"memory_backend={name} path={path}")
-        return 0
+        return {"backend": name, "path": path}
     name = argv[0]
     if name not in {"memory", "sqlite"}:
         raise UsageError(USAGE)
@@ -40,5 +34,4 @@ def _backend(argv: list[str]) -> int:
     close = getattr(store, "close", None)
     if close is not None:
         close()
-    print(f"memory_backend={name}" if not path else f"memory_backend={name} path={path}")
-    return 0
+    return {"backend": name, "path": path}

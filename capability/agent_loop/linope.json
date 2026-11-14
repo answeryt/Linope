@@ -1,6 +1,6 @@
 {
   "name": "agent_loop",
-  "command": ["node", "capability/agent_loop/pi/main.mjs"],
+  "command": ["python", "-m", "capability.agent_loop.linope"],
   "resources": [
     {
       "kind": "memory",
@@ -18,8 +18,7 @@
       "tools.grep",
       "tools.pwsh",
       "tools.ddgs",
-      "tools.ask_user",
-      "tools.mcp_tool_manager"
+      "tools.ask_user"
     ]
   },
   "changes": ["model"],

@@ -73,9 +73,8 @@ class ModelMainTest(unittest.TestCase):
         self.assertNotIn("capabilities", kwargs)
         self.assertEqual(kwargs["temperature"], 0.2)
 
-    def test_a_tool_call_is_one_json_line_for_the_command_door(self) -> None:
+    def test_a_tool_call_keeps_its_structure(self) -> None:
         import asyncio
-        import json
 
         main = _load()
         turn = {
@@ -102,9 +101,44 @@ class ModelMainTest(unittest.TestCase):
                         {"messages": [{"role": "user", "content": "read a.py"}], "tools": [{"name": "tools.read"}]},
                     )
                 )
-        payload = json.loads(result)
-        self.assertEqual(payload["blocks"][1]["name"], "tools.read")
-        self.assertEqual(payload["blocks"][0]["text"], "reading")
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["blocks"][1]["name"], "tools.read")
+        self.assertEqual(result["blocks"][0]["text"], "reading")
+
+    def test_a_fragment_goes_to_structured_notice(self) -> None:
+        import asyncio
+
+        main = _load()
+
+        class _Chunks:
+            def __init__(self) -> None:
+                self._sent = False
+
+            def __aiter__(self) -> "_Chunks":
+                return self
+
+            async def __anext__(self) -> dict:
+                if self._sent:
+                    raise StopAsyncIteration
+                self._sent = True
+                return {"type": "text-delta", "text": "hi"}
+
+        runtime = SimpleNamespace(
+            call_model=AsyncMock(return_value=_Chunks()),
+            load_interface=lambda _card: SimpleNamespace(
+                parse_stream_parts=lambda chunk: [chunk],
+            ),
+        )
+        with patch("capability.model.model_runtime.call_model.call_model", runtime.call_model):
+            with patch("capability.model.model_runtime.call_model.load_interface", runtime.load_interface):
+                with patch(
+                    "kernel.process.process_runtime.runtime.emit_notice"
+                ) as emit_notice:
+                    result = asyncio.run(
+                        main.load_named_card_async("openai_chat_model", "message", "hello")
+                    )
+        emit_notice.assert_called_once_with({"kind": "model.delta", "text": "hi"})
+        self.assertEqual(result["blocks"][0]["text"], "hi")
 
 
 if __name__ == "__main__":

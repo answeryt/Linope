@@ -1,6 +1,5 @@
 import { logoLines } from './banner.js'
 import type { Focus } from './focus.js'
-import type { DisplayEvent } from './link/events.js'
 import { fg, fill, paint, reset, theme } from './theme.js'
 
 export type Role = 'assistant' | 'error' | 'system' | 'user'
@@ -14,7 +13,7 @@ export type Turn = {
 export type LiveProcess = {
   id: string
   capability: string
-  activity: 'waiting' | 'busy'
+  activity: 'waiting' | 'busy' | 'away'
 }
 
 export type HistoryScroll = {
@@ -337,97 +336,6 @@ const field = (label: string, value: string, width: number) => {
   }
 }
 
-const activityWord = (raw: string): LiveProcess['activity'] | 'away' => {
-  if (raw === 'working' || raw === 'busy' || raw === '在忙') {
-    return 'busy'
-  }
-
-  if (raw === 'sleeping' || raw === 'waiting' || raw === '在等') {
-    return 'waiting'
-  }
-
-  return 'away'
-}
-
-export function noteProcessText(current: LiveProcess[], text: string): LiveProcess[] {
-  const next = current.map(item => ({ ...item }))
-  const started = /^pid=(\d+)\s+capability=(\S+)/.exec(text.trim())
-
-  if (started) {
-    const id = started[1] ?? ''
-    const found = next.find(item => item.id === id)
-
-    if (found) {
-      found.capability = started[2] ?? found.capability
-      found.activity = 'waiting'
-    } else {
-      next.push({ activity: 'waiting', capability: started[2] ?? '', id })
-    }
-
-    return next
-  }
-
-  const listed = /^pid=(\d+)\s+activity=(\S+)/.exec(text.trim())
-
-  if (listed) {
-    const id = listed[1] ?? ''
-    const activity = activityWord(listed[2] ?? '')
-
-    if (activity === 'away' || text.includes('status=closed')) {
-      return next.filter(item => item.id !== id)
-    }
-
-    const found = next.find(item => item.id === id)
-
-    if (found) {
-      found.activity = activity
-    } else {
-      next.push({ activity, capability: '', id })
-    }
-
-    return next
-  }
-
-  if (!text.trim().startsWith('{')) {
-    return current
-  }
-
-  try {
-    const payload = JSON.parse(text) as { facts?: { activity?: string; capability_id?: string; pid?: number | string } }
-    const facts = payload.facts
-    const id = facts?.pid === undefined || facts.pid === null || facts.pid === '' ? '' : String(facts.pid)
-
-    if (!id || id === '0') {
-      return current
-    }
-
-    const activity = activityWord(facts?.activity ?? '')
-
-    if (activity === 'away') {
-      return next.filter(item => item.id !== id)
-    }
-
-    const found = next.find(item => item.id === id)
-
-    if (found) {
-      found.activity = activity
-      if (facts?.capability_id) {
-        found.capability = facts.capability_id
-      }
-    } else {
-      next.push({
-        activity,
-        capability: facts?.capability_id || '',
-        id
-      })
-    }
-
-    return next
-  } catch {
-    return current
-  }
-}
-
 const infoLines = (state: ScreenState, width: number) => {
   const alive = state.processes
   const recent = alive.slice(-3)
@@ -722,66 +630,3 @@ export const helpText = [
   'Every other line goes to the Linope terminal, for example process list or create file.md'
 ].join('\n')
 
-export function pushEvent(
-  turns: Turn[],
-  event: DisplayEvent
-): { cwd?: string; session?: string; status: ScreenState['status'] | null; turns: Turn[] } {
-  if (event.type === 'text') {
-    const last = turns.at(-1)
-    if (last?.role === 'assistant' && last.stream) {
-      const next = [...turns]
-      next[next.length - 1] = { role: 'assistant', text: event.text }
-      return { status: null, turns: next }
-    }
-    if (last?.role === 'assistant' && last.text === event.text) {
-      return { status: null, turns }
-    }
-    return { status: null, turns: [...turns, { role: 'assistant', text: event.text }] }
-  }
-
-  if (event.type === 'text-delta') {
-    const next = [...turns]
-    const last = next.at(-1)
-
-    if (last?.role === 'assistant' && last.stream) {
-      next[next.length - 1] = { role: 'assistant', stream: true, text: last.text + event.text }
-    } else {
-      next.push({ role: 'assistant', stream: true, text: event.text })
-    }
-
-    return { status: null, turns: next }
-  }
-
-  if (event.type === 'image') {
-    const last = turns.at(-1)
-    if (last?.role === 'assistant' && last.text === `image ${event.href}`) {
-      return { status: null, turns }
-    }
-    return { status: null, turns: [...turns, { role: 'assistant', text: `image ${event.href}` }] }
-  }
-
-  if (event.type === 'error') {
-    return { status: null, turns: [...turns, { role: 'error', text: event.text }] }
-  }
-
-  if (event.type === 'status') {
-    if (event.text === 'ready' || event.text === 'running') {
-      return { status: event.text, turns }
-    }
-
-    return { status: null, turns: [...turns, { role: 'system', text: event.text }] }
-  }
-
-  if (event.type === 'session') {
-    const next = event.text ? [...turns, { role: 'system' as const, text: event.text }] : turns
-
-    return {
-      cwd: event.cwd,
-      session: `${event.store} · ${event.env}`,
-      status: null,
-      turns: next
-    }
-  }
-
-  return { status: 'ready', turns }
-}

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,18 +9,13 @@ from kernel.command.convention import Invocation, UsageError, guard, parse
 from kernel.command.process.listen import hold
 from kernel.command.parser import optional_count, parse_changes
 from kernel.environment import HostExecutionPolicy
-from kernel.process.profile import Change, ProfileUnavailable
-from kernel.thread.contracts import ThreadPolicy
-
+from kernel.process.profile import Change
 START_FLAGS = {
     "ping": "bool",
     "change": "repeat",
     "count": "int",
     "cwd": "str",
     "max-runtime-seconds": "float",
-    "max-concurrent-tasks": "int",
-    "min-concurrent-tasks": "int",
-    "max-sync-workers": "int",
     "share": "repeat",
     "once": "bool",
     "with": "repeat",
@@ -58,11 +52,6 @@ def _options(invocation: Invocation) -> tuple:
         count,
         invocation.env_file,
         invocation.env_keys,
-        ThreadPolicy(
-            max_concurrent_tasks=int(invocation.options.get("max-concurrent-tasks") or 1),
-            min_concurrent_tasks=int(invocation.options.get("min-concurrent-tasks") or 1),
-            max_sync_workers=int(invocation.options.get("max-sync-workers") or 1),
-        ),
         invocation.options.get("cwd"),
         runtime,
         tuple(invocation.options.get("share") or ()),
@@ -90,7 +79,6 @@ def options_for(
         count,
         env_file,
         env_keys,
-        ThreadPolicy(),
         cwd,
         max_runtime_seconds,
     )
@@ -100,7 +88,6 @@ def options_for(
 class LaunchOptions:
     """The room and policies for one launch."""
 
-    thread_policy: ThreadPolicy | None = None
     host_policy: HostExecutionPolicy | None = None
     env_file: str = ""
     env_file_keys: tuple[str, ...] = ()
@@ -120,7 +107,6 @@ def launch_options(options: tuple) -> LaunchOptions:
         _count,
         env_file,
         env_keys,
-        thread_policy,
         cwd,
         max_runtime_seconds,
         *rest,
@@ -129,7 +115,6 @@ def launch_options(options: tuple) -> LaunchOptions:
     once = bool(rest[1]) if len(rest) > 1 else False
     chosen = tuple(rest[2]) if len(rest) > 2 else ()
     return LaunchOptions(
-        thread_policy=thread_policy,
         host_policy=(
             HostExecutionPolicy(max_runtime_seconds=max_runtime_seconds)
             if max_runtime_seconds is not None
@@ -167,6 +152,7 @@ class _Running:
 
 def open_capability(options: tuple) -> _Running:
     """Start the capability named by parsed options."""
+    _reject_model_capability(str(options[0]))
     from pathlib import Path
 
     from kernel.process.declaration import append_chosen, stamp_memory_space
@@ -198,22 +184,24 @@ def open_capability(options: tuple) -> _Running:
         env_file_keys=launch.env_file_keys,
         cwd=launch.cwd,
         host_policy=launch.host_policy,
-        thread_policy=launch.thread_policy,
     )
     return _Running(tuple(processes))
 
 
 def launch_capability(options: tuple) -> int:
     """Open one capability and hold it until it stops."""
-    try:
-        running = open_capability(options)
-    except (ProfileUnavailable, ValueError, KeyError, RuntimeError) as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    once = len(options) > 10 and bool(options[10])
+    running = open_capability(options)
+    once = len(options) > 9 and bool(options[9])
     return 0 if hold(running, ping=bool(options[2]), once=once) else 1
 
 
 @guard(START_USAGE)
 def run(argv: list[str]) -> int:
+    if argv and argv[0].startswith("model."):
+        raise UsageError("Model capabilities use `model use`, not `process start`")
     return launch_capability(_parse_start_options(argv))
+
+
+def _reject_model_capability(capability: str) -> None:
+    if capability.startswith("model."):
+        raise UsageError("Model capabilities use `model use`, not `process start`")

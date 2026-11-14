@@ -18,7 +18,8 @@ This directory is the blue terminal. It draws one screen, reads the keyboard, an
 | `banner.ts` | The logo, or a short title when the window is small |
 | `theme.ts` | The blues, and the sequences that paint them |
 | `link/session.ts` | Starts the kernel session and carries lines both ways |
-| `link/events.ts` | Reads one stdout line into an event |
+| `link/protocol.ts` | Validates one backend JSONL event |
+| `state.ts` | Projects backend facts into screen state |
 | `screen.check.ts` | Checks width, wrapping, scrolling, the scrollbar, and process lines |
 | `editor.check.ts` | Checks the input line, the history, and key parsing |
 | `focus.check.ts` | Checks which key scrolls and which key edits |
@@ -61,8 +62,6 @@ A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does n
 |---|---|
 | `displayWidth` | The columns one string takes. A Chinese character takes two. A combining mark takes none |
 | `wrapText` | Breaks text to that width, at spaces when a line has them |
-| `noteProcessText` | Updates the live process list from a `pid=` line or from a page whose `facts` carry a pid |
-| `pushEvent` | Folds one kernel event into the transcript |
 | `renderScreen` | The logo, the info box, the visible part of the transcript, the scrollbar, and the status line |
 | `historyLayout` | The history pane's rows and the column that holds the scrollbar |
 | `historyRoom` | How many transcript rows fit in that pane |
@@ -71,14 +70,21 @@ A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does n
 | `retainScroll` | Keeps a paused pane in place when new lines arrive. A following pane stays on the newest line |
 | `scrollLimit` | The largest `scrollY`. Zero means the transcript fits |
 
-The info box shows four fields: whether the clerk is here (`clerk` / `here`), how many processes are alive (`alive`), the last three of those processes (`process`), and the project directory (`project`). A process line `pid=<id> capability=<name>` adds that process as `waiting`. `activity=working` marks it `busy`. `activity=sleeping` marks it `waiting`. A closed or departed process leaves the list. `text-delta` appends to the assistant line that is still streaming. A following `text` with the same words replaces that streaming line. `error` is an error turn. `image` is a turn that says `image` and the address.
+The info box shows four fields: whether the clerk is here (`clerk` / `here`), how many processes are alive (`alive`), the last three of those processes (`process`), and the project directory (`project`). Process and turn state comes from correlated backend events; no transcript text is parsed to reconstruct it. A `model.delta` appends to the turn identified by `turn_id`, and `turn.completed` finalizes it.
 
 `banner.ts` is `logoLines`. When the window is at least as wide as the block logo and at least 16 rows tall, it draws the six-line `LINOPE KERNEL` logo. A smaller window gets one line, `LINOPE-KERNEL`, between rules.
 
 `theme.ts` is the palette: logo blues, the border, the box fill, the text, the muted text, the prompt, and errors. `fg` paints text and then resets. `fill` paints the background. `paint` paints the foreground and leaves the color on.
 
-`link/session.ts` is `startTerminalSession`. It starts `python -u -m kernel.command session` in the directory where `linope` was started, with UTF-8 forced on. The interpreter is `LINOPE_PYTHON`, then `PYTHON`, then `python`. Each stdout line goes through `parseEvent`. A line that is not one of those events is shown as plain text. Stderr is emitted as an error when a newline arrives. The session starts with a `session` event that carries the working directory. When the process closes, the screen hears `left` and then `done`. `send` writes one trimmed line. If the process is already gone, the screen hears `The clerk has left`. `stop` writes `exit`, and kills the process when that write fails.
+`link/session.ts` is `startTerminalSession`. It starts `python -u -m kernel.command session` in the directory where `linope` was started, with UTF-8 forced on. The interpreter is `LINOPE_PYTHON`, then `PYTHON`, then `python`. Every stdout line must be a versioned JSONL event accepted by `link/protocol.ts`; an unframed line is a protocol error, never transcript text. Stderr is a diagnostic event and never a model answer. `send` writes one trimmed line. `stop` writes `exit`, and kills the process when that write fails.
 
-`link/events.ts` is `parseEvent`. A line that does not start with `{` is not an event. A JSON object with `type` becomes one of `done`, `image`, `session`, `text`, `text-delta`, `status`, or `error`. An `image` without `href`, or JSON that does not parse, is dropped.
+`link/protocol.ts` validates the wire version, sequence, correlation ids, pid and data record. `state.ts` is the pure projection from those facts to the transcript and process panel. Rendering does not inspect command syntax or backend payload text.
 
-`screen.check.ts` checks display width, wrapping, which part of a long transcript a scroll position shows, when the scrollbar appears, how follow pauses and resumes, how streamed text becomes one assistant turn, and how `pid=` lines update the process list. `editor.check.ts` checks inserting, deleting, the history draft, and `takeKey`. `focus.check.ts` checks that ↑ edits from the input, scrolls from the history pane, and that Shift+↑ scrolls from either focus. `select.check.ts` checks which cells a drag, a double-click, and a triple-click cover, and that the copied words are the ones on screen.
+`screen.check.ts` checks display width, wrapping, scrolling, reducer projection and correlated stream completion. `link/protocol.check.ts` checks wire validation. `editor.check.ts` checks inserting, deleting, the history draft, and `takeKey`. `focus.check.ts` checks that ↑ edits from the input, scrolls from the history pane, and that Shift+↑ scrolls from either focus. `select.check.ts` checks which cells a drag, a double-click, and a triple-click cover, and that the copied words are the ones on screen.
+
+Typecheck the screen with the `typescript` package. `@types/node` has to be on `--typeRoots`; installing it with `npx -p` does not put it on the compilation path.
+
+```text
+npm install --prefix tui --no-save typescript @types/node
+node tui/node_modules/typescript/bin/tsc --noEmit --pretty false --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --typeRoots tui/node_modules/@types --types node tui/main.ts tui/state.ts tui/screen.ts tui/link/session.ts tui/link/protocol.ts
+```

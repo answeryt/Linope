@@ -8,13 +8,9 @@
 
 | 入口 | 结果 |
 |---|---|
-| `count_tokens(model, content)` | 通过 `litellm` 计算一段文本、代码或一张图片的 token 数。空文本是 0。缺少模型名时使用 `gpt-4o`。 |
+| `count_tokens(model, content)` | 用内核自己的长度估算计算一段文本、代码或一张图片的 token 数。空文本或缺少模型名时是 0。 |
 | `measure(...)` | 读取本进程的记忆实体，以及它通道上的其他进程。 |
 
-`Pressure` 携带 `tokens`、`context_limit`、`context_full`、`channel`、`peers` 和 `activity`。上下文上限来自 [`capability/model/model_API/model_paramaters/context_limits`](../../capability/model/model_API/model_paramaters/context_limits/README.cn.md)。`context_full` 只比较即将发送的 system 文本和模型上下文上限。它不会因此增加 worker。历史行留在 [`kernel/resource/memory`](../resource/memory/README.cn.md)，模型用地址读取。
+`Pressure` 携带 `tokens`、`context_limit`、`context_full`、`channel`、`peers` 和 `activity`。上下文上限是能力在进程设置里声明的整数。没有这个整数时，内核使用自己的 256000 回退值。`context_full` 只比较即将发送的 system 文本和这个上限。它不会因此增加 worker。历史行留在 [`kernel/resource/memory`](../resource/memory/README.cn.md)，模型用地址读取。
 
-图片内容是以 `.png`、`.jpg`、`.jpeg`、`.gif` 或 `.webp` 结尾的字符串，或带 `url` 的字典。图片计数使用带 `use_default_image_token_count` 的 `litellm`。
-
-## 已知限制与暂缓事项
-
-- **计数需要 `litellm`** — `count_tokens` 在调用时导入它。没有安装则计数失败。
+图片内容是以 `.png`、`.jpg`、`.jpeg`、`.gif` 或 `.webp` 结尾的字符串，或带 `url` 的字典。一张图片按固定的 85 个 token 计算。模型名只用来判断这次计数有没有对象，不选择供应商的分词器。

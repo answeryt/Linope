@@ -43,10 +43,13 @@ def seats(store: Any, kind: str, identity: dict[str, Any]) -> tuple[Seat, ...]:
     """List peer processes for one leased resource, or one capability name.
 
     An empty kind groups running processes of ``identity["capability"]``.
-    That is how model processes are seated after the model lease is gone.
+    Model capabilities are not process seats and therefore return no peers.
     """
     if not kind:
-        raw = store.capability_seats(str(identity.get("capability") or ""))
+        capability = str(identity.get("capability") or "")
+        if capability.startswith("model."):
+            return ()
+        raw = store.capability_seats(capability)
     else:
         raw = store.resource_seats(kind, dict(identity))
     return tuple(Seat(**item) for item in raw)

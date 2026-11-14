@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -113,6 +114,13 @@ class LocalSandbox:
             raise ValueError(
                 f'sandbox confine rejects "{mode}"; skip confine under danger-full-access'
             )
+        if str(policy.get("scope") or "") == "host" and mode == WORKSPACE_WRITE:
+            return _result(
+                argv,
+                "host",
+                DENIAL_SIGNATURES.get("runner_command", ()),
+                (),
+            )
         if self.runner_command is not None:
             wrapped = [*self.runner_command, *self.bwrap_profile_args(policy), "--", *argv]
             return _result(wrapped, "full", DENIAL_SIGNATURES["runner_command"], (
@@ -175,16 +183,30 @@ class LocalSandbox:
         root = str(policy.get("workspace_root") or policy.get("workspaceRoot") or "")
         import tempfile
 
-        return [
+        temp_root = tempfile.gettempdir()
+        scope = str(policy.get("scope") or "")
+        if scope != "host" and _temp_inside_workspace(root, temp_root):
+            raise ValueError(
+                "Windows ACL temp root must be outside the workspace: "
+                f"workspace={root}; temp={temp_root}. "
+                "请换目录启动 Linope，或用 --cwd 指定项目目录。"
+            )
+        argv = [
             sys.executable,
             str(_WINDOWS_RUNNER),
             "--workspace",
             root,
             "--temp",
-            tempfile.gettempdir(),
+            temp_root,
             "--mode",
             str(policy.get("mode") or ""),
+            "--scope",
+            scope or "workspace",
         ]
+        roots = list(policy.get("writable_roots") or ())
+        for writable in roots:
+            argv.extend(["--writable-root", str(writable)])
+        return argv
 
 
 def build_local_sandbox(
@@ -222,6 +244,22 @@ def _result(
         "denial_signatures": list(denial),
         "runner_failure_rules": [dict(rule) for rule in rules],
     }
+
+
+def _temp_inside_workspace(workspace: str, temp: str) -> bool:
+    """Whether the Windows temp directory sits inside this workspace."""
+
+    if not workspace or not temp:
+        return False
+    try:
+        root = os.path.normcase(os.path.realpath(workspace))
+        candidate = os.path.normcase(os.path.realpath(temp))
+    except OSError:
+        return False
+    if candidate == root:
+        return True
+    prefix = root.rstrip("\\/") + os.sep
+    return candidate.startswith(os.path.normcase(prefix))
 
 
 def _probe_bwrap(timeout: float) -> bool:

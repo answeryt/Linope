@@ -30,9 +30,9 @@ class CallModelTest(unittest.TestCase):
     def test_load_card_reads_json_model_name(self) -> None:
         card = self.runtime.load_card("openai_chat_model")
         self.assertEqual(card["interface"], "openai_chat")
-        self.assertEqual(card["model"], "gpt-5.6-sol")
+        self.assertEqual(card["model"], "deepseek-flash")
         self.assertEqual(card["stream"], True)
-        self.assertEqual(card["base_url"], "https://eapi.site/v1")
+        self.assertEqual(card["base_url"], "https://api.deepseek.com")
 
     def test_unknown_card_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):
@@ -51,7 +51,7 @@ class CallModelTest(unittest.TestCase):
         self.assertEqual(payload["parameters"]["temperature"], 0.2)
         self.assertTrue(payload["stream"])
         self.assertEqual(payload["client_kwargs"], {})
-        self.assertEqual(payload["base_url"], "https://eapi.site/v1")
+        self.assertEqual(payload["base_url"], "https://api.deepseek.com")
 
     def test_unset_stream_is_false_and_empty_base_url_is_none(self) -> None:
         card = self.runtime.load_card("gemini_model")
@@ -111,7 +111,7 @@ class CallModelTest(unittest.TestCase):
         self.assertEqual(result, "ok")
         fake.call_api.assert_awaited_once()
         payload = fake.call_api.await_args.args[0]
-        self.assertEqual(payload["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["model"], "deepseek-flash")
         self.assertEqual(payload["messages"][0]["content"], "hi")
 
 

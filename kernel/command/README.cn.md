@@ -2,23 +2,23 @@
 
 [English](README.md) | 中文
 
-`dispatch.py` 只认第一个词，把后面的参数交给对应脚本。不认识的词，或用法不对，退出码是 2。
+`dispatch.py` 只认第一个词，把后面的参数交给对应脚本。不认识的词，或用法不对，抛出 `UsageError`。终端宿主把它变成退出码 2。会话则把这次失败发成结构化事件。
 
-命令分成两层。第一词是对象：建文件、开进程、看进程、把几个已经在跑的进程记成一个服务。窗口开着之后再敲的短行，是对那个已经打开的进程说话，例如 `load message`。短行不新开进程。
+命令分成两层。第一词是对象：建文件、开进程、看进程、把几个已经在跑的进程记成一个服务。外部会话 capability 通过内核 IPC 发送短命令；内核不读取终端输入。
 
 这一层不读模型卡片，不执行工具，也不从模型输出里再挑命令。卡片在能力插件里。工具在工具进程里。模型回复怎么解析，在 [`kernel/communication`](../communication/README.cn.md)。
 
 | 目录 | 管哪些命令 |
 |---|---|
 | [`file/`](file/README.cn.md) | `create`、`load env` |
-| [`process/`](process/README.cn.md) | `process start`，以及窗口里的 `load`、`ask`、`ping`、`list`、`show`、`trace` |
-| [`screen/`](screen/README.cn.md) | `resource serve`，以及把模型正在吐出的一段文字打到终端 |
+| [`process/`](process/README.cn.md) | `process start`、`load`、`ask`、`ping`、`list`、`show`、`trace` |
+| [`screen/`](screen/README.cn.md) | `resource serve` |
 
-`service` 的规则在 [`kernel/services`](../services/README.cn.md)。`log` 打的回合日志在 [`kernel/trace`](../trace/README.cn.md)。
+`service` 的规则在 [`kernel/services`](../services/README.cn.md)。`log` 返回的回合日志在 [`kernel/trace`](../trace/README.cn.md)。
 
 ## 对象命令
 
-这些是对象命令，窗口外也能敲。标志的完整表在上面各目录的 README 里。
+这些是对象命令。外部宿主可以通过 IPC 发送它们；标志的完整表在上面各目录的 README 里。
 
 `create <path> [-- name=value]`
 
@@ -26,17 +26,19 @@
 
 `load env <path>`
 
-记住这份环境文件。同一窗口里，下一次 `process start` 没写 `--env-file` 时就用它。值留在文件里，命令只打印路径。
+记住这份环境文件。同一个 `KernelRuntime` 里，下一次 `process start` 没写 `--env-file` 时就用它。值留在文件里，命令返回解析后的路径。
 
 `process start <capability>`
 
-按能力名开进程。例如 `process start model.openai_chat_model` 开一个模型进程，`process start tools.read` 开一个读文件的工具进程。能力自己的 `capability_profile` 说明这次要哪些资源。一个操作系统 pid 一份资源记录。命令打印 `pid=`，然后留在当前窗口里，等你把正文送进去。它不自己去调模型。
+按能力名开一个非模型 capability 进程。例如 `process start agent_loop`
+或 `process start tools.read`。模型不能用 `process start model.*`，需要
+`model use <卡片>`。一个操作系统 pid 一份资源记录。
 
 `--count 2` 开两份，两份是对等进程，不是父子。`--share memory` 才让这次启动共用记忆；不写的话，每份各有各的。`--with memory=chat` 是在画像之外再要一种资源。`--once` 表示送完一次 `load` 就关掉。`--ping` 是开完之后问一声，没人回答就失败。
 
 `process list`
 
-列出窗口里的进程：pid、在忙还是在闲、记录状态。不启动进程。
+返回当前 `KernelRuntime` 的进程身份、活动状态和记录状态。不启动进程。
 
 `process show <pid> [address]`
 
@@ -46,7 +48,7 @@
 
 看这个进程从闲到忙的活动记录。
 
-窗口关掉之后，`list`、`show`、`trace` 改读磁盘上的账本和日志。对话正文在记忆里，不在账本文件里。
+运行时关闭之后，`list`、`show`、`trace` 改读磁盘上的账本和日志。对话正文在记忆里，不在账本文件里。
 
 `service start <pid> [<pid> ...]`
 
@@ -54,7 +56,8 @@
 
 `service load <服务编号> -- <正文>`
 
-只在窗口里用。它找出这个服务里唯一还开着的模型进程，把这一行改写成 `load message <那个 pid> -- <正文>`，再交给那个进程。没有模型，或有两个模型，就拒绝。服务不决定下一步叫哪个工具。
+只在会话里用。它把正文交给服务中的一个活进程；服务不寻找模型进程，
+也不决定下一步叫哪个工具。
 
 `resource serve [--host 127.0.0.1] [--port 0]`
 
@@ -66,7 +69,8 @@
 
 `terminal` 和 `session`
 
-打开同一个窗口。要接着对进程说话，就在这个窗口里写下面的短行。
+启动外部会话 capability。它通过内核 IPC 发送下面的命令，自己拥有输入
+输出，不是内核里的窗口对象。
 
 ## 窗口里的短行
 
@@ -83,6 +87,20 @@
 `load tool <pid> -- <JSON>`
 
 把这一次调用送给那个工具进程。进程必须已经开着，并且是工具。
+
+`model use <卡片> [--change topic=value]`
+
+在模型空闲时把卡片安装或更换到所有模型核。
+
+`model cores <数量>`
+
+设置模型核数量。省略时是一核。数量必须至少为 1；有回合正在
+运行或等待时不能调整。
+
+`model run -- <正文或JSON>`
+
+把当前 task 放入模型调度队列。模型没有 pid，调用完成后结果返回给
+发出请求的 task。
 
 `load message <pid> -- <序号> <文件>`
 

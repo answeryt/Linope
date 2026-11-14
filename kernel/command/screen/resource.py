@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import sys
-
 from kernel.command.convention import UsageError, guard, parse
+from kernel.command.events import KernelEvent, current_event_sink
 
 USAGE = "usage: linope resource serve"
 
@@ -36,14 +35,14 @@ def _serve(argv: list[str]) -> int:
         raise UsageError("--port must be between 0 and 65535")
     from kernel.hypermedia.http_server import serve_resources
 
-    try:
-        serve_resources(
-            "",
-            host=host,
-            port=port,
+    def announce(actual_host: str, actual_port: int) -> None:
+        current_event_sink().emit(
+            KernelEvent(
+                "resource.started",
+                {"host": actual_host, "port": actual_port},
+            )
         )
-    except (OSError, RuntimeError, ValueError) as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    return 0
+
+    serve_resources("", host=host, port=port, on_started=announce)
+    return {"host": host, "port": port}
 

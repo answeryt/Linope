@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import threading
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -28,6 +29,7 @@ PARAM_OVERRIDE_KEYS = (
 )
 
 _LEAF_CACHE: dict[str, ModuleType] = {}
+_LEAF_CACHE_LOCK = threading.RLock()
 
 
 def _is_unset(value: object) -> bool:
@@ -37,21 +39,22 @@ def _is_unset(value: object) -> bool:
 def _load_leaf(path: Path | str) -> ModuleType:
     resolved = Path(path).resolve()
     cache_key = resolved.as_posix()
-    cached = _LEAF_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-    if not resolved.is_file():
-        raise FileNotFoundError(resolved)
-    spec = importlib.util.spec_from_file_location(
-        f"linope_model_leaf_{resolved.stem}",
-        resolved,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(resolved)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _LEAF_CACHE[cache_key] = module
-    return module
+    with _LEAF_CACHE_LOCK:
+        cached = _LEAF_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        if not resolved.is_file():
+            raise FileNotFoundError(resolved)
+        spec = importlib.util.spec_from_file_location(
+            f"linope_model_leaf_{resolved.stem}",
+            resolved,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(resolved)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LEAF_CACHE[cache_key] = module
+        return module
 
 
 def _card_path(card: str | Path) -> Path:

@@ -6,8 +6,10 @@ This module does not define a second mode list or load a plugin file itself.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -17,12 +19,17 @@ _ROOTS: Any = None
 
 
 def _gate(payload: dict[str, Any]) -> Any:
+    env = os.environ.copy()
+    root = str(Path(__file__).resolve().parents[2])
+    current = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = root if not current else root + os.pathsep + current
     completed = subprocess.run(
         [sys.executable, "-m", "capability.sandbox.gate"],
         input=json.dumps(payload, ensure_ascii=False),
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=env,
         check=False,
     )
     if completed.returncode != 0:
@@ -104,6 +111,19 @@ def writable_roots(policy: dict[str, Any]) -> list[str]:
         return list(_ROOTS.writable_roots(policy))
     found = _gate({"op": "writable-roots", "policy": policy})
     return list(found or [])
+
+
+def resolve_policy(request: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Ask capability/sandbox for one runtime access policy."""
+    found = _gate(
+        {
+            "op": "resolve-policy",
+            "request": dict(request or {}),
+        }
+    )
+    if not isinstance(found, dict):
+        raise RuntimeError("sandbox gate did not return an access policy")
+    return dict(found)
 
 
 def canonical_path(path: str) -> str:

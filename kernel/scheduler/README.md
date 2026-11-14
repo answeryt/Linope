@@ -2,14 +2,16 @@
 
 English | [中文](README.cn.md)
 
-One scheduler for resource routing and thread admission. The model turn lives in [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). The raw memory dict is [`kernel/resource/memory`](../resource/memory/README.md). Which peer is chosen is [`kernel/load_balancing`](../load_balancing/README.md).
+One scheduler for resource routing. Model cards and model execution live in
+[`model_scheduler`](model_scheduler/README.md). The raw memory dict is
+[`kernel/resource/memory`](../resource/memory/README.md). Which peer is chosen
+is [`kernel/load_balancing`](../load_balancing/README.md).
 
 ## Contract
 
 | Entry | Role |
 |---|---|
 | `route` | Hands a body to a peer that holds the named resource kind and identity. The caller supplies the channel and the opener. |
-| `run_runtime` | Claims and admits requests onto one process runtime until that process asks to stop. |
 
 `memory_space.py` is the pointer space. `space` on a memory grant names which classes belong in the pointer. The classes are `system`, `message`, `task`, and `artifact`. The pointer is the right to enter one memory resource. `message/0` and `message/0-10` are selectors inside that resource.
 
@@ -52,7 +54,10 @@ A read that names a scope, such as `chat/message/0`, does not use the private li
 
 `access.py` approves and performs that access. `capacity_full` is true when the token count is at least a positive context limit. The token number comes from [`kernel/calculate`](../calculate/README.md). The address lists stay in `_MAPS` for this run. The memory dict keeps the rows.
 
-Asking the model, reading memory, and calling a tool are command lines written by [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). This directory does not build that page and does not choose the next step.
+External capabilities use `model use` and `model run` for the model, and
+`process start` plus `load tool` for tools. This directory does not know about
+sessions or Agents. `model_scheduler` schedules the model by task, releasing
+it when a task reads a file or waits for anything else.
 
 `route` refuses a missing channel and a process limit below 1. It does not take a lease. A new process, when one is required, is started by the opener the caller supplies. That opener is the existing reconciler.
 

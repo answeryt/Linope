@@ -97,7 +97,7 @@ def glob_files(pattern: str, path: Optional[str] = None, workspace: Optional[str
 
 def _root(path: Optional[str], workspace: Optional[str]) -> Path:
     from kernel.environment import current_room
-    from kernel.environment.file_io import door_for
+    from capability.sandbox.access import door_for
 
     door = door_for(current_room(), workspace)
     return door.resolve(path or ".", write=False, base=workspace)

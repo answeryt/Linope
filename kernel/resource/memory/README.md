@@ -61,7 +61,7 @@ A row stores `class`, `kind`, `content`, `time`, and `seq`. Optional `state` is 
 
 ## How big it is
 
-`estimate_tokens` estimates text that is about to be sent. One read's budget is the model context limit minus the system text, the current page, the output reserve, and the safety margin. A named read that does not fit is truncated or compressed. The original row stays in the `MemoryStore`. The estimate does not scan the whole history.
+`estimate_tokens` estimates text that is about to be sent. One read's budget is the model context limit minus the system text, the current page, the output reserve, and the safety margin. A named read that does not fit is truncated or compressed. The sliding-window fitter asks `python -m capability.queries tail-cut` for the cut index and does not import the compression plugins. The original row stays in the `MemoryStore`. The estimate does not scan the whole history.
 
 ## Known Limitations and Deferred Work
 

@@ -17,11 +17,11 @@ import {
 } from './editor.js'
 import { startTerminalSession, type TerminalLink } from './link/session.js'
 import { bindingFor, type Focus } from './focus.js'
+import type { KernelEvent } from './link/protocol.js'
+import { initialUiState, reduceKernelEvent } from './state.js'
 import {
   helpText,
   historyLayout,
-  noteProcessText,
-  pushEvent,
   renderScreen,
   transcriptRows,
   applyScroll,
@@ -35,8 +35,6 @@ import {
   inputRow,
   stripAnsi,
   type HistoryScroll,
-  type LiveProcess,
-  type Turn
 } from './screen.js'
 import {
   drag,
@@ -50,8 +48,7 @@ import {
 import { fg, reset, theme } from './theme.js'
 import { takeKey, type Key } from './keys.js'
 
-const turns: Turn[] = []
-let status: 'ready' | 'running' = 'ready'
+let uiState = initialUiState(process.cwd())
 let busy = false
 let link: TerminalLink | null = null
 let focus: Focus = 'input'
@@ -59,9 +56,6 @@ let view: HistoryScroll = { scrollY: 0, follow: true }
 let gesture = idleGesture()
 let notice = ''
 let editor: EditorState = createEditor()
-let cwd = process.cwd()
-let clerk: 'here' | 'away' = 'here'
-let processes: LiveProcess[] = []
 
 const windowSize = () => {
   if (typeof process.stdout.getWindowSize === 'function') {
@@ -81,17 +75,17 @@ const columns = () => Math.max(24, process.stdout.columns || windowSize()[0] || 
 const termRows = () => Math.max(12, process.stdout.rows || windowSize()[1] || 24)
 
 const screenState = () => ({
-  clerk,
+  clerk: uiState.clerk,
   columns: columns(),
-  cwd,
-  processes,
+  cwd: uiState.cwd,
+  processes: uiState.processes,
   focus,
   rows: termRows(),
   scrollY: view.scrollY,
   follow: view.follow,
   notice,
-  status,
-  turns
+  status: uiState.status,
+  turns: uiState.turns
 })
 
 let stopping = false
@@ -226,7 +220,7 @@ const submit = (line: string) => {
   }
 
   if (text === '/clear') {
-    turns.length = 0
+    uiState.turns.length = 0
     stick()
     draw()
 
@@ -234,17 +228,17 @@ const submit = (line: string) => {
   }
 
   if (text === '/help') {
-    turns.push({ role: 'system', text: helpText })
+    uiState.turns.push({ role: 'system', text: helpText })
     stick()
     draw()
 
     return
   }
 
-  turns.push({ role: 'user', text })
+  uiState.turns.push({ role: 'user', text })
   stick()
   busy = true
-  status = 'running'
+  uiState.status = 'running'
   draw()
   link?.send(text)
 }
@@ -720,29 +714,13 @@ process.stdout.on('resize', () => {
 })
 
 setWindowTitle()
-link = startTerminalSession(event => {
-  const next = pushEvent(turns, event)
-
-  turns.splice(0, turns.length, ...next.turns)
-
-  if (next.cwd) {
-    cwd = next.cwd
-  }
-
-  if (event.type === 'text') {
-    processes = noteProcessText(processes, event.text)
-  }
-
-  if (event.type === 'status' && event.text === 'left') {
-    clerk = 'away'
-    processes = []
-  }
-
-  if (next.status) {
-    status = next.status
-  }
-
-  if (event.type === 'done') {
+link = startTerminalSession((event: KernelEvent) => {
+  uiState = reduceKernelEvent(uiState, event)
+  if (event.kind === 'command.completed' || event.kind === 'command.failed') {
+    busy = uiState.activeTurns.size > 0
+  } else if (event.kind === 'turn.started' || event.kind === 'turn.completed') {
+    busy = uiState.activeTurns.size > 0
+  } else if (event.kind === 'session.closed') {
     busy = false
   }
 
@@ -751,7 +729,7 @@ link = startTerminalSession(event => {
   }
 
   if (!stopping) {
-    if (event.type === 'text-delta') {
+    if (event.kind === 'model.delta') {
       drawSoon()
     } else {
       draw()

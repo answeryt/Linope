@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import litellm
-
 from kernel.calculate.measure import Pressure, count_tokens, measure
+from kernel.resource.memory.token_meter import estimate_tokens
 from kernel.load_balancing.relieve import relieve
 from kernel.process.resource_record import (
     HeldResource,
@@ -51,18 +50,20 @@ def _lease(kind: str, resource_id: str, identity: dict) -> HeldResource:
 
 
 def _ready(book: ProcessResourceBook, pid: int, leases: list[HeldResource], ceiling: int = 1) -> None:
+    del ceiling
     book.open(pid, "demo")
     book.attach(
         pid,
         claims=[],
         leases=leases,
-        room={"worker_ceiling": ceiling, "inflight_ceiling": 1},
+        room={},
     )
 
 
-def test_text_tokens_match_litellm() -> None:
+def test_text_tokens_match_the_kernel_estimate() -> None:
     text = "Hello world"
-    assert count_tokens("gpt-4o", text) == litellm.token_counter(model="gpt-4o", text=text)
+    assert count_tokens("gpt-4o", text) == estimate_tokens(text)
+    assert count_tokens("", text) == 0
 
 
 def test_an_image_adds_tokens() -> None:
@@ -84,7 +85,9 @@ def test_full_context_does_not_add_a_helper() -> None:
         activity="sleeping",
     )
     assert relieve(book, 7, pressure, delegating=False) == 1
-    assert book.get(7).room["worker_ceiling"] == 1
+    from kernel.thread.task import threads_for
+
+    assert len(threads_for(7).threads()) == 1
 
 
 def test_busy_handoff_adds_one_helper() -> None:
@@ -117,7 +120,7 @@ def test_sleeping_alone_does_not_add() -> None:
         record=book.get(7),
         book=book,
         activity="sleeping",
-        model="gpt-4o",
+        context_limit=128_000,
     )
     assert pressure.peers == 0
     assert pressure.context_full is False

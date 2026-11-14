@@ -402,18 +402,19 @@ function textOf(content) {
 }
 
 export function parseModelTurn(raw) {
-  const text = String(raw ?? "").trim();
-  if (!text.startsWith("{")) return { text, toolCalls: [] };
+  const text = typeof raw === "string" ? raw.trim() : "";
+  const data = raw && typeof raw === "object" ? raw : null;
+  if (!data && !text.startsWith("{")) return { text, toolCalls: [] };
   try {
-    const data = JSON.parse(text);
-    if (!data || data.type !== "model_turn" || !Array.isArray(data.blocks)) {
+    const parsed = data || JSON.parse(text);
+    if (!parsed || parsed.type !== "model_turn" || !Array.isArray(parsed.blocks)) {
       return { text, toolCalls: [] };
     }
-    const prose = data.blocks
+    const prose = parsed.blocks
       .filter((block) => block && block.type === "text" && block.text)
       .map((block) => String(block.text))
       .join("\n");
-    const toolCalls = data.blocks
+    const toolCalls = parsed.blocks
       .filter((block) => block && block.type === "tool-call" && block.name)
       .map((block, index) => ({
         id: String(block.id || `call-${index + 1}`),

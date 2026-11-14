@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -43,7 +44,12 @@ def _message_request(body: Any) -> tuple[list[Any], dict[str, Any]]:
     raise TypeError("prompt content must be text or messages")
 
 
-async def _collect(runtime: ModuleType, card_id: str, result: Any) -> Any:
+async def _collect(
+    runtime: ModuleType,
+    card_id: str,
+    result: Any,
+    on_notice: Any = None,
+) -> Any:
     leaf = runtime.load_interface(card_id)
     if hasattr(result, "__aiter__"):
         assembler = None
@@ -56,7 +62,7 @@ async def _collect(runtime: ModuleType, card_id: str, result: Any) -> Any:
             if assembler is not None:
                 for part in leaf.parse_stream_parts(chunk):
                     assembler.push(part)
-                    _forward_display(part)
+                    _forward_display(part, on_notice=on_notice)
             else:
                 piece = leaf.parse_stream_chunk(chunk)
                 if piece:
@@ -72,16 +78,20 @@ async def _collect(runtime: ModuleType, card_id: str, result: Any) -> Any:
     return text if text is not None else result
 
 
-def _forward_display(part: Any) -> None:
-    """Hand one text fragment to the terminal without waiting for the final turn."""
+def _forward_display(part: Any, *, on_notice: Any = None) -> None:
+    """Publish one model fragment as a structured capability notice."""
     if not isinstance(part, dict) or part.get("type") not in {"text", "text-delta"}:
         return
     text = part.get("text")
     if not text:
         return
-    from kernel.command.screen.live_stream import publish_text
+    notice = {"kind": "model.delta", "text": str(text)}
+    if callable(on_notice):
+        on_notice(notice)
+        return
+    from kernel.process.process_runtime.runtime import emit_notice
 
-    publish_text(str(text))
+    emit_notice(notice)
 
 
 def _turn_text(result: Any) -> str | None:
@@ -128,6 +138,8 @@ async def load_named_card_async(
     kind: str,
     body: Any,
     call_params: dict[str, Any] | None = None,
+    *,
+    on_notice: Any = None,
 ) -> Any:
     """Load a prompt without creating a nested event loop per request."""
     if kind != "message":
@@ -143,17 +155,7 @@ async def load_named_card_async(
         messages=messages,
         **{**forwarded, **extras},
     )
-    return _for_door(await _collect(runtime, card_id, result))
-
-
-def _for_door(result: Any) -> Any:
-    """A turn that asks for a tool is one JSON line, so the command door keeps every block."""
-    if not isinstance(result, dict) or result.get("type") != "model_turn":
-        return result
-    blocks = result.get("blocks") or []
-    if any(isinstance(block, dict) and block.get("type") == "tool-call" for block in blocks):
-        return json.dumps(result, ensure_ascii=False)
-    return result
+    return await _collect(runtime, card_id, result, on_notice=on_notice)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

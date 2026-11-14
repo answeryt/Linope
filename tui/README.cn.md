@@ -18,7 +18,8 @@
 | `banner.ts` | 标志；窗口小时改成一行标题 |
 | `theme.ts` | 这一套蓝色，以及把它们画上去的转义序列 |
 | `link/session.ts` | 启动内核会话，并来回传递每一行 |
-| `link/events.ts` | 把标准输出的一行读成一个事件 |
+| `link/protocol.ts` | 校验一行后端 JSONL 事件 |
+| `state.ts` | 把后端事实投影成画面状态 |
 | `screen.check.ts` | 检查宽度、折行、滚动、滚动条和进程行 |
 | `editor.check.ts` | 检查输入行、历史和按键解析 |
 | `focus.check.ts` | 检查哪个按键滚动、哪个按键编辑 |
@@ -61,8 +62,6 @@
 |---|---|
 | `displayWidth` | 一串文字占几列。一个汉字占两列。组合记号不占列 |
 | `wrapText` | 按这个宽度折行。一行里有空格时，在空格处断开 |
-| `noteProcessText` | 根据 `pid=` 行，或一页 `facts` 里的 pid，更新还活着的进程 |
-| `pushEvent` | 把一个内核事件收进对话记录 |
 | `renderScreen` | 标志、信息框、对话记录里看得见的那一段、滚动条，以及状态行 |
 | `historyLayout` | 历史面板占哪些行，滚动条在哪一列 |
 | `historyRoom` | 这个面板里能放几行对话 |
@@ -71,14 +70,21 @@
 | `retainScroll` | 暂停时，新行到来仍留在原地。跟随时，面板留在最新一行 |
 | `scrollLimit` | 最大的 `scrollY`。零表示对话装得下 |
 
-信息框有四项：管家在不在（`clerk` / `here`）、还活着几个进程（`alive`）、其中最近三个（`process`）、项目目录（`project`）。一行 `pid=<编号> capability=<名字>` 把该进程记成 `waiting`。`activity=working` 记成 `busy`。`activity=sleeping` 记成 `waiting`。已关闭或已离开的进程从名单里拿掉。`text-delta` 追加到还在往外流的那条助手回复上。随后一条文字相同的 `text` 换掉这条还在流的回复。`error` 是一条错误。`image` 是一条写着 `image` 和地址的回复。
+信息框有四项：管家在不在（`clerk` / `here`）、还活着几个进程（`alive`）、其中最近三个（`process`）、项目目录（`project`）。进程和回合状态来自带关联 id 的后端事实，不从 transcript 文本反推。`model.delta` 根据 `turn_id` 追加到对应回合，`turn.completed` 负责收束该回合。
 
 `banner.ts` 是 `logoLines`。窗口至少有标志那么宽，并且至少有 16 行时，画出六行的 `LINOPE KERNEL` 标志。更小的窗口改成一行：横线中间写 `LINOPE-KERNEL`。
 
 `theme.ts` 是这一套颜色：标志的蓝、边框、框底、正文、较淡的字、提示符和错误。`fg` 给文字上色，然后恢复默认。`fill` 给背景上色。`paint` 给前景上色，并把颜色留在后面的输出上。
 
-`link/session.ts` 是 `startTerminalSession`。它在用户启动 `linope` 时的当前目录启动 `python -u -m kernel.command session`，并强制 UTF-8。解释器先用 `LINOPE_PYTHON`，再用 `PYTHON`，都没有时用 `python`。标准输出的每一行都交给 `parseEvent`。不是这些事件的一行，就按普通文字显示。标准错误凑齐一行后，作为一条错误送出。会话开始时先送一个 `session` 事件，里面带着当前目录。进程关掉时，画面先听到 `left`，再听到 `done`。`send` 写出去掉首尾空白的一行。进程已经不在时，画面听到 `The clerk has left`。`stop` 写出 `exit`；这一写失败就杀掉进程。
+`link/session.ts` 是 `startTerminalSession`。它在用户启动 `linope` 时的当前目录启动 `python -u -m kernel.command session`，并强制 UTF-8。解释器先用 `LINOPE_PYTHON`，再用 `PYTHON`，都没有时用 `python`。标准输出的每一行必须是 `link/protocol.ts` 接受的版本化 JSONL 事件；无帧文本只能成为协议错误，不能进入 transcript。标准错误只是诊断事件，不能成为模型回答。`send` 写出去掉首尾空白的一行。`stop` 写出 `exit`；这一写失败就杀掉进程。
 
-`link/events.ts` 是 `parseEvent`。不是以 `{` 开头的一行，就不是事件。带 `type` 的 JSON 对象会变成 `done`、`image`、`session`、`text`、`text-delta`、`status` 或 `error` 中的一种。没有 `href` 的 `image`，以及解析不了的 JSON，会被丢掉。
+`link/protocol.ts` 校验协议版本、序列、关联 id、pid 和数据记录。`state.ts` 是从这些事实到 transcript 和进程面板的纯投影；渲染器不解析命令语法或后端文本。
 
-`screen.check.ts` 检查显示宽度、折行、滚动位置能看到长对话的哪一段、滚动条何时出现、跟随如何暂停和恢复、流式文字如何收成一条助手回复，以及 `pid=` 行如何更新进程名单。`editor.check.ts` 检查插入、删除、历史草稿和 `takeKey`。`focus.check.ts` 检查 ↑ 在输入区里是编辑、在历史面板里是滚动，以及 Shift+↑ 在两个焦点下都是滚动。`select.check.ts` 检查拖动、双击和三击各盖住哪些格子，以及复制出来的是画面上的那些字。
+`screen.check.ts` 检查显示宽度、折行、滚动、reducer 投影和带关联 id 的流式收束。`link/protocol.check.ts` 检查线协议。`editor.check.ts` 检查插入、删除、历史草稿和 `takeKey`。`focus.check.ts` 检查 ↑ 在输入区里是编辑、在历史面板里是滚动，以及 Shift+↑ 在两个焦点下都是滚动。`select.check.ts` 检查拖动、双击和三击各盖住哪些格子，以及复制出来的是画面上的那些字。
+
+用 `typescript` 包检查画面。`@types/node` 必须放在 `--typeRoots` 上；只用 `npx -p` 安装不会进入编译路径。
+
+```text
+npm install --prefix tui --no-save typescript @types/node
+node tui/node_modules/typescript/bin/tsc --noEmit --pretty false --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --typeRoots tui/node_modules/@types --types node tui/main.ts tui/state.ts tui/screen.ts tui/link/session.ts tui/link/protocol.ts
+```

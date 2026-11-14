@@ -9,11 +9,10 @@ from capability.model.model_provider.openai_chat_model.openai_chat_model_plugin 
 def test_profile_uses_card_defaults() -> None:
     declaration = capability_profile("model.openai_chat_model", ())
     assert declaration.capability == "model.openai_chat_model"
-    assert [item.kind for item in declaration.resources] == ["network"]
-    assert declaration.settings["provider"] == CARD_CONFIG["provider"]
-    assert declaration.settings["id"] == CARD_CONFIG["model"]
-    assert "temperature" not in declaration.settings
-    assert "base_url" not in declaration.settings
+    assert declaration.card_id == CARD_CONFIG["card_id"]
+    assert declaration.provider == CARD_CONFIG["provider"]
+    assert declaration.model == CARD_CONFIG["model"]
+    assert "temperature" not in declaration.call_params
 
 
 def test_base_url_change_updates_the_profile() -> None:
@@ -21,8 +20,8 @@ def test_base_url_change_updates_the_profile() -> None:
         "model.openai_chat_model",
         (("base_url", "https://example.invalid/v1"),),
     )
-    assert declaration.settings["base_url"] == "https://example.invalid/v1"
-    assert declaration.settings["id"] == CARD_CONFIG["model"]
+    assert declaration.call_params["base_url"] == "https://example.invalid/v1"
+    assert declaration.model == CARD_CONFIG["model"]
 
 
 def test_model_and_temperature_changes_update_the_profile() -> None:
@@ -30,9 +29,9 @@ def test_model_and_temperature_changes_update_the_profile() -> None:
         "model.openai_chat_model",
         (("model", "gpt-4o"), ("temperature", "0.2")),
     )
-    assert declaration.settings["id"] == "gpt-4o"
-    assert declaration.settings["provider"] == CARD_CONFIG["provider"]
-    assert declaration.settings["temperature"] == 0.2
+    assert declaration.model == "gpt-4o"
+    assert declaration.provider == CARD_CONFIG["provider"]
+    assert declaration.call_params["temperature"] == 0.2
 
 
 def test_permission_and_capabilities_stay_out_of_model_parameters() -> None:
@@ -44,14 +43,9 @@ def test_permission_and_capabilities_stay_out_of_model_parameters() -> None:
             ("temperature", "0.2"),
         ),
     )
-    assert declaration.settings["permission"] == "read-only"
-    assert declaration.settings["capabilities"] == ["read", "glob", "grep", "read_image"]
-    assert declaration.settings["temperature"] == 0.2
-    sandbox = next(item for item in declaration.resources if item.kind == "sandbox")
-    assert sandbox.call_params == {"mode": "read-only"}
-    assert "permission" not in {
-        key for item in declaration.resources for key in item.call_params if key != "mode"
-    }
+    assert declaration.call_params["permission"] == "read-only"
+    assert declaration.call_params["capabilities"] == ["read", "glob", "grep", "read_image"]
+    assert declaration.call_params["temperature"] == 0.2
 
 
 def test_unknown_topic_is_rejected_by_the_capability() -> None:

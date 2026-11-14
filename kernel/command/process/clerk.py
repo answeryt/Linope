@@ -1,26 +1,33 @@
-"""One clerk for the whole window.
+"""Compatibility host for the kernel runtime.
 
 ``process start`` opens a capability and returns the prompt. The capability
 stays up. Later lines in this same clerk talk to it. The clerk closes every
-capability only when the window leaves.
+ capability only when the runtime closes.
 """
 
 from __future__ import annotations
 
-import json
+import queue
 import re
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from kernel.command.convention import UsageError, guard
+from kernel.command.events import (
+    EventSink,
+    KernelEvent,
+    current_event_sink,
+)
 from kernel.command.process.listen import (
     PING_TIMEOUT,
     _open_programs,
     _startup_ping,
 )
 from kernel.command.process.start import _parse_start_options, launch_options
-from kernel.command.window import bind_line, bind_window, reset_line, reset_window
 from kernel.process.profile import ProfileUnavailable
 
 
@@ -32,10 +39,10 @@ class _Batch:
         return self._only
 
 
-class Clerk:
-    """The one place that starts capabilities and keeps their pipes."""
+class KernelRuntime:
+    """Kernel-owned process, resource, and model runtime state."""
 
-    def __init__(self) -> None:
+    def __init__(self, sink: EventSink | None = None) -> None:
         self._items: list[tuple[str, Any]] = []
         self._once: set[int] = set()
         self._env_file = ""
@@ -43,9 +50,82 @@ class Clerk:
         self._pool: Any = None
         self._reconciler: Any = None
         self._closed = False
+        self._tls = threading.local()
+        self._drive: Any = None
+        self.offers_turns = True
+        self._sink = sink or current_event_sink()
+        self._event_seq = 0
+        self._request_seq = 0
+
+    def emit(
+        self,
+        kind: str,
+        data: dict[str, Any] | None = None,
+        *,
+        request_id: str = "",
+        turn_id: str = "",
+        pid: int | None = None,
+    ) -> None:
+        """Publish one host-neutral fact."""
+
+        self._event_seq += 1
+        self._sink.emit(
+            KernelEvent(
+                kind=kind,
+                data=dict(data or {}),
+                request_id=request_id,
+                turn_id=turn_id,
+                pid=pid,
+                seq=self._event_seq,
+            )
+        )
 
     def processes(self) -> tuple[Any, ...]:
         return tuple(process for _name, process in self._items)
+
+    @property
+    def nested(self) -> bool:
+        return bool(getattr(self._tls, "nested", False))
+
+    @nested.setter
+    def nested(self, value: bool) -> None:
+        self._tls.nested = bool(value)
+
+    @property
+    def deferred(self) -> bool:
+        return bool(getattr(self._tls, "deferred", False))
+
+    @deferred.setter
+    def deferred(self, value: bool) -> None:
+        self._tls.deferred = bool(value)
+
+    @property
+    def drive(self) -> Any:
+        if self._drive is None:
+            from kernel.scheduler.model_scheduler.drive import Drive
+
+            self._drive = Drive(self)
+        return self._drive
+
+    def admit_load(
+        self,
+        process: Any,
+        message: dict[str, Any],
+        kind: str,
+        body: Any,
+        keep: bool,
+        line: str,
+    ) -> None:
+        """Keep this load on the model line instead of waiting here."""
+
+        self.deferred = True
+        self.drive.admit_load(process, message, kind, body, keep, line)
+
+    def admit_ask(self, sender: Any, receiver: Any, task: str, line: str) -> None:
+        """Keep this task on the model line instead of waiting here."""
+
+        self.deferred = True
+        self.drive.admit_ask(sender, receiver, task, line)
 
     def close(self) -> None:
         if self._closed:
@@ -56,50 +136,122 @@ class Clerk:
                 process.stop()
             except Exception:
                 pass
+            self.emit(
+                "process.closed",
+                {"capability": _name},
+                pid=int(getattr(process, "pid", 0) or 0) or None,
+            )
 
     def serve(self, lines: Any = None) -> int:
-        """Read one command per line. ``exit`` or a closed pipe ends the clerk."""
+        """Read commands while a file read can lend the model to someone else."""
+
         source = sys.stdin if lines is None else lines
-        token = bind_window(self)
+        self.emit("session.started", {"cwd": str(Path.cwd())})
+        incoming: queue.Queue[Any] = queue.Queue()
+
+        def pump() -> None:
+            try:
+                for raw in source:
+                    incoming.put(raw)
+            finally:
+                incoming.put(_EOF)
+
+        threading.Thread(target=pump, name="linope-runtime", daemon=True).start()
+        leaving = False
         try:
-            for raw in source:
-                if self._command(raw):
+            while True:
+                self.drive.step()
+                if leaving and not self.drive.busy():
                     break
+                try:
+                    raw = incoming.get(timeout=0.02)
+                except queue.Empty:
+                    continue
+                if raw is _EOF:
+                    leaving = True
+                    continue
+                if self._command(raw):
+                    leaving = True
+                self.drive.step()
         except KeyboardInterrupt:
             pass
         finally:
-            reset_window(token)
+            try:
+                while self.drive.busy():
+                    self.drive.step()
+                    time.sleep(0.01)
+            except KeyboardInterrupt:
+                pass
             self.close()
+            self.emit("session.closed", {})
         return 0
 
     def _command(self, raw: str) -> bool:
         text = raw.strip()
         if not text:
-            _done()
             return False
+        self._request_seq += 1
+        request_id = f"request-{self._request_seq}"
         _note_line(self, text)
         if text in {"exit", "quit"}:
-            _done()
-            return True
+            return not self.nested
+        self.deferred = False
         try:
-            argv = _split(text)
-            if argv and argv[0] == "linope":
-                argv = argv[1:]
-                text = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
-            from kernel.command.dispatch import main
-
-            line = bind_line(text)
-            try:
-                main(argv)
-            finally:
-                reset_line(line)
+            result = self._execute_text(text, request_id=request_id)
         except (UsageError, ProfileUnavailable, ValueError, KeyError, RuntimeError, OSError) as exc:
-            print(exc, file=sys.stderr)
-        _done()
+            self.emit(
+                "command.failed",
+                {
+                    "error": {
+                        "code": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    "command": text,
+                },
+                request_id=request_id,
+            )
+            result = None
+        if self.nested:
+            return False
+        if self.deferred:
+            self.emit(
+                "command.accepted",
+                {"command": text, "deferred": True},
+                request_id=request_id,
+            )
+            self.deferred = False
+            return False
+        if result is not None:
+            self.emit(
+                "command.completed",
+                {"command": text, "value": result},
+                request_id=request_id,
+            )
         return False
 
-    def launch(self, argv: list[str]) -> tuple[Any, ...]:
+    def command(self, raw: str) -> bool:
+        """Handle one explicit IPC command request."""
+
+        return self._command(raw)
+
+    def _execute_text(self, text: str, *, request_id: str = "") -> Any:
+        """Run one command without selecting a presentation."""
+
+        argv = _split(text)
+        if argv and argv[0] == "linope":
+            argv = argv[1:]
+        from kernel.command.dispatch import main
+
+        return main(
+            argv,
+            runtime=self,
+            request={"request_id": request_id, "line": text},
+        )
+
+    def launch(self, argv: list[str]) -> dict[str, Any]:
         parsed = _parse_start_options(argv)
+        if str(parsed[0]).startswith("model."):
+            raise UsageError("Model capabilities use `model use`, not `process start`")
         if not parsed[4] and self._env_file:
             parsed = (*parsed[:4], self._env_file, *parsed[5:])
         options = launch_options(parsed)
@@ -122,7 +274,6 @@ class Clerk:
             env_file_keys=options.env_file_keys,
             cwd=options.cwd,
             host_policy=options.host_policy,
-            thread_policy=options.thread_policy,
         )
         batch = []
         for process in started:
@@ -137,16 +288,21 @@ class Clerk:
                 process.stop()
             raise
         for process in batch:
-            print(
-                f"pid={process.pid} capability={parsed[0]}",
-                flush=True,
+            self.emit(
+                "process.started",
+                {"capability": parsed[0]},
+                pid=int(process.pid),
             )
         if parsed[2] and not _startup_ping(_Batch(tuple(batch)), PING_TIMEOUT):
-            print("This process did not answer", file=sys.stderr)
             for process in batch:
                 process.stop()
-            return ()
-        return tuple(batch)
+            raise RuntimeError("process_not_responding")
+        return {
+            "processes": [
+                {"pid": int(process.pid), "capability": parsed[0]}
+                for process in batch
+            ]
+        }
 
     def _ensure(self, ledger_path: str | None) -> None:
         if self._reconciler is not None:
@@ -167,7 +323,7 @@ class Clerk:
         self._reconciler = ProcessReconciler(pool, book)
 
     def note_env(self, path: str) -> None:
-        """Remember the env file later process starts in this window should use."""
+        """Remember the env file later process starts in this runtime should use."""
         self._env_file = path
 
     def close_once(self, text: str) -> None:
@@ -183,75 +339,55 @@ def _line_names_pid(text: str, pid: int) -> bool:
 
 
 def serve(lines: Any = None) -> int:
-    return Clerk().serve(lines)
+    return KernelRuntime().serve(lines)
 
 
 @guard("usage: linope session")
 def run(argv: list[str]) -> int:
-    """Open the one window. ``linope terminal`` uses this same entry."""
-    from kernel.command.window import current_window
-
-    if current_window() is not None:
-        print("Already in the terminal", flush=True)
-        return 0
+    """Launch the external session capability."""
     if argv:
         raise UsageError("usage: linope session")
-    return serve()
+    completed = subprocess.run(
+        [sys.executable, "-m", "capability.session.terminal"],
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        check=False,
+    )
+    return int(completed.returncode)
 
 
-def _note_line(clerk: Clerk, text: str) -> None:
+def _note_line(runtime: KernelRuntime, text: str) -> None:
     """The line a person typed. It has no pid, so `log` without a pid is what shows it."""
     from kernel.trace.journal import Journal, journal_beside, journal_path
 
-    book = clerk._book
+    book = runtime._book
     ledger = getattr(book, "_ledger", None) if book is not None else None
     path = journal_path() if ledger is None else journal_beside(ledger.path)
     Journal(path).append({"kind": "line", "text": text})
 
 
-def execute_line(text: str, service: Any = None) -> str:
-    """Run one command line and return the text it wrote."""
-    import io
-    from contextlib import redirect_stderr, redirect_stdout
+def execute_line(
+    text: str,
+    runtime: Any = None,
+    *,
+    service: Any = None,
+    request_id: str = "",
+) -> Any:
+    """Run one command line against an explicit kernel runtime."""
 
-    captured = io.StringIO()
-    with redirect_stdout(captured), redirect_stderr(captured):
-        window = None
-        from kernel.command.window import current_window
-
-        window = current_window()
-        if window is not None and hasattr(window, "_command"):
-            window._command(text)
-        elif service is not None:
-            from kernel.command.process.listen import PING_TIMEOUT, _one_line
-
-            _one_line(service, text, PING_TIMEOUT, emit_done=False)
-        else:
-            raise RuntimeError("No window is open")
-    return _visible_text(captured.getvalue())
+    target = runtime if runtime is not None else service
+    if target is not None and hasattr(target, "_execute_text"):
+        previous = bool(getattr(target, "nested", False))
+        target.nested = True
+        try:
+            return target._execute_text(text, request_id=request_id)
+        finally:
+            target.nested = previous
+    raise RuntimeError("No kernel runtime is open")
 
 
-def _visible_text(captured: str) -> str:
-    """The command's own text. Stream fragments and the done mark are not part of it."""
-    kept = [line for line in captured.splitlines() if not _stream_line(line)]
-    return "\n".join(kept).strip()
-
-
-def _stream_line(line: str) -> bool:
-    text = line.strip()
-    if text == '{"type": "done"}':
-        return True
-    if not text.startswith("{"):
-        return False
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return False
-    return isinstance(payload, dict) and payload.get("type") in {"text", "text-delta", "done"}
-
-
-def _done() -> None:
-    print(json.dumps({"type": "done"}, ensure_ascii=False), flush=True)
+_EOF = object()
 
 
 def _split(text: str) -> list[str]:

@@ -11,7 +11,11 @@ from capability.model.model_API.model_interface.gemini import (
     format_messages as gemini_messages,
     parse_response_turn as gemini_turn,
 )
-from capability.model.model_API.model_interface.openai_chat import format_messages as chat_messages
+from capability.model.model_API.model_interface.openai_chat import (
+    format_messages as chat_messages,
+    parse_response_turn as chat_turn,
+    parse_stream_parts as chat_stream,
+)
 from capability.model.model_API.model_interface.openai_response import (
     _DropRepeatedText,
     format_messages as response_messages,
@@ -33,6 +37,52 @@ def _transcript() -> list[dict]:
         },
         {"role": "tool", "name": "read", "tool_call_id": "call-1", "content": "print(1)"},
     ]
+
+
+def test_chat_completions_send_reasoning_back() -> None:
+    result = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="tool_calls",
+                message=SimpleNamespace(
+                    content=None,
+                    reasoning_content="read the file first",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id="call-1",
+                            function=SimpleNamespace(name="read", arguments="{}"),
+                        )
+                    ],
+                ),
+            )
+        ],
+        usage=None,
+    )
+    turn = chat_turn(result)
+    assert {"type": "reasoning", "text": "read the file first"} in turn["blocks"]
+    delta = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason=None,
+                delta=SimpleNamespace(content=None, reasoning_content="read", tool_calls=None),
+            )
+        ],
+        usage=None,
+    )
+    assert chat_stream(delta)[0] == {"type": "reasoning-delta", "text": "read"}
+    messages = chat_messages([
+        {"role": "user", "content": "read the file"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "reasoning", "text": "read the file first"},
+                {"type": "tool-call", "id": "call-1", "name": "read", "arguments": {}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "print(1)"},
+    ])
+    assert messages[1]["reasoning_content"] == "read the file first"
+    assert messages[1]["content"] == ""
 
 
 def test_chat_completions_keep_the_tool_call_id() -> None:

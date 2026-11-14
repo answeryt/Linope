@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from capability.catalog import build_table
-from kernel.command.process.clerk import Clerk
+from capability.model.model_provider.openai_chat_model.openai_chat_model_plugin import (
+    capability_profile,
+)
+from kernel.command.process.clerk import KernelRuntime
+from kernel.command.convention import UsageError
 from kernel.process.declaration import ProcessDeclaration
 from kernel.process.ledger import ProcessLedger
 from kernel.process.process_creat.instances import (
@@ -24,30 +28,22 @@ from kernel.resource.pool import ResourcePool
 from kernel.resource.resource_contract import kind_name
 
 
-def test_the_model_row_accepts_startup_changes() -> None:
-    declaration, definition = load_declaration(
+def test_the_model_card_accepts_runtime_changes() -> None:
+    config = capability_profile(
         "model.openai_chat_model",
         (
             ("base_url", "https://api.deepseek.com"),
             ("model", "deepseek-flash"),
         ),
     )
-    assert declaration.settings["base_url"] == "https://api.deepseek.com"
-    assert declaration.settings["model"] == "deepseek-flash"
-    assert definition.secret_names == ("OPENAI_API_KEY",)
-    assert definition.command() == (
-        "python",
-        "-m",
-        "capability.program",
-        "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py",
-    )
+    assert config.call_params["base_url"] == "https://api.deepseek.com"
+    assert config.call_params["model"] == "deepseek-flash"
+    assert config.api_key_env == "OPENAI_API_KEY"
 
 
 def test_an_unknown_name_is_not_called_a_missing_profile() -> None:
     with pytest.raises(KeyError, match="Unknown capability instance 'model.missing'"):
         load_declaration("model.missing", ())
-    with pytest.raises(ValueError, match="Unknown topic: trim"):
-        load_declaration("model.openai_chat_model", (("trim", "token"),))
     assert not issubclass(KeyError, ProfileUnavailable)
 
 
@@ -73,45 +69,40 @@ def test_the_kernel_does_not_choose_the_program_language() -> None:
 
 def test_a_start_line_runs_the_table_command(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
-    clerk = Clerk()
-    started = clerk.launch(
-        [
-            "model.openai_chat_model",
-            "--change",
-            "base_url=https://api.deepseek.com",
-            "--change",
-            "model=deepseek-flash",
-            "--with",
-            "memory=search",
-        ]
-    )
+    clerk = KernelRuntime()
     try:
-        assert len(started) == 1
-        process = started[0]
-        assert process.pid > 0
-        child = process._child
-        assert child is not None
-        assert list(child.args) == [
-            sys.executable,
-            "-m",
-            "capability.program",
-            "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py",
-        ]
-        kinds = [kind_name(grant.kind) for grant in process.activation.grants]
-        assert kinds == ["network", "memory"]
-        assert process.activation.resource_context.settings["base_url"] == "https://api.deepseek.com"
-        assert f"pid={process.pid} capability=model.openai_chat_model" in capsys.readouterr().out
+        with pytest.raises(UsageError, match="model use"):
+            clerk.launch(
+                [
+                    "model.openai_chat_model",
+                    "--change",
+                    "base_url=https://api.deepseek.com",
+                ]
+            )
     finally:
         clerk.close()
 
 
-def test_agent_loop_is_a_node_command() -> None:
+def test_agent_loop_is_the_linope_command() -> None:
     table = build_table(repo_root() / "capability")
     row = table["agent_loop"]
-    assert row["argv"] == ["node", "capability/agent_loop/pi/main.mjs"]
+    assert row["argv"] == ["python", "-m", "capability.agent_loop.linope"]
     assert row["resources"][0]["kind"] == "memory"
     assert row["resources"][0]["identity"]["scope"] == "chat"
     assert row["settings"]["model"] == "model.openai_chat_model"
+    pi = table["agent_loop_pi"]
+    assert pi["argv"] == ["node", "capability/agent_loop/pi/main.mjs"]
+    assert pi["resources"][0]["kind"] == "memory"
+    assert pi["settings"]["model"] == "model.openai_chat_model"
+
+
+def test_file_tools_defer_scope_to_the_runtime_sandbox() -> None:
+    table = build_table(repo_root() / "capability")
+    row = table["tools.read"]
+    sandbox = row["resources"][1]
+    assert sandbox["kind"] == "sandbox"
+    assert sandbox["identity"]["root"] == "host"
+    assert sandbox["call_params"]["scope"] == "host"
 
 
 def test_a_manifest_command_is_executed_unchanged(tmp_path: Path) -> None:

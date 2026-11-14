@@ -52,7 +52,6 @@ class ComputeDoor:
         """Answer whether this program may start, where, and for how long."""
         if not argv:
             raise ValueError("Command must not be empty")
-        from kernel.environment.mount import inside
         from kernel.environment.sandbox_vocab import confines, writes
 
         mode = self.filesystem.access_mode
@@ -60,7 +59,7 @@ class ComputeDoor:
         if not directory.is_dir():
             raise ValueError(f"Command directory does not exist: {directory}")
         workspace = self.filesystem.root_path("workspace")
-        if confines(mode) and not inside(workspace, directory):
+        if confines(mode) and not self.filesystem.allows(directory, write=writes(mode)):
             raise PermissionError("Command directory must be inside the workspace")
         if timeout_seconds is None and self.max_command_seconds is not None:
             timeout_seconds = self.max_command_seconds
@@ -105,6 +104,7 @@ class ComputeDoor:
                 list(permit.argv),
                 cwd=permit.cwd,
                 env=permit.env,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=permit.timeout_seconds,
@@ -152,5 +152,9 @@ class ComputeDoor:
             max_command_seconds=None if cap is None else float(cap),
             filesystem=filesystem,
             identity=identity,
-            isolator=host_isolator(filesystem.access_mode) if confine else None,
+            isolator=(
+                host_isolator(filesystem.access_mode, filesystem.policy)
+                if confine
+                else None
+            ),
         )

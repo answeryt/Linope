@@ -70,6 +70,7 @@ class SandboxPolicy:
         effective_mode: EffectiveMode,
         mode: str = READ_ONLY,
         workspace_root: str | None = None,
+        scope: str = "host",
     ) -> None:
         if canonical_path is None or effective_mode is None:
             raise TypeError("canonical_path and effective_mode are required")
@@ -77,6 +78,7 @@ class SandboxPolicy:
         self.effective_mode = effective_mode
         self.default_mode = require_sandbox_mode(mode)
         self.workspace_root = self._resolve_root(workspace_root or os.getcwd())
+        self.scope = str(scope or "host")
 
     def resolve(self, request: Mapping[str, Any] | None = None) -> dict[str, Any]:
         request = request or {}
@@ -90,7 +92,9 @@ class SandboxPolicy:
         cwd = _session_cwd(session)
         policy: dict[str, Any] = {
             "mode": mode,
+            "scope": self.scope,
             "workspace_root": self._resolve_root(cwd or self.workspace_root),
+            "cwd": self._resolve_root(cwd or self.workspace_root),
         }
         session_id = _session_id(session)
         if session_id is not None:

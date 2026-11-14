@@ -44,6 +44,11 @@ class CapabilityProcess:
         self._os_pid = int(activation.pid)
         self._ready = False
         self._secret_copy = ""
+        self._talk = threading.Lock()
+        self._in_talk = False
+        self._on_notice: Callable[[dict[str, Any]], None] | None = None
+        self._exchange_message: dict[str, Any] = {}
+        self._buffered: dict[str, Any] | None = None
         self.adapter: Any | None = None
         if resource_pool is not None:
             self._pool = resource_pool
@@ -126,55 +131,121 @@ class CapabilityProcess:
         message: dict[str, Any],
         timeout: float | None = 10.0,
         on_notice: Callable[[dict[str, Any]], None] | None = None,
-        on_command: Callable[[str], str] | None = None,
+        on_command: Callable[[str], Any] | None = None,
     ) -> dict[str, Any] | None:
         """Send one line and wait for its reply.
 
         ``timeout`` is how long a ping may stay quiet. ``None`` waits until the
         reply arrives or this process ends. A quiet wait does not close it.
         Text fragments are handed to ``on_notice`` and are not the reply.
+        A command from this process is run here before the wait continues.
         """
         if self._child is None:
             if message.get("operation") == "ping":
                 return self.answer_ping(message, timeout=timeout if timeout is not None else 1.0)
             return _reply_for(message)
-        if not self.is_alive:
-            return None
-        child = self._child
-        if child.stdin is None:
-            self._mark_dead()
+        if not self.begin_exchange(message, on_notice=on_notice, wait=timeout):
             return None
         try:
-            child.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-            child.stdin.flush()
-        except OSError:
-            self._mark_dead()
+            deadline = None if timeout is None else time.monotonic() + float(timeout)
+            while True:
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                reply = self.next_line(remaining)
+                if reply is None:
+                    return None
+                if reply.get("event") == "closed":
+                    return None
+                if reply.get("event") == "command":
+                    _answer_command(self, reply, on_command)
+                    continue
+                return reply
+        finally:
+            self.end_exchange()
+
+    def begin_exchange(
+        self,
+        message: dict[str, Any],
+        on_notice: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        wait: float | None = 0,
+    ) -> bool:
+        """Send one line and keep the conversation open until ``end_exchange``.
+
+        ``wait`` is how long to stand in line for this process. ``0`` tries
+        once and raises when somebody else is already talking. ``None`` waits
+        until the line is free. A positive number waits at most that many
+        seconds and returns False when the line stays busy.
+        """
+
+        if not self._acquire_talk(wait):
+            return False
+        self._in_talk = True
+        self._on_notice = on_notice
+        self._exchange_message = dict(message)
+        self._buffered = None
+        try:
+            self._hand_off(message)
+        except Exception:
+            self.end_exchange()
+            raise
+        return True
+
+    def _acquire_talk(self, wait: float | None) -> bool:
+        """Take the one conversation this process can hold."""
+
+        if wait == 0:
+            if self._talk.acquire(blocking=False):
+                return True
+            raise RuntimeError("This process is already being asked")
+        if wait is None:
+            self._talk.acquire()
+            return True
+        if wait < 0:
+            raise ValueError("wait must be >= 0")
+        return bool(self._talk.acquire(timeout=float(wait)))
+
+    def next_line(self, timeout: float | None) -> dict[str, Any] | None:
+        """The next command or final reply. ``None`` means nothing arrived yet."""
+
+        if self._buffered is not None:
+            reply = self._buffered
+            self._buffered = None
+            return reply
+        if not self._in_talk:
             return None
-        deadline = None if timeout is None else time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
         while True:
-            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-            raw = self._take_line(remaining)
+            remaining: float | None
+            if deadline is None:
+                remaining = None
+            else:
+                remaining = max(0.0, deadline - time.monotonic())
+            raw = self._take_line(0 if timeout == 0 else remaining)
             if raw is None:
                 return None
-            if raw == "":
-                self._mark_dead()
-                return None
-            if not raw.strip():
+            reply = self._read_reply(raw)
+            if reply is None:
                 continue
-            try:
-                reply = json.loads(raw)
-            except json.JSONDecodeError:
-                self._mark_dead()
-                return None
-            if not isinstance(reply, dict):
-                self._mark_dead()
-                return None
-            if reply.get("event") == "command":
-                _answer_command(child, reply, on_command)
-                continue
-            chosen = _reply_line(message, reply, on_notice)
-            if chosen is not None:
-                return chosen
+            return reply
+
+    def reply_command(self, result: Any = None, error: str = "", thread: str = "") -> None:
+        """Hand one command result back later. The conversation stays open."""
+
+        child = self._child
+        if child is None or child.stdin is None:
+            return
+        _write_command_result(child, result, error, thread)
+
+    def end_exchange(self) -> None:
+        """Let somebody else talk to this process."""
+
+        if not self._in_talk:
+            return
+        self._in_talk = False
+        self._on_notice = None
+        self._exchange_message = {}
+        self._buffered = None
+        self._talk.release()
 
     def answer_ping(self, message: dict[str, Any], timeout: float = 1.0) -> dict[str, Any] | None:
         """Reply only when this process is the one being asked. Otherwise wait and stay quiet."""
@@ -248,6 +319,10 @@ class CapabilityProcess:
 
             close_adapter(adapter)
         pid = self.activation.pid
+        from kernel.thread.task import close_process_threads
+
+        close_process_threads(pid)
+        self.threads = None
         if self._book is not None:
             self._book.close(pid)
         if self._pool is not None:
@@ -270,6 +345,45 @@ class CapabilityProcess:
         self._child = None
         if child.poll() is None:
             child.kill()
+
+    def _hand_off(self, message: dict[str, Any]) -> None:
+        if self._child is None:
+            self._buffered = _reply_for(message)
+            return
+        if not self.is_alive:
+            self._buffered = {"event": "closed"}
+            return
+        child = self._child
+        if child.stdin is None:
+            self._mark_dead()
+            self._buffered = {"event": "closed"}
+            return
+        try:
+            child.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+            child.stdin.flush()
+        except OSError:
+            self._mark_dead()
+            self._buffered = {"event": "closed"}
+
+    def _read_reply(self, raw: str) -> dict[str, Any] | None:
+        """A command or a final reply. ``None`` is a fragment to skip."""
+
+        if raw == "":
+            self._mark_dead()
+            return {"event": "closed"}
+        if not raw.strip():
+            return None
+        try:
+            reply = json.loads(raw)
+        except json.JSONDecodeError:
+            self._mark_dead()
+            return {"event": "closed"}
+        if not isinstance(reply, dict):
+            self._mark_dead()
+            return {"event": "closed"}
+        if reply.get("event") == "command":
+            return reply
+        return _reply_line(self._exchange_message, reply, self._on_notice)
 
     def _take_line(self, timeout: float | None) -> str | None:
         """The next stdout line. ``None`` means the wait ended and the process is still up."""
@@ -373,28 +487,37 @@ class CapabilityProcess:
 
 
 def _answer_command(
-    child: subprocess.Popen[str],
+    process: CapabilityProcess,
     reply: dict[str, Any],
-    on_command: Callable[[str], str] | None,
+    on_command: Callable[[str], Any] | None,
 ) -> None:
-    """Run one command line the capability wrote, then hand the text back."""
+    """Run one command line and hand its structured value back."""
     line = str(reply.get("line") or "")
     error = ""
-    result = ""
+    result: Any = None
     if on_command is None:
         error = "This process cannot run a command from here"
     else:
         try:
-            result = str(on_command(line) or "")
+            result = on_command(line)
         except Exception as exc:
             error = str(exc) or type(exc).__name__
+    process.reply_command(result, error)
+
+
+def _write_command_result(
+    child: subprocess.Popen[str],
+    result: Any,
+    error: str,
+    thread: str = "",
+) -> None:
     if child.stdin is None:
         return
+    payload: dict[str, Any] = {"event": "command_result", "result": result, "error": error}
+    if thread:
+        payload["thread"] = thread
     child.stdin.write(
-        json.dumps(
-            {"event": "command_result", "result": result, "error": error},
-            ensure_ascii=False,
-        )
+        json.dumps(payload, ensure_ascii=False)
         + "\n"
     )
     child.stdin.flush()
@@ -407,14 +530,20 @@ def _reply_for(message: dict[str, Any]) -> dict[str, Any]:
 def _reply_line(
     message: dict[str, Any],
     reply: dict[str, Any],
-    on_notice: Callable[[dict[str, Any]], None] | None,
+    _on_notice: Callable[[dict[str, Any]], None] | None,
 ) -> dict[str, Any] | None:
-    """A text fragment or status line is shown and skipped. A late pong is not this load's reply."""
-    if "event" not in reply and reply.get("type") in {"text", "text-delta", "status"}:
-        if on_notice is not None:
-            on_notice(reply)
-        return None
+    """A late pong is not this load's reply."""
     event = reply.get("event")
+    if event == "notice":
+        notice = reply.get("notice")
+        if _on_notice is not None and isinstance(notice, dict):
+            payload = dict(notice)
+            if reply.get("turn_id"):
+                payload.setdefault("turn_id", reply["turn_id"])
+            if reply.get("pid"):
+                payload.setdefault("pid", reply["pid"])
+            _on_notice(payload)
+        return None
     if message.get("operation") == "ping":
         if event == "pong" and reply.get("seq") == message.get("seq"):
             return reply
@@ -448,6 +577,9 @@ def _child_env(secret_names: tuple[str, ...]) -> dict[str, str]:
 def spawn_runtime(
     secret_names: tuple[str, ...] = (),
     argv: tuple[str, ...] | list[str] | None = None,
+    *,
+    cwd: str | None = None,
+    sandbox_policy: dict[str, Any] | None = None,
 ) -> subprocess.Popen[str]:
     """Start the command from the capability table."""
     if not argv:
@@ -460,16 +592,50 @@ def spawn_runtime(
         script = _repo_root() / command[1]
         if script.is_file():
             command[1] = str(script)
-    return subprocess.Popen(
+    working_directory = str(Path(cwd).expanduser().resolve()) if cwd else os.getcwd()
+    if sandbox_policy:
+        from kernel.environment.confine import host_isolator
+
+        mode = str(sandbox_policy.get("mode") or "")
+        if (
+            mode != "danger-full-access"
+            and str(sandbox_policy.get("scope") or "") != "host"
+        ):
+            wrapped = host_isolator(mode, sandbox_policy)(
+                tuple(command),
+                working_directory,
+                str(sandbox_policy.get("cwd") or working_directory),
+            )
+            command = [str(item) for item in wrapped["argv"]]
+    child = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        close_fds=True,
         text=True,
         encoding="utf-8",
         env=_child_env(secret_names),
-        cwd=os.getcwd(),
+        cwd=working_directory,
     )
+    _drain_stderr(child)
+    return child
+
+
+def _drain_stderr(child: subprocess.Popen[str]) -> None:
+    """Consume capability diagnostics without promoting them to UI output."""
+
+    if child.stderr is None:
+        return
+
+    def drain() -> None:
+        try:
+            while child.stderr is not None and child.stderr.readline():
+                pass
+        except (OSError, ValueError):
+            return
+
+    threading.Thread(target=drain, name="linope-capability-stderr", daemon=True).start()
 
 
 def _read_line(child: subprocess.Popen[str], timeout: float) -> str:

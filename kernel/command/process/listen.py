@@ -1,8 +1,8 @@
-"""Hand one line to the process that is already waiting.
+"""Hand one explicit command request to an already open process.
 
 ``load`` and ``ping`` are sent to that capability's own program. ``ask`` hands
 one task to another living process. ``list``, ``show``, and ``trace`` are
-answered in this window. None of these lines are written into the resource ledger.
+answered by the supplied runtime. None of these lines are written into the resource ledger.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from kernel.command.convention import UsageError
+from kernel.command.events import KernelEvent, current_event_sink
 from kernel.communication.address import (
     keep_memory_system,
     memory_contents,
@@ -27,17 +28,48 @@ PING_TIMEOUT = 1.0
 _SEQ = 0
 
 
+def _publish(
+    service: Any,
+    kind: str,
+    data: dict[str, Any] | None = None,
+    *,
+    pid: int | None = None,
+) -> None:
+    """Publish a fact when the active service exposes a host sink."""
+
+    emitter = getattr(service, "emit", None)
+    if callable(emitter):
+        emitter(kind, data, pid=pid)
+        return
+    current_event_sink().emit(KernelEvent(kind, dict(data or {}), pid=pid))
+
+
 def hold(service: Any, *, ping: bool = False, once: bool = False, lines: Any = None, timeout: float = PING_TIMEOUT) -> bool:
     """Stay open. With ``once``, close after one load has been handed to a process."""
     try:
         _open_programs(service)
-        for line in _member_lines(service):
-            print(line, flush=True)
         if ping and not _startup_ping(service, timeout):
-            print("This process did not answer", file=sys.stderr)
             return False
         for raw in sys.stdin if lines is None else lines:
-            if _one_line(service, raw, timeout) and once:
+            try:
+                handed, result = _one_line(service, raw, timeout, return_result=True)
+            except (
+                UsageError,
+                ValueError,
+                LookupError,
+                RuntimeError,
+                TypeError,
+                PermissionError,
+            ) as exc:
+                _publish(
+                    service,
+                    "command.failed",
+                    {"error": {"code": type(exc).__name__, "message": str(exc)}},
+                )
+                continue
+            if result is not _LATER:
+                _publish(service, "command.completed", {"value": result})
+            if handed and once:
                 return True
         return True
     except KeyboardInterrupt:
@@ -75,52 +107,89 @@ def _startup_ping(service: Any, timeout: float) -> bool:
         reply = ask_ping(service, _pid_of(process), timeout)
         if reply is None:
             return False
-        print(reply, flush=True)
+        _publish(
+            service,
+            "process.ping",
+            {"reply": reply},
+            pid=_pid_of(process),
+        )
     return True
 
 
-def _one_line(service: Any, raw: str, timeout: float, *, emit_done: bool = True) -> bool:
+def _one_line(
+    service: Any,
+    raw: str,
+    timeout: float,
+    *,
+    emit_done: bool = True,
+    return_result: bool = False,
+) -> Any:
     """Handle one line. True only after a load was handed to the process."""
+    del emit_done
     text = raw.strip()
     if not text:
-        return False
+        return (False, None) if return_result else False
     handed = False
+    later = False
+    result: Any = None
     try:
         parsed = _parse_line(text)
         if parsed[0] == "list":
-            _print_list(service)
+            result = _print_list(service)
         elif parsed[0] == "show":
-            _print_show(service, parsed[1], parsed[2] if len(parsed) > 2 else "")
+            result = _print_show(service, parsed[1], parsed[2] if len(parsed) > 2 else "")
         elif parsed[0] == "trace":
-            _print_trace(service, parsed[1])
+            result = _print_trace(service, parsed[1])
         elif parsed[0] == "ping":
             reply = ask_ping(service, parsed[1], timeout)
             if reply is None:
-                print("This process did not answer", file=sys.stderr)
+                raise RuntimeError("process_not_responding")
             else:
-                print(reply, flush=True)
+                result = reply
         elif parsed[0] == "ask":
             try:
-                result = _ask(service, parsed[1], parsed[2])
+                result = _ask(service, parsed[1], parsed[2], source=text)
             except _Handed as handed_error:
-                print(handed_error, file=sys.stderr)
+                raise RuntimeError(str(handed_error)) from handed_error
             else:
-                _show(result)
+                if result is _LATER:
+                    later = True
             handed = True
         else:
             try:
                 selector = parsed[4] if len(parsed) > 4 else ""
-                result = _load(service, parsed[1], parsed[2], parsed[3], selector=selector)
+                result = _load(
+                    service,
+                    parsed[1],
+                    parsed[2],
+                    parsed[3],
+                    selector=selector,
+                    source=text,
+                )
             except _Handed as handed_error:
-                print(handed_error, file=sys.stderr)
+                raise RuntimeError(str(handed_error)) from handed_error
             else:
-                _show(result)
+                if result is _LATER:
+                    later = True
             handed = True
-    except (UsageError, ValueError, LookupError, RuntimeError, TypeError, PermissionError) as exc:
-        print(exc, file=sys.stderr)
-    if emit_done:
-        print(json.dumps({"type": "done"}, ensure_ascii=False), flush=True)
+    except (UsageError, ValueError, LookupError, RuntimeError, TypeError, PermissionError):
+        raise
+    if return_result:
+        return handed, result
     return handed
+
+
+class _Later:
+    """The runtime kept this turn and will answer it after the model is free."""
+
+
+_LATER = _Later()
+
+
+def _can_schedule(service: Any) -> bool:
+    if not getattr(service, "offers_turns", False):
+        return False
+    return not bool(getattr(service, "nested", False))
 
 
 def _load(
@@ -131,6 +200,7 @@ def _load(
     *,
     selector: str = "",
     keep: bool = True,
+    source: str = "",
 ) -> Any:
     process = _choose(service, pid)
     addressed = bool(selector)
@@ -149,6 +219,9 @@ def _load(
             selector,
         )
     if kind == "message" and isinstance(body, str):
+        from kernel.thread.task import note_arrival
+
+        note_arrival(process, body)
         _remember(process, "user", body)
     _maybe_relieve(process)
     message = {
@@ -157,12 +230,15 @@ def _load(
         "body": body,
         "pid": _pid_of(process),
     }
+    if _can_schedule(service):
+        service.admit_load(process, message, kind, body, keep, source or f"load {kind} {_pid_of(process)}")
+        return _LATER
     _note(process, "self")
     try:
         reply = process.ask(
             message,
             timeout=None,
-            on_notice=_show_notice,
+            on_notice=_notice_handler(service, process),
             on_command=_command_runner(service),
         )
     finally:
@@ -174,6 +250,26 @@ def _load(
     return result
 
 
+def _notice_handler(service: Any, process: Any):
+    """Convert capability notices into correlated kernel facts."""
+
+    def handle(notice: dict[str, Any]) -> None:
+        kind = str(notice.get("kind") or "capability.notice")
+        data = dict(notice)
+        turn_id = str(data.pop("turn_id", "") or "")
+        data.pop("pid", None)
+        emitter = getattr(service, "emit", None)
+        if callable(emitter):
+            emitter(
+                kind,
+                data,
+                turn_id=turn_id,
+                pid=_pid_of(process),
+            )
+
+    return handle
+
+
 def _pages(service: Any, process: Any) -> bool:
     """A process with memory talks through a page. Launching is a separate ability."""
     del service
@@ -181,10 +277,13 @@ def _pages(service: Any, process: Any) -> bool:
     return memory_grant(grants) is not None
 
 
-def _ask(service: Any, pid: str | int, task: str) -> Any:
+def _ask(service: Any, pid: str | int, task: str, source: str = "") -> Any:
     """Hand one task to the named process. The sender's memory stays here."""
     receiver = _choose(service, pid)
     sender = _sender(service, receiver)
+    if _can_schedule(service):
+        service.admit_ask(sender, receiver, task, source or f"ask {_pid_of(receiver)}")
+        return _LATER
     result = _hand(service, sender, receiver, task)
     _remember(sender, "other", _output_text(result))
     return result
@@ -217,7 +316,6 @@ def _task_on(service: Any, receiver: Any, task: str) -> Any:
             "pid": _pid_of(receiver),
         },
         timeout=None,
-        on_notice=_show_notice,
         on_command=_command_runner(service),
     )
     result = _result(reply)
@@ -228,7 +326,7 @@ def _task_on(service: Any, receiver: Any, task: str) -> Any:
 def _command_runner(service: Any):
     """Run a command line through the same door a person uses."""
 
-    def run(line: str) -> str:
+    def run(line: str) -> Any:
         from kernel.command.process.clerk import execute_line
 
         return execute_line(line, service)
@@ -305,14 +403,15 @@ def _maybe_relieve(process: Any) -> None:
         latest = log.latest(_pid_of(process))
         if latest is not None:
             activity = str(latest.get("activity") or "sleeping")
+    from kernel.calculate.measure import context_limit_from
+
     settings = getattr(getattr(process, "activation", None), "settings", None) or {}
-    model = str(settings.get("id") or "") if isinstance(settings, dict) else ""
     pressure = measure(
         pool=getattr(process, "_pool", None),
         record=record,
         book=book,
         activity=activity,
-        model=model,
+        context_limit=context_limit_from(settings),
     )
     relieve(book, record.pid, pressure, delegating=True)
 
@@ -356,51 +455,14 @@ class _Handed(Exception):
     """The load reached the process, and the process reported an error."""
 
 
-def _show_notice(notice: dict[str, Any]) -> None:
-    """Show one notice. Status stays a status line. Text stays a text fragment."""
-    text = notice.get("text")
-    if not text:
-        return
-    if notice.get("type") == "status":
-        print(json.dumps({"type": "status", "text": str(text)}, ensure_ascii=False), flush=True)
-        return
-    from kernel.command.screen.live_stream import publish_text
+def _deliver(result: Any) -> Any:
+    """Return a command value without choosing a presentation."""
 
-    publish_text(str(text))
-
-
-def _show(result: Any) -> None:
-    """Print the words a person should read. A stream fragment is not this result."""
-    if isinstance(result, str):
-        print(result, flush=True)
-        return
-    marker = "model" + "_turn"
-    if isinstance(result, dict) and result.get("type") == marker:
-        text = _answer_text(result)
-        if text:
-            print(text, flush=True)
-        return
-    if result is not None:
-        print(result, flush=True)
-
-
-def _answer_text(result: dict[str, Any]) -> str:
-    """Every text block, in order. Reasoning and tool calls stay out of the window."""
-    blocks = result.get("blocks")
-    if not isinstance(blocks, list):
-        return ""
-    pieces = []
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "text":
-            continue
-        text = block.get("text")
-        if text:
-            pieces.append(str(text))
-    return "\n".join(pieces)
+    return result
 
 
 def parse_line(line: str) -> tuple[Any, ...]:
-    """Split one window line into its command, process id, and body."""
+    """Split one command request into its command, process id, and body."""
     if " -- " in line:
         head, body = line.split(" -- ", 1)
         argv = shlex.split(head, posix=True)
@@ -496,20 +558,27 @@ def _open_programs(service: Any) -> None:
             log.append(_pid_of(process), "sleeping")
 
 
-def _print_list(service: Any) -> None:
+def _print_list(service: Any) -> list[dict[str, Any]]:
+    """Return live process facts."""
+
+    rows: list[dict[str, Any]] = []
     for process in _processes(service):
         record = _record(process)
         status = "" if record is None else record.status.value
         activity = _shown_activity(process, record)
-        print(
-            f"pid={_pid_of(process)} activity={activity} status={status}",
-            flush=True,
+        rows.append(
+            {
+                "pid": _pid_of(process),
+                "activity": activity,
+                "status": status,
+                "capability": _capability_of(process),
+            }
         )
+    return rows
 
 
-def _print_show(service: Any, pid: str, selector: str = "") -> None:
-    import json
-
+def _print_show(service: Any, pid: str, selector: str = "") -> dict[str, Any]:
+    """Return one process page."""
     from kernel.hypermedia.process_page import page_document, process_page
 
     process = _by_id(service, pid)
@@ -533,17 +602,15 @@ def _print_show(service: Any, pid: str, selector: str = "") -> None:
     )
     if contents is not None:
         document["memory"] = contents
-    print(json.dumps(document, ensure_ascii=False), flush=True)
+    return document
 
 
-def _print_trace(service: Any, pid: str) -> None:
-    import json
-
+def _print_trace(service: Any, pid: str) -> list[dict[str, Any]]:
+    """Return one process activity trail."""
     process = _by_id(service, pid)
     log = _activity(process)
     rows = () if log is None else log.for_process(_pid_of(process))
-    for row in rows:
-        print(json.dumps(row, ensure_ascii=False), flush=True)
+    return list(rows)
 
 
 def _shown_activity(process: Any, record: Any) -> str:
@@ -665,9 +732,9 @@ def _capability_of(process: Any) -> str:
     return str(getattr(process, "capability", "") or "")
 
 
-def _member_lines(service: Any) -> list[str]:
+def _member_lines(service: Any) -> list[dict[str, Any]]:
     return [
-        f"pid={_pid_of(process)} capability={_capability_of(process)}"
+        {"pid": _pid_of(process), "capability": _capability_of(process)}
         for process in _processes(service)
     ]
 
@@ -678,23 +745,27 @@ def _next_seq() -> int:
     return _SEQ
 
 
-def saved_list() -> int:
-    """Print the accounts left in the ledger file."""
+def saved_list() -> list[dict[str, Any]]:
+    """Return accounts left in the ledger file."""
     book = _saved_book()
     log = _saved_log()
+    rows: list[dict[str, Any]] = []
     for record in book.records():
         latest = None if log is None else log.latest(record.pid)
         activity = _saved_activity(record, latest)
-        print(
-            f"pid={record.pid} "
-            f"activity={activity} status={record.status.value}",
-            flush=True,
+        rows.append(
+            {
+                "pid": record.pid,
+                "activity": activity,
+                "status": record.status.value,
+                "capability": record.capability_id,
+            }
         )
-    return 0
+    return rows
 
 
-def saved_show(token: str) -> int:
-    """Print the current page for one saved account."""
+def saved_show(token: str) -> dict[str, Any]:
+    """Return the current page for one saved account."""
     from kernel.hypermedia.process_page import page_document, process_page
 
     book = _saved_book()
@@ -706,19 +777,16 @@ def saved_show(token: str) -> int:
     activity = _saved_activity(record, latest)
     counterpart, way = _with_fields(latest, activity)
     page = process_page(record, activity, counterpart, way, _saved_shares(book, record))
-    print(json.dumps(page_document(page), ensure_ascii=False), flush=True)
-    return 0
+    return page_document(page)
 
 
-def saved_trace(token: str) -> int:
-    """Print the activity trail for one saved account."""
+def saved_trace(token: str) -> list[dict[str, Any]]:
+    """Return the activity trail for one saved account."""
     book = _saved_book()
     pid = _parse_pid(token)
     if pid is None or book.get(pid) is None:
         raise UsageError(f"No such process: {token}")
-    for row in _saved_log().for_process(pid):
-        print(json.dumps(row, ensure_ascii=False), flush=True)
-    return 0
+    return list(_saved_log().for_process(pid))
 
 
 def _saved_book() -> Any:

@@ -37,6 +37,10 @@ def _answer(payload: dict[str, Any]) -> Any:
         roots = _load("roots_plugin.py")
         policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
         return roots.writable_roots(policy)
+    if operation in {"resolve", "resolve-policy"}:
+        sandbox = _load("sandbox_plugin.py")
+        request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+        return sandbox.resolve_policy(request)
     if operation == "canonical-path":
         roots = _load("roots_plugin.py")
         return roots.canonical_path(str(payload.get("path") or ""))
@@ -50,10 +54,13 @@ def _confine(payload: dict[str, Any]) -> dict[str, Any]:
         Path(__file__).resolve().parent / "sandbox-local" / "src" / "sandbox_local_plugin.py"
     )
     roots = _load("roots_plugin.py")
+    profiles = _load_path(
+        Path(__file__).resolve().parent / "sandbox-local" / "src" / "profiles_plugin.py"
+    )
     sandbox = local.LocalSandbox(
-        bwrap_profile_args=lambda policy: [],
-        landlock_profile_args=lambda policy: [],
-        seatbelt_profile_args=lambda policy, **kwargs: [],
+        bwrap_profile_args=profiles.bwrap_profile_args,
+        landlock_profile_args=profiles.landlock_profile_args,
+        seatbelt_profile_args=profiles.seatbelt_profile_args,
         writable_roots=roots.writable_roots,
     )
     try:
@@ -62,10 +69,27 @@ def _confine(payload: dict[str, Any]) -> dict[str, Any]:
             {
                 "mode": str(payload.get("mode") or ""),
                 "workspace_root": str(payload.get("workspace_root") or ""),
+                "scope": str(payload.get("scope") or ""),
+                "roots": list(payload.get("roots") or ()),
+                "writable_roots": list(payload.get("writable_roots") or ()),
             },
         )
-    except local.SandboxUnavailableError as exc:
-        raise SystemExit(str(exc)) from exc
+    except (local.SandboxUnavailableError, ValueError) as exc:
+        _exit_with(str(exc))
+
+
+def _exit_with(message: str) -> None:
+    """The kernel reads this pipe as UTF-8. A locale stderr would break that."""
+
+    payload = (message.rstrip() + "\n").encode("utf-8", errors="replace")
+    buffer = getattr(sys.stderr, "buffer", None)
+    if buffer is not None:
+        buffer.write(payload)
+        buffer.flush()
+    else:
+        sys.stderr.write(message.rstrip() + "\n")
+        sys.stderr.flush()
+    raise SystemExit(1)
 
 
 def _load(name: str) -> Any:

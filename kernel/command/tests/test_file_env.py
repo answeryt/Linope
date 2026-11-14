@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from kernel.command.dispatch import main
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.process.process_creat.instances import CapabilityDefinition
@@ -11,25 +13,25 @@ from kernel.resource.lease import ResourceLeaseManager
 from kernel.resource.pool import ResourcePool
 
 
-def test_create_writes_one_line_and_hides_the_value(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_create_writes_one_line_and_hides_the_value(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    assert main(["create", ".env", "--", "OPENAI_API_KEY=sk-test"]) == 0
+    created = main(["create", ".env", "--", "OPENAI_API_KEY=sk-test"])
     text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=sk-test" in text
-    assert "sk-test" not in capsys.readouterr().out
-    assert main(["create", ".env", "--", "OTHER=1"]) == 0
+    assert "sk-test" not in str(created["path"])
+    assert main(["create", ".env", "--", "OTHER=1"])["path"].endswith(".env")
     text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=sk-test" in text
     assert "OTHER=1" in text
 
 
-def test_load_env_names_an_existing_file(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_load_env_names_an_existing_file(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=sk-test\n", encoding="utf-8")
-    assert main(["load", "env", ".env"]) == 0
-    assert capsys.readouterr().out.strip() == f"env_file={env.resolve()}"
-    assert main(["load", "message", "--", "hello"]) == 2
+    assert main(["load", "env", ".env"]) == {"env_file": str(env.resolve())}
+    with pytest.raises(RuntimeError, match="session_not_open"):
+        main(["load", "message", "--", "hello"])
 
 
 def test_started_process_uses_that_env_file(tmp_path: Path) -> None:

@@ -4,6 +4,8 @@ English | [中文](README.cn.md)
 
 Process commands open a capability and talk to processes that are already in this window. The resource record is [`kernel/process`](../../process/README.md). The plugin loop is [`kernel/process/process_runtime`](../../process/process_runtime/README.md).
 
+Commands return structured values and errors to the host adapter. The kernel does not copy stderr into a user interface or interpret output bytes.
+
 ## Contract
 
 `process.py` accepts:
@@ -19,7 +21,7 @@ Inside a living window the same words run against that window. Outside it, `list
 
 ### Start
 
-`start.py` asks the capability for its profile, opens one resource record per pid, prints each `pid=`, and stays in the launching process. It does not detach and it does not enter the `process_runtime` request loop by itself.
+`start.py` asks the capability for its profile, opens one resource record per pid, returns process identity facts, and stays in the launching process. It does not detach and it does not enter the `process_runtime` request loop by itself.
 
 | Flag | Meaning |
 |---|---|
@@ -32,7 +34,6 @@ Inside a living window the same words run against that window. Outside it, `list
 | `--cwd` | Working directory for the room. |
 | `--env-file` | Env file for this start. The window's remembered file is used when this is omitted. |
 | `--max-runtime-seconds` | Host execution limit for this launch. |
-| `--max-concurrent-tasks`, `--min-concurrent-tasks`, `--max-sync-workers` | Thread policy for this launch. Defaults are 1. |
 
 A capability with no usable profile stops before the process is created. `--share` of a kind the contract refuses, including a name that is not a resource, fails the start.
 
@@ -49,9 +50,9 @@ Without `--once` the command stays until the process exits or the window stops.
 | `load <kind> <pid> -- <n> <file>` | A `.txt`, `.md`, or `.json` file is copied into `system` and is not sent to the model. The copy index starts at 1. The same path updates that copy. Without an index, a new file goes last and an existing path stays where it was. A process with no memory refuses the file. |
 | `ask <pid> -- <task>` | Hands one task to that process. The sender's memory is not attached. A peer with memory runs its own page turn, so the task and the answer are stored in the peer's memory. A peer with no memory receives the task text. The result is written back into the sender's memory. Both sides are recorded as `with`, then return to `sleeping`. Exactly one other living process must exist to act as the sender. |
 | `ping <pid>` | Asks that process. `pong` must carry the same sequence and pid. Silence, a wrong sequence, or a different pid is no answer. |
-| `list` | Prints `pid`, activity, and record status for processes in the window. |
-| `show <pid> [address]` | Prints the process page. When the process has memory, the page includes the memory contents for that address. |
-| `trace <pid>` | Prints that process's activity rows. |
+| `list` | Returns process identity, activity, and record status facts. |
+| `show <pid> [address]` | Returns the process page. When the process has memory, the page includes the memory contents for that address. |
+| `trace <pid>` | Returns that process's activity rows. |
 
 `load message` to a process with memory always runs a page turn. The window does not need to be able to launch another process for that. `process start` is offered on the page only when it can. `load message` to the process itself records activity `self` while the call runs, then `sleeping` when it returns. What a person said, model output, tool output, and a handed-back task result are written into that process's memory when it has one. Those bodies are not written to the process ledger. A tool load sends its body unchanged.
 
