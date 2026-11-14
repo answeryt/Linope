@@ -74,22 +74,35 @@ def register_secret_rule(rule: Any) -> None:
     _SECRET_RULE = rule
 
 
-def blocked(path: Path) -> bool:
-    """Git metadata, secret files, and a home directory stay out of the view."""
+def blocked(
+    path: Path,
+    *,
+    scope: str = "",
+    mode: str = "",
+    blocked_names: Sequence[str] = (),
+    blocked_parts: Sequence[str] = (),
+    blocked_suffixes: Sequence[str] = (),
+) -> bool:
+    """Apply sandbox-provided sensitive-path rules to one path."""
+    if mode == "danger-full-access":
+        return False
     if _SECRET_RULE is not None:
         return bool(_SECRET_RULE(str(path)))
     resolved = path.expanduser()
-    if _is_home(resolved):
+    if scope != "host" and _is_home(resolved):
         return True
-    if any(part in _SECRET_PARTS for part in resolved.parts):
+    names = set(blocked_names) or _SECRET_NAMES
+    parts = set(blocked_parts) or _SECRET_PARTS
+    suffixes = tuple(blocked_suffixes) or _SECRET_SUFFIXES
+    if any(part in parts for part in resolved.parts):
         return True
     name = resolved.name
     if name == ".env" or name.startswith(".env."):
         return True
-    if name in _SECRET_NAMES:
+    if name in names:
         return True
     folded = name.casefold()
-    return any(folded.endswith(suffix) for suffix in _SECRET_SUFFIXES)
+    return any(folded.endswith(suffix) for suffix in suffixes)
 
 
 def inside(root: str, path: Path) -> bool:
@@ -112,6 +125,10 @@ def admit_path(
     write: bool,
     own_temp: str = "",
     mode: str = "",
+    scope: str = "",
+    blocked_names: Sequence[str] = (),
+    blocked_parts: Sequence[str] = (),
+    blocked_suffixes: Sequence[str] = (),
 ) -> Path:
     """Resolve a path and keep it inside an allowed root."""
     requested = candidate.expanduser()
@@ -119,7 +136,25 @@ def admit_path(
         resolved = requested.resolve()
     except OSError:
         resolved = requested
-    if blocked(requested) or blocked(resolved) or _other_private_temp(resolved, own_temp):
+    if (
+        blocked(
+            requested,
+            scope=scope,
+            mode=mode,
+            blocked_names=blocked_names,
+            blocked_parts=blocked_parts,
+            blocked_suffixes=blocked_suffixes,
+        )
+        or blocked(
+            resolved,
+            scope=scope,
+            mode=mode,
+            blocked_names=blocked_names,
+            blocked_parts=blocked_parts,
+            blocked_suffixes=blocked_suffixes,
+        )
+        or _other_private_temp(resolved, own_temp)
+    ):
         raise PermissionError("This path is not in an allowed location")
     if mode and not confines(mode):
         return resolved

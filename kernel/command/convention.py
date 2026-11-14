@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,7 +40,7 @@ class Line:
 
 
 def parse(argv: list[str], *, flags: dict[str, str], usage: str) -> Invocation:
-    """Parse one subcommand. ``usage`` is printed by the caller when this fails."""
+    """Parse one subcommand. Hosts decide how usage failures are rendered."""
     del usage
     head, body = split_body(list(argv))
     position, options, env_file, env_keys, as_json = parse_flags(head, flags)
@@ -56,24 +54,24 @@ def parse(argv: list[str], *, flags: dict[str, str], usage: str) -> Invocation:
     )
 
 
-def emit(value: Any, *, as_json: bool, text: str | None = None) -> None:
-    """Print either one JSON document or the human line."""
-    if as_json:
-        print(json.dumps(value, ensure_ascii=False, default=str))
-        return
-    print(value if text is None else text)
+def emit(value: Any, *, as_json: bool, text: str | None = None) -> Any:
+    """Return a command value without selecting a presentation."""
+
+    del as_json
+    return value if text is None else text
 
 
 def guard(usage: str):
-    """Turn a usage error into exit code 2. Runtime errors stay in the command."""
+    """Attach usage metadata while leaving errors to the host."""
 
     def wrap(function):
-        def runner(*args: Any, **kwargs: Any) -> int:
+        def runner(*args: Any, **kwargs: Any) -> Any:
             try:
                 return function(*args, **kwargs)
             except UsageError as exc:
-                print(exc, file=sys.stderr)
-                return 2
+                if not str(exc):
+                    raise UsageError(usage) from exc
+                raise
 
         runner.__usage__ = usage
         return runner

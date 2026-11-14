@@ -12,8 +12,10 @@ from kernel.load_balancing.pick import load_key
 def reconciler_opener(reconciler: Any, declaration: Any, thread_policy: Any = None) -> Callable[[], str]:
     """Open one peer through the existing reconciler and return its process id."""
 
+    del thread_policy
+
     def open_one() -> str:
-        process = reconciler.start(declaration, thread_policy=thread_policy)
+        process = reconciler.start(declaration)
         return str(process.activation.process_id)
 
     return open_one

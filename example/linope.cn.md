@@ -53,7 +53,7 @@
 
 密钥由人在窗口里准备好，再启动进程。仓库根目录已经有 `capability/.env`。人输入 `load env capability/.env` 之后，终端打印 `env_file=` 加绝对路径。这一行不送进任何进程，也不打印文件里的值。你的页面不会出现 `env_file=`。不要写 `load env`。
 
-之后本窗口的 `process start` 没写 `--env-file`，就用这份文件。每个进程只拿走自己卡片上 `api_key_env` 写明的那一个键。`tools.ddgs` 没有这个键，不读这份文件。`model.openai_chat_model` 和 `model.openai_response_model` 读 `OPENAI_API_KEY`。键名可以出现在命令说明里，值永远不写进命令，也不写进回答。
+之后本会话的 `process start` 没写 `--env-file`，就用这份文件。工具进程只拿走自己卡片上 `api_key_env` 写明的键。模型卡片由 `model use` 安装，模型运行时读取对应的密钥。键名可以出现在命令说明里，值永远不写进命令，也不写进回答。
 
 人要新建或改一行时，自己写 `create <路径> -- <名字=值>`。`--` 后面只有一个 `名字=值`。同名的一行会被换掉。值留在文件里，终端只打印路径。你不要写 `create`。
 
@@ -62,11 +62,12 @@
 页里还没有这个能力时，用一行把它打开。模型要记住提示词和对话时，加上它档案里没有的 memory：
 
 ```text
-process start model.<目录名> --with memory=<身份>
+model use model.<目录名> --change model=<API模型名>
 process start tools.<插件名>
 ```
 
-`--with` 的写法是 `种类=身份`。档案里已经有的种类不能用它改，终端会说「不能改默认资源」。身份没写全时，终端会说「还缺身份」。
+模型不再通过 `process start` 启动。`model use` 安装一张卡片，
+`model run -- <消息或JSON>` 执行一次模型请求。
 
 `--change` 只改这次调用，写法是 `--change 主题=值`，可以重复。主题必须是这个能力认识的。`model.openai_chat_model` 认识 `model`、`provider`、`temperature`、`base_url`。`--change model=` 换的是模型名；`--change base_url=` 换的是 API 地址；`--change temperature=` 不另开一份模型。不认识的主题会原样报「不认识的主题」。
 
@@ -74,24 +75,24 @@ process start tools.<插件名>
 
 `--count` 不写就是 1。不写 `--once`，进程留到窗口结束。写了 `--once`，做完一次 `load` 就关闭记录。`--ping` 只问进程自己，它回 `pong`，不调用模型；没答上就关闭记录，命令失败。
 
-成功时每一份打出：
+`process start` 成功时，命令值是一个对象：
 
-```text
-pid=<数字> capability=<能力名>
+```json
+{"processes":[{"pid":0,"capability":"<能力名>"}]}
 ```
 
-记下这两个字段。后面的命令用这个数字。示例里的尖括号和数字只说明格式，每次换成当前页里的字。
+后面的命令用里面的 `pid`。同一个对象会记到下一页。示例里的尖括号和数字只说明格式，每次换成当前页里的值。
 
 「这个能力没有可用档案」表示这个能力的档案这次用不了。能力名保持原样，不要改成另一条命令去绕过。把失败的那一行和这句错误一起说明。
 
 ## 对进程说话
 
 ```text
-load message <进程号> -- <正文>
+model run -- <正文或JSON>
 load tool <进程号> -- <JSON对象>
 ```
 
-`message` 只给模型进程。`tool` 只给工具进程。种类送错时，进程拒绝这次装入。
+`model run` 使用内核模型调度资源，模型没有进程号。`tool` 只给工具进程。
 
 正文若整行只是一个已存在的 `.txt`、`.md` 或 `.json` 路径，全文记进该进程 memory 的 `system`，这次不调用模型。再加载另一份文件会留在后面，不换掉已经记下的文件。份数从 1 开始，写在路径前面：`load message <进程号> -- 1 <文件路径>` 把这份文件插到最前，原来的第一份变成第二份，后面的依次后移，不是两份互换。不写份数时，新文件排到最后；同一路径再加载只更新这一份，没写份数就留在原位。份数大于现有份数时，排到最后。下一次提问把这些文件按这个顺序拼成一段 `system`。这个进程没有 memory 时，路径会被拒绝，错误是「这个进程没有记忆」。下一行先把该能力带 `--with memory=<身份>` 重新启动，不要改文件的后缀来硬送。
 
@@ -129,11 +130,11 @@ log <进程号>
 ping <进程号>
 ```
 
-`list` 每行是 `pid=`、`activity=`、`status=`。回答里要引用进程时，用这里的 pid，不要凭记忆编一个。
+`list` 返回一组对象。每个对象有 `pid`、`activity`、`status` 和 `capability`。回答里要引用进程时，用这里的 pid，不要凭记忆编一个。
 
-`show` 在窗口还开着、并且该进程有 memory 时，打出页面，以及 `memory.system` 和按时间排的正文。窗口关掉之后，只能看到进程账，看不到对话。地址可以是 `system`、`message`、`task`、`artifact`，也可以是 `message/0` 或 `message/0-2`。写了别的进程的记忆名时，看的是那一份，不是自己的 `system`。
+`show` 在窗口还开着、并且该进程有 memory 时，返回页面，以及 `memory.system` 和按时间排的正文。窗口关掉之后，只能看到进程账，看不到对话。地址可以是 `system`、`message`、`task`、`artifact`，也可以是 `message/0` 或 `message/0-2`。写了别的进程的记忆名时，看的是那一份，不是自己的 `system`。
 
-`trace` 打出这个进程的活动记录，也就是忙闲。`log` 打出 `.linope/log/session.jsonl` 里的轮次流水：人打的每一行，以及模型每次写完的原文和判定。`log <进程号>` 只打这个进程的行。人打的那一行没有进程号，只在不带进程号的 `log` 里出现。`ping` 等它回 `pong`。没答、序号不对、或 pid 对不上，都是「这个进程没答」。
+`trace` 返回这个进程的活动记录，也就是忙闲。`log` 返回 `.linope/log/session.jsonl` 里的轮次记录：人打的每一行，以及模型每次写完的原文和判定。`log <进程号>` 只返回这个进程的记录。人打的那一行没有进程号，只在不带进程号的 `log` 里出现。`ping` 等它回 `pong`。没答、序号不对、或 pid 对不上，都是「这个进程没答」。
 
 ## 服务
 
@@ -143,7 +144,7 @@ ping <进程号>
 service start <模型进程号> <搜索进程号>
 ```
 
-成功时先打 `service=<编号>`，再打每一行 `pid=` 和 `capability=`。同一个号写两遍，或号已经不在，这次失败，名单也不写。`exit` 或 `quit` 会停掉窗口里的进程；名单还在文件里，但这些号不再是还开着的进程。
+成功时，命令值是 `{"service_id": <编号>, "processes": [{"pid": <数字>, "capability": "<能力名>"}]}`。同一个号写两遍，或号已经不在，这次失败，名单也不写。`exit` 或 `quit` 会停掉窗口里的进程；名单还在文件里，但这些号不再是还开着的进程。
 
 人跟服务说话时写：
 
@@ -163,7 +164,7 @@ service load <服务编号> -- <正文>
 process start <能力名>
 ```
 
-下一页的 `state` 是 `resulted`，`rows` 里多一行 `pid=<数字> capability=<能力名>`，`_links` 里出现把正文送进这个进程的指针。下一次只写那一行，进程号用页里刚打印的数字，正文放在 ` -- ` 后面：
+下一页的 `state` 是 `resulted`，`rows` 里多一行启动结果 `{"processes":[{"pid":<数字>,"capability":"<能力名>"}]}`，`_links` 里出现把正文送进这个进程的指针。下一次只写那一行，进程号用这个值里的数字，正文放在 ` -- ` 后面：
 
 ```text
 load tool <数字> -- {"参数":"值"}

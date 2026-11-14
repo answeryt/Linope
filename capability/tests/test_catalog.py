@@ -28,17 +28,7 @@ def test_a_python_plugin_records_its_own_command(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     table = build_table(root)
-    row = table["model.sample_model"]
-    assert row["argv"] == [
-        "python",
-        "-m",
-        "capability.program",
-        f"{root.name}/model/sample_model/sample_model_plugin.py",
-    ]
-    assert row["changes"] == ["base_url", "model", "provider", "temperature"]
-    assert row["secret_names"] == ["DEMO_KEY"]
-    assert row["settings"] == {"id": "demo"}
-    assert row["resources"][0]["kind"] == "network"
+    assert "model.sample_model" not in table
 
 
 def test_a_broken_profile_is_left_out(tmp_path: Path) -> None:

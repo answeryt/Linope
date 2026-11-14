@@ -2,14 +2,16 @@
 
 [English](README.md) | 中文
 
-一个调度器，负责资源路由和线程准入。模型回合在 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs)。原始记忆字典在 [`kernel/resource/memory`](../resource/memory/README.cn.md)。选择哪一个对等进程在 [`kernel/load_balancing`](../load_balancing/README.cn.md)。
+一个调度器，负责资源路由。模型卡片和模型调用在
+[`model_scheduler`](model_scheduler/README.cn.md)。原始记忆字典在
+[`kernel/resource/memory`](../resource/memory/README.cn.md)。选择哪一个
+对等进程在 [`kernel/load_balancing`](../load_balancing/README.cn.md)。
 
 ## 契约
 
 | 入口 | 职责 |
 |---|---|
 | `route` | 把正文交给持有所点名资源种类和身份的对等进程。调用方提供通道和打开器。 |
-| `run_runtime` | 认领并准入请求到一个进程运行时，直到该进程要求停止。 |
 
 `memory_space.py` 是指针空间。记忆授予上的 `space` 点名哪些类属于这个指针。类是 `system`、`message`、`task` 和 `artifact`。指针是进入一份记忆资源的权利。`message/0` 和 `message/0-10` 是该资源内部的选择器。
 
@@ -52,7 +54,10 @@ A 的 `message/1` 和 B 的 `message/0` 是同一行。某个类不在一个进�
 
 `access.py` 批准并执行这些访问。token 数达到一个正的上下文上限时，`capacity_full` 为真。token 数来自 [`kernel/calculate`](../calculate/README.cn.md)。地址表留在这次运行的 `_MAPS` 里。记忆字典保存那些行。
 
-问模型、读记忆、调用工具，由 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs) 写成命令行。本目录不组页面，也不决定下一步。
+外部 capability 通过 `model use`、`model run` 使用模型，通过
+`process start` 和 `load tool` 使用工具。本目录不认识会话或 Agent；
+`model_scheduler` 只按 task 调度模型。进程去读文件或做别的等待时，
+模型名额会放开。
 
 `route` 拒绝缺失的通道，以及低于 1 的进程上限。它不取得租约。需要新进程时，由调用方提供的打开器启动。那个打开器是现有的协调器。
 

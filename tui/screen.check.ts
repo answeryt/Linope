@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict'
 
-import { parseEvent } from './link/events.ts'
+import { initialUiState, reduceKernelEvent } from './state.ts'
 import {
   applyScroll,
   displayWidth,
   followBottom,
   historyHit,
   historyLayout,
-  noteProcessText,
-  pushEvent,
   renderScreen,
   retainScroll,
   scrollbarThumb,
@@ -79,32 +77,46 @@ assert.ok(scrollbarThumb(30, 10, 0, 10))
 assert.deepEqual(scrollToTrack(30, 10, 0), { scrollY: 0, follow: false })
 assert.equal(scrollToTrack(30, 10, 99).follow, true)
 
-let streamed = pushEvent([], { type: 'text-delta', text: '第一段' }).turns
-streamed = pushEvent(streamed, { type: 'text-delta', text: '第二段' }).turns
-streamed = pushEvent(streamed, { type: 'text', text: '第一段第二段' }).turns
-assert.deepEqual(streamed, [{ role: 'assistant', text: '第一段第二段' }])
-assert.equal(pushEvent(streamed, { type: 'text', text: '第一段第二段' }).turns, streamed)
-
-const session = parseEvent(
-  JSON.stringify({
-    type: 'session',
-    cwd: 'D:/other/Linope',
-    store: 'file:.linope/resources.json',
-    env: '已配置',
-    text: ''
-  })
-)
-assert.equal(session?.type, 'session')
-
-const noted = noteProcessText(
-  [],
-  'pid=50040 capability=tools.bash'
-)
-assert.equal(noted[0]?.id, '50040')
-assert.equal(noted[0]?.capability, 'tools.bash')
-assert.equal(noted[0]?.activity, 'waiting')
-const listed = noteProcessText(noted, 'pid=50040 activity=working status=ready')
-assert.equal(listed[0]?.activity, 'busy')
+let projected = initialUiState('D:/other/Linope')
+projected = reduceKernelEvent(projected, {
+  data: { capability: 'tools.bash' },
+  kind: 'process.started',
+  pid: 50040,
+  seq: 1,
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { activity: 'working' },
+  kind: 'process.activity',
+  pid: 50040,
+  seq: 2,
+  version: 1
+})
+assert.equal(projected.processes[0]?.id, '50040')
+assert.equal(projected.processes[0]?.capability, 'tools.bash')
+assert.equal(projected.processes[0]?.activity, 'busy')
+projected = reduceKernelEvent(projected, {
+  data: {},
+  kind: 'turn.started',
+  seq: 3,
+  turn_id: 'turn-1',
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { text: '你好' },
+  kind: 'model.delta',
+  seq: 4,
+  turn_id: 'turn-1',
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { result: { type: 'model_turn', blocks: [{ type: 'text', text: '你好' }] } },
+  kind: 'turn.completed',
+  seq: 5,
+  turn_id: 'turn-1',
+  version: 1
+})
+assert.deepEqual(projected.turns, [{ role: 'assistant', text: '你好' }])
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('clerk'), true)
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('tools.bash waiting'), true)
 

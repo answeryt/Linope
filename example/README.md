@@ -53,13 +53,13 @@ process start model.openai_chat_model --with memory=search
 process start tools.ddgs
 ```
 
-每一份都会打出一行：
+每一份的命令值都是：
 
-```text
-pid=<数字> capability=<能力名>
+```json
+{"processes":[{"pid":0,"capability":"<能力名>"}]}
 ```
 
-记下这两个数字。
+记下里面的 `pid`。
 
 ## 3. 让模型熟悉命令规则
 
@@ -85,7 +85,7 @@ load message <模型进程号> -- example/linope.md
 service start <模型进程号> <搜索进程号>
 ```
 
-成功时先打 `service=<编号>`，再打每一行 `pid=` 和 `capability=`。
+成功时，命令值是 `{"service_id": <编号>, "processes": [{"pid": <数字>, "capability": "<能力名>"}]}`。
 
 ## 5. 跟服务对话
 

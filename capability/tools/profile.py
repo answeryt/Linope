@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-import os
-
-from kernel.environment.mount import project_identity, root_from
 from kernel.process.declaration import ProcessDeclaration, ResourceClaim
 from kernel.resource.definition import ResourceKind
 
 
 def workspace_tool(capability_id, changes, mode):
-    """A tool that uses the project workspace in the sandbox mode the plugin names."""
-    root = root_from(changes, os.getcwd())
+    """A tool whose runtime host scope is resolved by capability/sandbox."""
     return ProcessDeclaration(
         capability=capability_id,
         resources=(
             ResourceClaim(kind=ResourceKind.TOOL, identity={"id": capability_id}),
             ResourceClaim(
                 kind=ResourceKind.SANDBOX,
-                identity=project_identity(root),
-                call_params={"mode": str(mode)},
+                identity={"root": "host"},
+                call_params={"mode": str(mode), "scope": "host"},
             ),
         ),
     )

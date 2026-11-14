@@ -27,6 +27,11 @@ const pipe = (command: string, args: string[], input?: Buffer | string): Promise
     })
     let out = ''
 
+    if (!child.stdout) {
+      finish(false, '')
+      return
+    }
+
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', chunk => {
       out += chunk

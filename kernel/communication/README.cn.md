@@ -12,7 +12,7 @@
 
 ## 契约
 
-这一页可以提供哪些命令行，由 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs) 决定。内核执行交给它的命令行，不负责挑选这份名单。
+这一页可以提供哪些命令行，由 [`capability/agent_loop`](../../capability/agent_loop/linope/loop.py) 决定。内核执行交给它的命令行，不负责挑选这份名单。
 
 `MemoryChannel` 向本进程的记忆写入一行。`send` 通过 `remember` 记录。这些是进程自己的笔记。它们不是两个服务之间的传输。
 
@@ -25,7 +25,7 @@ deliver(channel, "1", {"kind": "user", "content": "hello", "state": "asked"}, "2
 publish(channel, "weather", {"kind": "user", "content": "hello", "state": "asked"})
 ```
 
-内核不打开端口，也不选择传输。已经到达这个窗口的话，作为 `load message` 交给该进程。进程有没有记忆，只说明它有没有一块记事本。转圈的是 [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs)。没有记忆的进程收到的是原话。
+内核不打开端口，也不选择传输。已经到达这个窗口的话，作为 `load message` 交给该进程。进程有没有记忆，只说明它有没有一块记事本。转圈的是 [`capability/agent_loop`](../../capability/agent_loop/linope/loop.py)。没有记忆的进程收到的是原话。
 
 行字段以及状态 `asked`、`continue`、`resulted`、`rejected` 和 `answered` 由 [`kernel/resource/memory`](../resource/memory/README.cn.md) 存储。进程是在睡还是在工作，在 [`kernel/trace`](../trace/README.cn.md)。
 

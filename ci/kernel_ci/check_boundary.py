@@ -29,6 +29,20 @@ RULES = (
     ("startswith('model.')", "kernel chooses model offers"),
 )
 
+COMMAND_OUTPUT_RULES = (
+    ("import tui", "kernel command imports a UI package"),
+    ("from tui", "kernel command imports a UI package"),
+    ("print(", "kernel command writes human output"),
+    ("sys.stdout", "kernel command owns stdout"),
+    ("sys.stderr", "kernel command owns stderr"),
+    ("redirect_stdout", "kernel command captures presentation output"),
+    ("redirect_stderr", "kernel command captures presentation output"),
+    ('"pid="', "kernel command emits a legacy pid display line"),
+    ('"type": "done"', "kernel command emits a legacy completion display event"),
+    ('"type": "model"', "kernel command emits a legacy model display event"),
+    ('"type": "waiting"', "kernel command emits a legacy waiting display event"),
+)
+
 
 def sources() -> list[Path]:
     found: list[Path] = []
@@ -43,7 +57,11 @@ def main() -> int:
     failures: list[str] = []
     for path in sources():
         text = path.read_text(encoding="utf-8")
-        for needle, reason in RULES:
+        rules = RULES
+        relative_parts = path.relative_to(ROOT).parts
+        if "command" in relative_parts and path.name != "__main__.py":
+            rules = (*rules, *COMMAND_OUTPUT_RULES)
+        for needle, reason in rules:
             if needle not in text:
                 continue
             for number, line in enumerate(text.splitlines(), start=1):

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,30 @@ def test_danger_full_access_is_not_wrapped(tmp_path: Path) -> None:
     permit = room.compute.prepare((sys.executable, "-c", "print(1)"), cwd=str(tmp_path), timeout_seconds=5)
     assert permit.argv[0] == sys.executable
     assert permit.enforcement is None
+
+
+def test_host_scope_allows_home_and_a_drive_root() -> None:
+    home = FilesystemView.for_local(Path.home(), access_mode="workspace-write")
+    assert Path(home.root_path("workspace")) == Path.home().resolve()
+    anchor = Path(Path.home().anchor)
+    opened_anchor = FilesystemView.for_local(anchor, access_mode="read-only")
+    assert Path(opened_anchor.root_path("workspace")) == anchor.resolve()
+    opened = FilesystemView.for_local(Path.home(), access_mode="danger-full-access")
+    assert Path(opened.root_path("workspace")) == Path.home().resolve()
+
+
+def test_windows_names_a_temp_directory_inside_the_workspace() -> None:
+    if sys.platform != "win32":
+        pytest.skip("the windows acl runner reports this overlap")
+    parent = Path(tempfile.gettempdir()).resolve().parent
+    room = _room(parent, "workspace-write")
+    permit = room.compute.prepare(
+        (sys.executable, "-c", "print(1)"),
+        cwd=str(parent),
+        timeout_seconds=5,
+    )
+    assert permit.enforcement == "host"
+    assert permit.argv[0] == sys.executable
 
 
 def test_a_confined_mode_without_an_isolator_is_refused(tmp_path: Path) -> None:

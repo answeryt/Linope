@@ -7,6 +7,7 @@ from pathlib import Path
 
 from kernel.process.declaration import ProcessDeclaration
 from kernel.environment import HostExecutionPolicy, ProcessEnvironment
+from kernel.environment.sandbox_vocab import resolve_policy
 from kernel.process.process_creat.activation import ProcessActivation
 from kernel.process.process_creat.instances import CapabilityDefinition, describe_instance
 from kernel.process.process_manager.capability_process import CapabilityProcess, spawn_runtime
@@ -17,7 +18,7 @@ from kernel.process.resource_record import (
 from kernel.resource.compile import compile_declaration
 from kernel.resource.pool import ResourcePool
 from kernel.resource.resource_contract import kind_name
-from kernel.thread.contracts import ThreadPolicy
+from kernel.thread.task import close_process_threads, open_process_threads
 
 
 class ProcessReconciler:
@@ -35,7 +36,6 @@ class ProcessReconciler:
         pid: int | None = None,
         environment: ProcessEnvironment | None = None,
         host_policy: HostExecutionPolicy | None = None,
-        thread_policy: ThreadPolicy | None = None,
         definition: CapabilityDefinition | None = None,
         shared: tuple[str, ...] = (),
         env_file: str = "",
@@ -55,13 +55,20 @@ class ProcessReconciler:
         elif environment.env_file_keys:
             chosen_keys = tuple(environment.env_file_keys)
         child = None
+        sandbox_policy = _sandbox_policy(declaration, cwd, environment)
         opened = False
         bound = False
+        threaded = False
         process: CapabilityProcess | None = None
         pid_value = None if pid is None else int(pid)
         try:
             if pid_value is None:
-                child = spawn_runtime(chosen_keys, definition.command())
+                child = spawn_runtime(
+                    chosen_keys,
+                    definition.command(),
+                    cwd=cwd,
+                    sandbox_policy=sandbox_policy,
+                )
                 pid_value = int(child.pid or 0)
                 if child is not None:
                     from kernel.environment.host_adapter import apply_host_limits
@@ -87,7 +94,11 @@ class ProcessReconciler:
             self.pool.bind(pid_value, definition.instance_id, compiled)
             bound = True
             grants = self.pool.grants_for(pid_value)
-            thread_policy = thread_policy or ThreadPolicy()
+            # The first task is the process/thread-group leader. Its task id
+            # is the pid; sibling tasks are opened later by the scheduler.
+            table = open_process_threads(pid_value)
+            threaded = True
+            leader_id = table.first.id
             activation = ProcessActivation(
                 definition=definition,
                 grants=grants,
@@ -95,12 +106,11 @@ class ProcessReconciler:
                 settings=dict(declaration.settings),
                 environment=environment,
                 host_policy=host_policy or HostExecutionPolicy(),
-                thread_policy=thread_policy,
+                thread_id=leader_id,
+                sandbox_policy=sandbox_policy,
             )
             _remember_permission(declaration, cwd, environment)
             room = _room_facts(grants, environment)
-            room["worker_ceiling"] = thread_policy.max_sync_workers
-            room["inflight_ceiling"] = thread_policy.max_concurrent_tasks
             self.book.attach(
                 pid_value,
                 claims=tuple(
@@ -116,6 +126,7 @@ class ProcessReconciler:
                 book=self.book,
                 child=child,
             )
+            process.threads = table
             if child is not None:
                 process.open_program()
             return process
@@ -129,6 +140,8 @@ class ProcessReconciler:
                 self.pool.release(pid_value)
             if opened and pid_value is not None:
                 self.book.discard(pid_value)
+            if threaded and pid_value is not None:
+                close_process_threads(pid_value)
             raise
 
     def launch(
@@ -138,7 +151,6 @@ class ProcessReconciler:
         pid: int | None = None,
         environment: ProcessEnvironment | None = None,
         host_policy: HostExecutionPolicy | None = None,
-        thread_policy: ThreadPolicy | None = None,
         definition: CapabilityDefinition | None = None,
         shared: tuple[str, ...] = (),
         replica_count: int | None = None,
@@ -162,7 +174,6 @@ class ProcessReconciler:
                     pid=pid if index == 0 else None,
                     environment=environment,
                     host_policy=host_policy,
-                    thread_policy=thread_policy,
                     definition=definition,
                     shared=shared,
                     env_file=env_file,
@@ -182,6 +193,26 @@ def _remember_permission(declaration: ProcessDeclaration, cwd: str | None, envir
 
     folder = cwd or (None if environment is None else environment.cwd)
     remember_mode(folder, permission)
+
+
+def _sandbox_policy(
+    declaration: ProcessDeclaration,
+    cwd: str | None,
+    environment: ProcessEnvironment | None,
+) -> dict:
+    mode = "workspace-write"
+    scope = "host"
+    for claim in declaration.resources:
+        kind = str(getattr(claim.kind, "value", claim.kind))
+        if kind != "sandbox":
+            continue
+        if claim.call_params.get("mode"):
+            mode = str(claim.call_params["mode"])
+        if claim.call_params.get("scope"):
+            scope = str(claim.call_params["scope"])
+        break
+    location = cwd or (environment.cwd if environment is not None else None) or str(Path.cwd())
+    return resolve_policy({"mode": mode, "scope": scope, "cwd": location})
 
 
 def _held(grants, leases):

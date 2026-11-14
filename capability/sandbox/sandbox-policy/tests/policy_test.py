@@ -62,7 +62,9 @@ def test_agentless_resolve() -> None:
     _plugin, _modes, service = _policy(mode="workspace-write", workspace_root="fallback")
     assert service.resolve() == {
         "mode": "workspace-write",
+        "scope": "host",
         "workspace_root": os.path.abspath("fallback"),
+        "cwd": os.path.abspath("fallback"),
     }
 
 
@@ -73,12 +75,16 @@ def test_per_session_mode_and_cwd() -> None:
     modes.set_sandbox_mode(second, "read-only")
     assert service.resolve({"session": first}) == {
         "mode": "workspace-write",
+        "scope": "host",
         "workspace_root": os.path.abspath(os.path.join("projects", "first")),
+        "cwd": os.path.abspath(os.path.join("projects", "first")),
         "session_id": "sess-first",
     }
     assert service.resolve({"session": second}) == {
         "mode": "read-only",
+        "scope": "host",
         "workspace_root": os.path.abspath(os.path.join("projects", "second")),
+        "cwd": os.path.abspath(os.path.join("projects", "second")),
         "session_id": "sess-second",
     }
     assert service.override_of(first) is None

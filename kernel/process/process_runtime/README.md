@@ -8,7 +8,7 @@ This is where the capability plugin actually runs inside the process. The activa
 
 `adapter.py`
 
-The shape a plugin must have, named `CapabilityAdapter`. `initialize` runs after the handles arrive. One request uses `handle`, or `handle_async` when it should not sit on a thread while it waits. `shutdown` runs before stop. `is_async` says whether it can run asynchronously. `sync_thread_safe` says whether [`kernel/thread`](../../thread/README.md) may give it more than one synchronous helper.
+The shape a plugin must have, named `CapabilityAdapter`. `initialize` runs after the handles arrive. One request uses `handle`, or `handle_async`. `shutdown` runs before stop. `is_async` says whether it can run asynchronously. An incoming request is the current step of this process's thread.
 
 `runtime.py`
 
@@ -18,7 +18,7 @@ The shape a plugin must have, named `CapabilityAdapter`. `initialize` runs after
 
 `serve_capability` opens and closes in the same call, then calls `on_exit` with the pid. That is one run that leaves when it finishes.
 
-`serve_stdio` is this process's own loop. It reads one startup JSON line, which must contain `activation`. Each later request line goes to the adapter, and the reply is written to standard output, until the pipe closes. It does not decide whether the caller wanted only one job.
+`serve_stdio` is this process's own loop. It reads one startup JSON line, which must contain `activation`. Each later request lands on this process's leader task as its current step, goes to the adapter, and the reply is written to standard output, until the pipe closes. It does not decide whether the caller wanted only one job.
 
 `__main__.py`
 

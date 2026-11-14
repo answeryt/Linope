@@ -8,7 +8,7 @@
 
 `adapter.py`
 
-插件要做成的样子，名叫 `CapabilityAdapter`。句柄到了调用 `initialize`。一条请求走 `handle`，或者不占着线程干等时走 `handle_async`。停止前调用 `shutdown`。`is_async` 说它能不能异步。`sync_thread_safe` 说 [`kernel/thread`](../../thread/README.cn.md) 能不能给它开多个同步帮手。
+插件要做成的样子，名叫 `CapabilityAdapter`。句柄到了调用 `initialize`。一条请求走 `handle`，或者走 `handle_async`。停止前调用 `shutdown`。`is_async` 说它能不能异步。进来的一条请求是这个进程那条线程的当前一步。
 
 `runtime.py`
 
@@ -18,7 +18,7 @@
 
 `serve_capability` 在同一次调用里打开再关掉，并在结束时用 pid 回调 `on_exit`。适合跑完就走的一次。
 
-`serve_stdio` 是这个进程自己的循环。先读一行启动 JSON，里面必须有 `activation`。然后每来一行请求就交给适配器，把回复写回标准输出，直到管道关掉。它不决定调用方要不要只跑一件事。
+`serve_stdio` 是这个进程自己的循环。先读一行启动 JSON，里面必须有 `activation`。然后每来一行请求就落到这个进程的组长 task 上，作为它的当前一步，交给适配器，把回复写回标准输出，直到管道关掉。它不决定调用方要不要只跑一件事。
 
 `__main__.py`
 

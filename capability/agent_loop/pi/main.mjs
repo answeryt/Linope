@@ -16,6 +16,7 @@ const waiters = [];
 const living = new Map();
 let selfPid = 0;
 let modelName = "model.openai_chat_model";
+let modelReady = false;
 let redirectWaiter = null;
 let sessionPromise;
 
@@ -42,6 +43,10 @@ function write(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
+function notice(payload) {
+  write({ event: "notice", pid: selfPid, notice: payload });
+}
+
 async function submit(line) {
   write({ event: "command", line });
   const raw = await nextLine();
@@ -54,14 +59,19 @@ async function submit(line) {
   if (!reply || reply.event !== "command_result") {
     throw new Error("The kernel returned a broken command result");
   }
-  if (reply.error) throw new Error(String(reply.error));
-  return String(reply.result || "");
+  if (reply.error) {
+    const error = typeof reply.error === "object" ? reply.error.message : reply.error;
+    throw new Error(String(error || "command failed"));
+  }
+  return reply.result;
 }
 
 function remember(output) {
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const found = /pid=(\d+)\s+capability=(\S+)/.exec(line.trim());
-    if (found) living.set(found[2], found[1]);
+  const rows = Array.isArray(output) ? output : output?.processes;
+  if (!Array.isArray(rows)) return;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    if (row.pid && row.capability) living.set(String(row.capability), String(row.pid));
   }
 }
 
@@ -72,7 +82,7 @@ async function ensure(name, extra = "") {
   const output = await submit(line);
   remember(output);
   const pid = living.get(name);
-  if (!pid) throw new Error(output || `Could not start ${name}`);
+  if (!pid) throw new Error(`Could not start ${name}`);
   return pid;
 }
 
@@ -112,12 +122,15 @@ function waitForRedirect(signal) {
 function session() {
   sessionPromise ??= openPiSession({
     cwd: process.cwd(),
-    onProgress: (text) => write({ type: "status", text: String(text) }),
+    onProgress: (text) => notice({ kind: "agent.progress", text: String(text) }),
     waitForRedirect,
     askModel: async (messages, tools) => {
-      const pid = await ensure(modelName, "--with memory=chat");
+      if (!modelReady) {
+        await submit(`model use ${modelName}`);
+        modelReady = true;
+      }
       const body = JSON.stringify({ messages, tools });
-      return parseModelTurn(await submit(`load message ${pid} -- ${body}`));
+      return parseModelTurn(await submit(`model run -- ${body}`));
     },
   });
   return sessionPromise;

@@ -13,7 +13,6 @@ from typing import Any
 from kernel.load_balancing.hints import Seat, one_resource, seats
 from kernel.load_balancing.pick import choose
 from kernel.load_balancing.process_scale import close_idle, open_peer
-from kernel.load_balancing.workers import raise_on_process
 
 
 def route(
@@ -86,7 +85,6 @@ def _make_room(
         key=lambda seat: (seat.claimed, seat.pending, seat.rtt_ms, seat.process_id),
     )
     if thread_safe and not host.budget_full and host.capacity < max_threads:
-        raise_on_process(store, host.process_id, 1, max_threads)
         return host.process_id
     if not store.shares_capability(capability):
         raise ValueError("Sharing was not named; cannot open another copy to split the load")

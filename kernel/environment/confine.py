@@ -19,7 +19,7 @@ def register_isolator(isolate: Any) -> None:
     _ISOLATOR = isolate
 
 
-def host_isolator(mode: str) -> Isolator:
+def host_isolator(mode: str, policy: dict[str, Any] | None = None) -> Isolator:
     """Wrap a confined command. An unconfined mode keeps the original argv."""
 
     def isolate(argv: tuple[str, ...], directory: str, workspace_root: str) -> dict[str, Any]:
@@ -32,14 +32,21 @@ def host_isolator(mode: str) -> Isolator:
             }
         if _ISOLATOR is not None:
             return dict(_ISOLATOR(list(argv), directory, workspace_root, mode))
-        result = _gate(
-            {
-                "op": "confine",
-                "argv": list(argv),
-                "mode": mode,
-                "workspace_root": workspace_root,
-            }
-        )
+        request: dict[str, Any] = {
+            "op": "confine",
+            "argv": list(argv),
+            "mode": mode,
+            "workspace_root": workspace_root,
+        }
+        if policy:
+            request.update(
+                {
+                    "scope": policy.get("scope", ""),
+                    "roots": list(policy.get("roots") or ()),
+                    "writable_roots": list(policy.get("writable_roots") or ()),
+                }
+            )
+        result = _gate(request)
         return dict(result or {})
 
     return isolate

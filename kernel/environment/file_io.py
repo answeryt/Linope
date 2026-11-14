@@ -39,11 +39,26 @@ class FileDoor:
 
 
 def door_for(room: object | None, workspace: str | None) -> FileDoor:
-    """Use the process room, or a workspace-sized door when no room is bound."""
+    """Use the process room, or ask sandbox for a host policy when unbound."""
     if room is not None:
         return room.file_io  # type: ignore[attr-defined]
     root = Path(workspace or os.getenv("TERMINAL_CWD") or os.getcwd())
     root = root.expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"Workspace is not a directory: {root}")
-    return FileDoor(FilesystemView.for_local(root))
+    from kernel.environment.sandbox_vocab import resolve_policy
+
+    policy = resolve_policy(
+        {
+            "scope": "host",
+            "mode": "workspace-write",
+            "cwd": str(root),
+        }
+    )
+    return FileDoor(
+        FilesystemView.for_local(
+            Path(str(policy.get("cwd") or root)),
+            access_mode=str(policy.get("mode") or "workspace-write"),
+            policy=policy,
+        )
+    )

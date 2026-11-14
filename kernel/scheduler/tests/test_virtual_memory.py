@@ -172,8 +172,8 @@ def test_host_limits_are_not_memory_pages() -> None:
 
 def test_the_memory_command_records_the_chosen_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    assert memory_command(["backend"]) == 0
-    assert memory_command(["backend", "sqlite", "--path", str(tmp_path / "memory.sqlite")]) == 0
+    assert memory_command(["backend"])["backend"] == "memory"
+    assert memory_command(["backend", "sqlite", "--path", str(tmp_path / "memory.sqlite")])["backend"] == "sqlite"
     assert configured_backend(tmp_path)[0] == "sqlite"
-    assert memory_command(["backend", "memory"]) == 0
+    assert memory_command(["backend", "memory"])["backend"] == "memory"
     assert configured_backend(tmp_path) == ("memory", "")

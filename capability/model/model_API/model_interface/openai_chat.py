@@ -1,22 +1,44 @@
 from __future__ import annotations
 
 import importlib.util
+import threading
 from pathlib import Path
 from typing import Any
 
 MAX_RECOVERIES = 4
 _PARAM_CACHE: dict[str, Any] = {}
+_PARAM_CACHE_LOCK = threading.RLock()
 
 
 def _omit(value: object) -> bool:
     return value is None or value == "UNSET"
 
 
+def _brotli_module() -> Any | None:
+    """The decompressor httpx already bound, under either package name."""
+
+    import importlib
+    import sys
+
+    for name in ("brotli", "brotlicffi"):
+        module = sys.modules.get(name)
+        if module is not None and hasattr(module, "Decompressor"):
+            return module
+    for name in ("brotlicffi", "brotli"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        if hasattr(module, "Decompressor"):
+            return module
+    return None
+
+
 def _accept_brotli_limit() -> None:
-    """httpx2 passes output_buffer_limit to brotli.process, which rejects the keyword."""
-    try:
-        import brotli
-    except ImportError:
+    """httpx passes output_buffer_limit to brotli.process, which rejects the keyword."""
+
+    brotli = _brotli_module()
+    if brotli is None:
         return
     sample = brotli.Decompressor()
     if hasattr(sample, "decompress"):
@@ -31,7 +53,8 @@ def _accept_brotli_limit() -> None:
             del output_buffer_limit
             return self._inner.process(data)
 
-        def process(self, data: bytes) -> bytes:
+        def process(self, data: bytes, output_buffer_limit: int | None = None) -> bytes:
+            del output_buffer_limit
             return self._inner.process(data)
 
     brotli.Decompressor = Decompressor
@@ -42,20 +65,21 @@ _accept_brotli_limit()
 
 def _param_leaf(folder: str, filename: str) -> Any:
     key = f"{folder}/{filename}"
-    cached = _PARAM_CACHE.get(key)
-    if cached is not None:
-        return cached
-    path = Path(__file__).resolve().parents[1] / "model_paramaters" / folder / filename
-    spec = importlib.util.spec_from_file_location(
-        f"linope_{Path(__file__).stem}_{folder}",
-        path,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _PARAM_CACHE[key] = module
-    return module
+    with _PARAM_CACHE_LOCK:
+        cached = _PARAM_CACHE.get(key)
+        if cached is not None:
+            return cached
+        path = Path(__file__).resolve().parents[1] / "model_paramaters" / folder / filename
+        spec = importlib.util.spec_from_file_location(
+            f"linope_{Path(__file__).stem}_{folder}",
+            path,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PARAM_CACHE[key] = module
+        return module
 
 
 def _vendor_role(role: object) -> str:
@@ -63,17 +87,18 @@ def _vendor_role(role: object) -> str:
 
 
 def _param_leaf_sibling(filename: str) -> Any:
-    cached = _PARAM_CACHE.get(filename)
-    if cached is not None:
-        return cached
-    path = Path(__file__).with_name(filename)
-    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _PARAM_CACHE[filename] = module
-    return module
+    with _PARAM_CACHE_LOCK:
+        cached = _PARAM_CACHE.get(filename)
+        if cached is not None:
+            return cached
+        path = Path(__file__).with_name(filename)
+        spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PARAM_CACHE[filename] = module
+        return module
 
 
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:
@@ -206,6 +231,9 @@ def parse_response_turn(result: Any) -> dict[str, Any] | None:
     if message is None:
         return None
     blocks: list[dict[str, Any]] = []
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning:
+        blocks.append({"type": "reasoning", "text": str(reasoning)})
     content = getattr(message, "content", None)
     if content:
         blocks.append({"type": "text", "text": str(content)})
@@ -250,6 +278,9 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
         content = getattr(delta, "content", None) if delta is not None else None
         if content:
             parts.append({"type": "text-delta", "text": str(content)})
+        reasoning = getattr(delta, "reasoning_content", None) if delta is not None else None
+        if reasoning:
+            parts.append({"type": "reasoning-delta", "text": str(reasoning)})
         for call in getattr(delta, "tool_calls", None) or ():
             function = getattr(call, "function", None)
             if function is None:
@@ -277,6 +308,19 @@ def parse_stream_parts(chunk: Any) -> list[dict[str, Any]]:
 def _promote_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
     """Turn provider-neutral tool blocks into chat-completions tool_calls."""
     content = message.get("content")
+    if isinstance(content, list) and message.get("role") == "assistant":
+        thoughts = [
+            str(part.get("text") or part.get("thinking") or "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") in {"reasoning", "thinking"}
+        ]
+        if thoughts and not message.get("reasoning_content"):
+            message["reasoning_content"] = "".join(thoughts)
+        content = [
+            part for part in content
+            if not (isinstance(part, dict) and part.get("type") in {"reasoning", "thinking"})
+        ]
+        message["content"] = content
     if not isinstance(content, list) or message.get("role") != "assistant":
         return message
     calls = [part for part in content if isinstance(part, dict) and part.get("type") == "tool-call"]

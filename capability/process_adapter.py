@@ -28,7 +28,8 @@ class ProcessAdapter:
 
     def __init__(self, modules: list[Any]) -> None:
         self._modules = modules
-        self._call_params: dict[str, Any] = {}
+        self._settings: dict[str, Any] = {}
+        self._resource_params: dict[str, dict[str, Any]] = {}
         self._room: Any = None
         self._loader = _find_load(modules)
         self._async_loader = _find_async_load(modules)
@@ -39,20 +40,8 @@ class ProcessAdapter:
         return self._async_loader is not None
 
     def initialize(self, resource_context: Any, room: Any = None) -> None:
-        params: dict[str, Any] = {}
-        settings = getattr(resource_context, "settings", None) or {}
-        if isinstance(settings, dict):
-            params.update(settings)
-        declared_model = params.pop("id", None)
-        params.pop("provider", None)
-        if declared_model and "model" not in params:
-            params["model"] = declared_model
-        for grant in getattr(resource_context, "grants", ()) or ():
-            incoming = getattr(grant, "call_params", None) or {}
-            if isinstance(incoming, dict):
-                params.update(incoming)
-        params.pop("mode", None)
-        self._call_params = params
+        self._settings = _settings(resource_context)
+        self._resource_params = _resource_params(resource_context)
         self._room = room
         if room is not None:
             from kernel.environment import bind_room
@@ -69,7 +58,7 @@ class ProcessAdapter:
         loader = self._loader
         if loader is None:
             raise LookupError("This process has no load")
-        return loader(kind, request.get("body"), self._call_params)
+        return loader(kind, request.get("body"), self._params_for(kind))
 
     async def handle_async(self, request: dict[str, Any]) -> Any:
         """Handle an async loader directly or bridge a legacy sync loader."""
@@ -82,8 +71,22 @@ class ProcessAdapter:
         kind = request.get("kind")
         if not isinstance(kind, str) or not kind:
             raise ValueError("load must include a resource kind")
-        result = loader(kind, request.get("body"), self._call_params)
+        result = loader(kind, request.get("body"), self._params_for(kind))
         return await result if inspect.isawaitable(result) else result
+
+    def _params_for(self, kind: str) -> dict[str, Any]:
+        """Keep each resource kind's parameters with that kind.
+
+        A tool plugin only receives parameters declared on its tool resource.
+        Sandbox mode and scope stay in the process room, so a new sandbox
+        parameter cannot leak into a tool function signature.
+        """
+
+        if kind == "tool":
+            return dict(self._resource_params.get("tool") or {})
+        params = dict(self._settings)
+        params.update(self._resource_params.get(kind) or {})
+        return params
 
     def shutdown(self) -> None:
         if self._room is not None:
@@ -97,6 +100,33 @@ def create_adapter(modules: list[Any] | None = None) -> ProcessAdapter:
     """Build the forwarder from the modules this process just loaded."""
     chosen = list(modules) if modules is not None else _loaded_plugin_modules()
     return ProcessAdapter(chosen)
+
+
+def _settings(resource_context: Any) -> dict[str, Any]:
+    raw = getattr(resource_context, "settings", None) or {}
+    params = dict(raw) if isinstance(raw, dict) else {}
+    declared_model = params.pop("id", None)
+    params.pop("provider", None)
+    if declared_model and "model" not in params:
+        params["model"] = declared_model
+    return params
+
+
+def _resource_params(resource_context: Any) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for grant in getattr(resource_context, "grants", ()) or ():
+        incoming = getattr(grant, "call_params", None) or {}
+        if not isinstance(incoming, dict):
+            continue
+        kind = _kind_name(getattr(grant, "kind", ""))
+        if not kind:
+            continue
+        grouped.setdefault(kind, {}).update(incoming)
+    return grouped
+
+
+def _kind_name(kind: object) -> str:
+    return str(getattr(kind, "value", kind) or "")
 
 
 def _find_load(modules: list[Any]) -> Any | None:

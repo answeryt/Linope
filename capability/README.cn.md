@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-这棵树是业务侧。内核启动进程并绑定它的资源记录。插件文件拥有卡片、工具参数和提示词文本。一个操作系统进程加载一个插件。模型和它调用的工具是对等进程，各自有自己的记录。
+这棵树是业务侧。内核启动 capability 进程并绑定它的资源记录。插件文件拥有卡片、工具参数和提示词文本。工具由操作系统进程加载；模型卡片由内核的 model_scheduler 使用，模型不是进程。
 
 增加一个能力，就是增加一个本目录扫描能看见的文件。内核没有一份要去改的登记表。
 
@@ -26,15 +26,15 @@
 | 嵌在 `capability/sandbox/` 下的插件 | `sandbox.sandbox` |
 | `capability/<family>/.../thing_plugin.py` | `<family>.thing` |
 
-`model` 用的是上一级目录名。`tools` 用的是去掉 `_plugin` 之后的文件名。直接放在 `capability/sandbox/` 里的插件会叫 `sandbox.<文件名>`；当前的入口是嵌套的，所以名字是 `sandbox.sandbox`。其他家族用第一级目录名和文件名。一个名字只保留一个文件。两个文件算出同一个名字时，留下排序后较后的那条路径。
+`model` 用的是上一级目录名，但模型插件不会写入 `programs.json`，也不能用 `process start` 启动。`tools` 用的是去掉 `_plugin` 之后的文件名。直接放在 `capability/sandbox/` 里的插件会叫 `sandbox.<文件名>`；当前的入口是嵌套的，所以名字是 `sandbox.sandbox`。其他家族用第一级目录名和文件名。一个名字只保留一个文件。两个文件算出同一个名字时，留下排序后较后的那条路径。
 
 `capability/prompt` 下名为 `prompt_main.py` 且定义了 `load` 的文件也会被登记，名字是 `prompt.<group>`。这棵树里没有这样的文件。
 
-`linope process start <capability>` 启动一个已登记的名字。
+`linope process start <capability>` 启动一个已登记的非模型 capability。模型使用 `model use <card>`。
 
 ## 可启动的插件要提供什么
 
-[`kernel/process`](../kernel/process/README.cn.md) 的 `profile.py` 在打开记录之前调用 `capability_profile(capability_id, changes)`。该函数返回一份 `ProcessDeclaration`：能力名，以及它要租用的资源。种类是 `tool`、`sandbox`、`network` 和 `memory`。没有可用画像或画像失败时抛出 `ProfileUnavailable`，进程不会启动。卡片留在插件内部。
+工具和其他进程 capability 由 [`kernel/process`](../kernel/process/README.cn.md) 的 `profile.py` 解析 `ProcessDeclaration`。模型插件的 `capability_profile` 返回 model_scheduler 使用的卡片配置，不创建进程声明。
 
 之后的请求调用 `load(kind, body, call_params=None)`。`kind` 是资源种类，例如 `tool`。`body` 是这次调用。`call_params` 是租约带进来的参数。异步插件再写一个参数相同的 `async def load_async(...)`。希望模型能看见的工具再提供 `tool_schemas()`。
 

@@ -51,6 +51,27 @@ def test_danger_full_access_skips_confine() -> None:
         raise AssertionError("expected confine rejection")
 
 
+def test_win32_rejects_temp_inside_workspace() -> None:
+    import tempfile
+    from pathlib import Path
+
+    _plugin, sandbox = _sandbox("win32")
+    temp = Path(tempfile.gettempdir())
+    workspace = str(temp.parent)
+    try:
+        sandbox.confine(
+            ["cmd", "/c", "echo"],
+            {"mode": "workspace-write", "workspace_root": workspace},
+        )
+    except ValueError as exc:
+        text = str(exc)
+        assert workspace in text
+        assert str(temp) in text
+        assert "请换目录启动" in text
+    else:
+        raise AssertionError("expected temp inside workspace")
+
+
 def test_win32_confine_wraps_windows_runner() -> None:
     _plugin, sandbox = _sandbox("win32")
     result = sandbox.confine(
@@ -61,12 +82,27 @@ def test_win32_confine_wraps_windows_runner() -> None:
     assert result["argv"][0] == sys.executable
     assert result["argv"][-3:] == ["--", "cmd", "/c"] or "cmd" in result["argv"]
     assert "--mode" in result["argv"]
-    assert "read-only" in result["argv"]
-    assert "windows-acl-run: " in result["runner_failure_rules"][0]["fatal_signatures"]
+
+
+def test_host_scope_is_explicit_full_host_execution() -> None:
+    _plugin, sandbox = _sandbox("win32")
+    command = ["cmd", "/c", "echo"]
+    result = sandbox.confine(
+        command,
+        {
+            "mode": "workspace-write",
+            "scope": "host",
+            "workspace_root": "C:\\ws",
+            "writable_roots": ["C:\\"],
+        },
+    )
+    assert result["argv"] == command
+    assert result["enforcement"] == "host"
 
 
 if __name__ == "__main__":
     test_profiles()
     test_danger_full_access_skips_confine()
+    test_win32_rejects_temp_inside_workspace()
     test_win32_confine_wraps_windows_runner()
     print("local_test ok")

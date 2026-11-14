@@ -27,9 +27,19 @@ linope
 
 安装一次之后，下一次使用直接在终端中输入 `linope` 即可。
 
+如果在包含 `ui/desktop` 的源码目录中，要启动独立桌面窗口而不是浏览器标签页，可以在项目根目录执行：
+
+```sh
+linope desktop
+```
+
+也可以直接进入桌面前端目录执行 `npm run desktop`。首次启动会下载 Electron 运行时，之后会直接打开 Linope 窗口。
+
 ## 创建环境变量并发送消息
 
 进入窗口后，先创建密钥文件，再加载它，然后启动进程。一次只写一个变量，名字用 `OPENAI_API_KEY`。接口地址和模型名写在启动那一行。
+
+现在可以在任意目录直接输入 `linope` 启动。启动目录只是会话的相对路径提示；文件访问范围和外部命令策略由 `capability/sandbox` 决定。使用整机 host scope 时，请确认你确实希望 Agent 访问本机文件。
 
 ```text
 create capability/.env -- OPENAI_API_KEY=你的API密钥

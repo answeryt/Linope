@@ -14,10 +14,20 @@ WORKSPACE_WRITE = "workspace-write"
 
 
 def bwrap_profile_args(policy: Mapping[str, Any]) -> list[str]:
-    args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--die-with-parent"]
+    scope = str(policy.get("scope") or "")
+    writable = str(policy.get("mode") or "") == WORKSPACE_WRITE
+    if scope == "host" and writable:
+        args = ["--bind", "/", "/"]
+    else:
+        args = ["--ro-bind", "/", "/"]
+    args.extend(["--dev", "/dev", "--proc", "/proc", "--die-with-parent"])
     if str(policy.get("mode") or "") == WORKSPACE_WRITE:
-        root = str(policy.get("workspace_root") or policy.get("workspaceRoot") or "")
-        args.extend(["--tmpfs", "/tmp", "--bind", root, root])
+        roots = list(policy.get("writable_roots") or ())
+        if not roots:
+            roots = [str(policy.get("workspace_root") or policy.get("workspaceRoot") or "")]
+        if scope != "host":
+            args.extend(["--tmpfs", "/tmp"])
+            args.extend(item for root in roots for item in ("--bind", str(root), str(root)))
     return args
 
 
@@ -26,8 +36,11 @@ def landlock_profile_args(policy: Mapping[str, Any]) -> list[str]:
     args = ["--ro", "/"]
     read_write = ["/dev/null"]
     if str(policy.get("mode") or "") == WORKSPACE_WRITE:
-        root = str(policy.get("workspace_root") or policy.get("workspaceRoot") or "")
-        read_write.extend(["/tmp", root])
+        roots = list(policy.get("writable_roots") or ())
+        if roots:
+            read_write.extend(str(root) for root in roots)
+        else:
+            read_write.extend(["/tmp", str(policy.get("workspace_root") or policy.get("workspaceRoot") or "")])
     for path in read_write:
         args.extend(["--rw", path])
     return args

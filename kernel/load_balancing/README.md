@@ -2,7 +2,7 @@
 
 English | [中文](README.cn.md)
 
-A request names a resource kind and an identity. It does not name a pid or a thread. This directory reads the ledger for who still holds that resource and who can still take new work, then picks one. It does not take a lease. The call that sends the request is `route` in [`kernel/scheduler`](../scheduler/README.md). That function uses the choice, the extra worker, and the new process from here.
+A request names a resource kind and an identity. It does not name a pid. This directory reads the ledger for who still holds that resource and who can still take new work, then picks one. It does not take a lease. The call that sends the request is `route` in [`kernel/scheduler`](../scheduler/README.md). That function uses the choice and the new process from here. A process leader or thread is a task in [`kernel/thread`](../thread/README.md).
 
 ## Each script
 
@@ -18,17 +18,13 @@ Picks one process that can still take new work. Two or fewer candidates keep the
 
 Opens another peer process, or asks an idle peer to stop. `open_peer` calls the reconciler to open one, and refuses once the process count is at the ceiling. `close_idle` asks idle processes to stop and leaves at least the floor count. A process that still has work stays. A process that belongs to a service stays. `reconciler_opener` wraps one `reconciler.start` as the function that opens another process.
 
-`workers.py`
-
-A pool of peer threads. The ceiling can change while the pool is running. A thread is not written into the ledger address. Whoever is idle takes the work. `raise_on_process` raises one process's worker ceiling, up to the given cap. `raise_ceiling` and `lower_ceiling` move that ceiling by capability name.
-
 `inflight.py`
 
 How many model replies may be waited on at once. `sample` records one round trip and keeps the next allowance between the minimum and the maximum. A longer round trip tightens it. A shorter one lets it rise.
 
 `relieve.py`
 
-When [`kernel/calculate`](../calculate/README.md) reports pressure, raises that process's `worker_ceiling` by one. Several reasons at once still add only one. A missing record stays at 1.
+When [`kernel/calculate`](../calculate/README.md) reports pressure, opens one more thread for that process. Several reasons at once still add only one thread. A missing record stays at 1.
 
 `route.py`
 

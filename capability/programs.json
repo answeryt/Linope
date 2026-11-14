@@ -1,6 +1,41 @@
 {
   "agent_loop": {
     "argv": [
+      "python",
+      "-m",
+      "capability.agent_loop.linope"
+    ],
+    "changes": [
+      "model"
+    ],
+    "entrypoint": "load",
+    "module_paths": [],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "scope": "chat"
+        },
+        "kind": "memory"
+      }
+    ],
+    "secret_names": [],
+    "settings": {
+      "model": "model.openai_chat_model",
+      "tools": [
+        "tools.read",
+        "tools.write",
+        "tools.edit",
+        "tools.glob",
+        "tools.grep",
+        "tools.pwsh",
+        "tools.ddgs",
+        "tools.ask_user"
+      ]
+    }
+  },
+  "agent_loop_pi": {
+    "argv": [
       "node",
       "capability/agent_loop/pi/main.mjs"
     ],
@@ -29,169 +64,8 @@
         "tools.grep",
         "tools.pwsh",
         "tools.ddgs",
-        "tools.ask_user",
-        "tools.mcp_tool_manager"
+        "tools.ask_user"
       ]
-    }
-  },
-  "model.anthropic_model": {
-    "argv": [
-      "python",
-      "-m",
-      "capability.program",
-      "capability/model/model_provider/anthropic_model/anthropic_model_plugin.py"
-    ],
-    "changes": [
-      "base_url",
-      "max_tokens",
-      "model",
-      "provider",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_p"
-    ],
-    "entrypoint": "load",
-    "module_paths": [
-      "capability/model/model_provider/anthropic_model/anthropic_model_plugin.py"
-    ],
-    "resources": [
-      {
-        "call_params": {},
-        "identity": {
-          "channel": "ledger"
-        },
-        "kind": "network"
-      }
-    ],
-    "secret_names": [
-      "ANTHROPIC_API_KEY"
-    ],
-    "settings": {
-      "id": "claude-opus-5",
-      "max_tokens": 128000,
-      "provider": "anthropic"
-    }
-  },
-  "model.gemini_model": {
-    "argv": [
-      "python",
-      "-m",
-      "capability.program",
-      "capability/model/model_provider/gemini_model/gemini_model_plugin.py"
-    ],
-    "changes": [
-      "base_url",
-      "max_tokens",
-      "model",
-      "provider",
-      "temperature",
-      "tool_choice",
-      "tools",
-      "top_p"
-    ],
-    "entrypoint": "load",
-    "module_paths": [
-      "capability/model/model_provider/gemini_model/gemini_model_plugin.py"
-    ],
-    "resources": [
-      {
-        "call_params": {},
-        "identity": {
-          "channel": "ledger"
-        },
-        "kind": "network"
-      }
-    ],
-    "secret_names": [
-      "GEMINI_API_KEY"
-    ],
-    "settings": {
-      "id": "your-gemini-model",
-      "provider": "gemini"
-    }
-  },
-  "model.openai_chat_model": {
-    "argv": [
-      "python",
-      "-m",
-      "capability.program",
-      "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py"
-    ],
-    "changes": [
-      "base_url",
-      "max_tokens",
-      "model",
-      "parallel_tool_calls",
-      "provider",
-      "reasoning_effort",
-      "temperature",
-      "thinking_enable",
-      "tool_choice",
-      "tools",
-      "top_p"
-    ],
-    "entrypoint": "load",
-    "module_paths": [
-      "capability/model/model_provider/openai_chat_model/openai_chat_model_plugin.py"
-    ],
-    "resources": [
-      {
-        "call_params": {},
-        "identity": {
-          "channel": "ledger"
-        },
-        "kind": "network"
-      }
-    ],
-    "secret_names": [
-      "OPENAI_API_KEY"
-    ],
-    "settings": {
-      "id": "deepseek-flash",
-      "provider": "openai"
-    }
-  },
-  "model.openai_response_model": {
-    "argv": [
-      "python",
-      "-m",
-      "capability.program",
-      "capability/model/model_provider/openai_response_model/openai_response_model_plugin.py"
-    ],
-    "changes": [
-      "base_url",
-      "max_tokens",
-      "model",
-      "parallel_tool_calls",
-      "provider",
-      "reasoning_effort",
-      "temperature",
-      "thinking_enable",
-      "tool_choice",
-      "tools",
-      "top_p"
-    ],
-    "entrypoint": "load",
-    "module_paths": [
-      "capability/model/model_provider/openai_response_model/openai_response_model_plugin.py"
-    ],
-    "resources": [
-      {
-        "call_params": {},
-        "identity": {
-          "channel": "ledger"
-        },
-        "kind": "network"
-      }
-    ],
-    "secret_names": [
-      "OPENAI_API_KEY"
-    ],
-    "settings": {
-      "id": "gpt-6-astra",
-      "provider": "openai",
-      "reasoning_effort": "high"
     }
   },
   "sandbox.sandbox": {
@@ -209,10 +83,11 @@
     "resources": [
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -331,10 +206,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -399,10 +275,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -562,10 +439,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -739,10 +617,11 @@
       },
       {
         "call_params": {
-          "mode": "read-only"
+          "mode": "read-only",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -794,10 +673,11 @@
       },
       {
         "call_params": {
-          "mode": "read-only"
+          "mode": "read-only",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -933,10 +813,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1001,10 +882,11 @@
       },
       {
         "call_params": {
-          "mode": "read-only"
+          "mode": "read-only",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1060,10 +942,11 @@
       },
       {
         "call_params": {
-          "mode": "read-only"
+          "mode": "read-only",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1111,10 +994,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1227,10 +1111,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1368,10 +1253,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1419,10 +1305,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1462,10 +1349,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1521,10 +1409,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1580,10 +1469,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1644,10 +1534,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }
@@ -1707,10 +1598,11 @@
       },
       {
         "call_params": {
-          "mode": "workspace-write"
+          "mode": "workspace-write",
+          "scope": "host"
         },
         "identity": {
-          "root": "."
+          "root": "host"
         },
         "kind": "sandbox"
       }

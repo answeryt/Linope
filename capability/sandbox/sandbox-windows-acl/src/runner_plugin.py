@@ -33,6 +33,8 @@ def parse_args(raw: list[str]) -> dict[str, Any]:
     workspace = None
     temp = None
     mode = None
+    scope = "workspace"
+    writable_roots: list[str] = []
     write_sid = None
     temp_write_sid = None
     index = 0
@@ -51,6 +53,10 @@ def parse_args(raw: list[str]) -> dict[str, Any]:
             temp = value
         elif token == "--mode":
             mode = value
+        elif token == "--scope":
+            scope = value
+        elif token == "--writable-root":
+            writable_roots.append(value)
         elif token == "--write-sid":
             write_sid = value
         elif token == "--temp-write-sid":
@@ -71,6 +77,8 @@ def parse_args(raw: list[str]) -> dict[str, Any]:
         "workspace": workspace,
         "temp": temp,
         "mode": mode,
+        "scope": scope,
+        "writable_roots": writable_roots,
         "write_sid": write_sid,
         "temp_write_sid": temp_write_sid,
         "command": argv[0],
@@ -130,7 +138,7 @@ def run(argv: list[str] | None = None) -> int:
         fail("workspace-write requires --write-sid and --temp-write-sid together")
     sids = _load("sandbox_windows_acl_workspace_sid", "workspace_sid_plugin.py")
     boundary = _load("sandbox_windows_acl_path_boundary", "path_boundary_plugin.py")
-    if parsed["mode"] == WORKSPACE_WRITE:
+    if parsed["mode"] == WORKSPACE_WRITE and parsed["scope"] != "host":
         boundary.assert_temp_root_outside_workspace(parsed["workspace"], parsed["temp"])
     ffi = _load("sandbox_windows_acl_ffi", "ffi_plugin.py")
     api = ffi.win32_sync()
@@ -143,7 +151,7 @@ def run(argv: list[str] | None = None) -> int:
         private_temp = None
         write_sid = None
         private_temp_sid = None
-        if parsed["mode"] == WORKSPACE_WRITE:
+        if parsed["mode"] == WORKSPACE_WRITE and parsed["scope"] != "host":
             write_sid = sids.workspace_write_sid(parsed["workspace"])
             if seam_managed:
                 if parsed["write_sid"] != write_sid:
@@ -156,8 +164,15 @@ def run(argv: list[str] | None = None) -> int:
                 owned_temp = tempfile.mkdtemp(prefix="ol-", dir=parsed["temp"])
                 private_temp = owned_temp
                 private_temp_sid = sids.temp_write_sid(private_temp)
+        elif parsed["mode"] == WORKSPACE_WRITE:
+            write_sid = sids.workspace_write_sid(parsed["workspace"])
         options: dict[str, Any] = {
-            "writable_dirs": [parsed["workspace"]] if parsed["mode"] == WORKSPACE_WRITE else [],
+            "writable_dirs": (
+                parsed["writable_roots"]
+                or [parsed["workspace"]]
+                if parsed["mode"] == WORKSPACE_WRITE
+                else []
+            ),
             "temp_dir": private_temp,
             "mode": parsed["mode"],
             "manage_dacls": not seam_managed,

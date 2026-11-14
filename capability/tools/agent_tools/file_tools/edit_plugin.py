@@ -97,7 +97,7 @@ def edit_file(
 
 def _door(workspace: Optional[str]):
     from kernel.environment import current_room
-    from kernel.environment.file_io import door_for
+    from capability.sandbox.access import door_for
 
     return door_for(current_room(), workspace)
 

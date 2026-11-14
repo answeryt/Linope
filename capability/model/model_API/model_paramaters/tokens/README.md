@@ -24,4 +24,4 @@ Indirectly, through a host that injects these estimators into [`context_compress
 
 ## Known Limitations and Deferred Work
 
-- **The count is a length heuristic** — it is not the provider tokenizer. [`kernel/calculate`](../../../../../kernel/calculate/README.md) uses `litellm` for a separate count.
+- **The count is a length heuristic** — it is not the provider tokenizer. [`kernel/calculate`](../../../../../kernel/calculate/README.md) uses the same kind of length estimate for pressure.

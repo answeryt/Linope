@@ -12,6 +12,6 @@ The same processes, resources, and commands still turn with Pi in place. An outs
 |---|---|
 | [`main.mjs`](main.mjs) | One capability process. A model question becomes `process start` and `load message` |
 | [`loop.mjs`](loop.mjs) | Opens one Pi session. Tool execution, extensions, and the transcript are Pi's. The caller supplies the model request |
-| [`../linope.json`](../linope.json) | The start declaration. The command is `node capability/agent_loop/pi/main.mjs` |
+| [`linope.json`](linope.json) | The start declaration. The name is `agent_loop_pi`. The command is `node capability/agent_loop/pi/main.mjs` |
 
 Processes, resources, and commands are [`kernel/`](../../../kernel/README.md).

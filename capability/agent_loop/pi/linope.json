@@ -1,0 +1,26 @@
+{
+  "name": "agent_loop_pi",
+  "command": ["node", "capability/agent_loop/pi/main.mjs"],
+  "resources": [
+    {
+      "kind": "memory",
+      "identity": {"scope": "chat"},
+      "call_params": {}
+    }
+  ],
+  "settings": {
+    "model": "model.openai_chat_model",
+    "tools": [
+      "tools.read",
+      "tools.write",
+      "tools.edit",
+      "tools.glob",
+      "tools.grep",
+      "tools.pwsh",
+      "tools.ddgs",
+      "tools.ask_user"
+    ]
+  },
+  "changes": ["model"],
+  "secrets": []
+}

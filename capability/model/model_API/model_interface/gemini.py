@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import threading
 from pathlib import Path
 from typing import Any
 
 MAX_RECOVERIES = 4
 _PARAM_CACHE: dict[str, Any] = {}
+_PARAM_CACHE_LOCK = threading.RLock()
 
 
 def _omit(value: object) -> bool:
@@ -14,20 +16,21 @@ def _omit(value: object) -> bool:
 
 def _param_leaf(folder: str, filename: str) -> Any:
     key = f"{folder}/{filename}"
-    cached = _PARAM_CACHE.get(key)
-    if cached is not None:
-        return cached
-    path = Path(__file__).resolve().parents[1] / "model_paramaters" / folder / filename
-    spec = importlib.util.spec_from_file_location(
-        f"linope_{Path(__file__).stem}_{folder}",
-        path,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _PARAM_CACHE[key] = module
-    return module
+    with _PARAM_CACHE_LOCK:
+        cached = _PARAM_CACHE.get(key)
+        if cached is not None:
+            return cached
+        path = Path(__file__).resolve().parents[1] / "model_paramaters" / folder / filename
+        spec = importlib.util.spec_from_file_location(
+            f"linope_{Path(__file__).stem}_{folder}",
+            path,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PARAM_CACHE[key] = module
+        return module
 
 
 def _vendor_role(role: object) -> str:
@@ -35,17 +38,18 @@ def _vendor_role(role: object) -> str:
 
 
 def _param_leaf_sibling(filename: str) -> Any:
-    cached = _PARAM_CACHE.get(filename)
-    if cached is not None:
-        return cached
-    path = Path(__file__).with_name(filename)
-    spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _PARAM_CACHE[filename] = module
-    return module
+    with _PARAM_CACHE_LOCK:
+        cached = _PARAM_CACHE.get(filename)
+        if cached is not None:
+            return cached
+        path = Path(__file__).with_name(filename)
+        spec = importlib.util.spec_from_file_location(f"linope_{path.stem}", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PARAM_CACHE[filename] = module
+        return module
 
 
 async def _with_recovery(payload: dict[str, Any], send: Any) -> Any:

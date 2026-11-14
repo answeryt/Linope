@@ -12,7 +12,7 @@ This directory builds the page a model sees, checks the model's reply, and write
 
 ## Contract
 
-Which command lines a page may offer is decided in [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). The kernel executes a command line it is given. It does not choose the list.
+Which command lines a page may offer is decided in [`capability/agent_loop`](../../capability/agent_loop/linope/loop.py). The kernel executes a command line it is given. It does not choose the list.
 
 `MemoryChannel` writes one row into this process's memory. `send` records through `remember`. These are the process's own notes. They are not a transport between two services.
 
@@ -25,7 +25,7 @@ deliver(channel, "1", {"kind": "user", "content": "hello", "state": "asked"}, "2
 publish(channel, "weather", {"kind": "user", "content": "hello", "state": "asked"})
 ```
 
-The kernel does not open a port and does not choose a transport. Words that have already arrived in this window are given to that process as `load message`. Memory means the process has a notebook. The turn itself is [`capability/agent_loop`](../../capability/agent_loop/pi/main.mjs). A process with no memory receives the words as they arrived.
+The kernel does not open a port and does not choose a transport. Words that have already arrived in this window are given to that process as `load message`. Memory means the process has a notebook. The turn itself is [`capability/agent_loop`](../../capability/agent_loop/linope/loop.py). A process with no memory receives the words as they arrived.
 
 Row fields and the states `asked`, `continue`, `resulted`, `rejected`, and `answered` are stored by [`kernel/resource/memory`](../resource/memory/README.md). Whether the process is sleeping or working is [`kernel/trace`](../trace/README.md).
 

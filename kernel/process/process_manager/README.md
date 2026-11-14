@@ -10,7 +10,7 @@ One process is one `CapabilityProcess`. It holds the activation from start and i
 
 `capability_process.py`
 
-The process itself. `ask` sends one message and waits for the reply. `submit` accepts one call and returns a `Receipt`. It does not append a row to the resource ledger. `answer_ping` returns `pong` with this sequence only when the asked pid is this process. When both sides name a channel, the channels must match. Otherwise it stays quiet. Whether the sequence matches is checked again in [`kernel/command/process`](../../command/process/README.md). `stop` closes this resource record and returns the leases.
+The process itself. `ask` sends one message and waits for the reply. `submit` accepts one call and returns a `Receipt`. It does not append a row to the resource ledger. `answer_ping` returns `pong` with this sequence only when the asked pid is this process. When both sides name a channel, the channels must match. Otherwise it stays quiet. Whether the sequence matches is checked again in [`kernel/command/process`](../../command/process/README.md). `stop` closes this resource record, returns the leases, and drops every task of this process. A command result can name a task, so two tasks in one process do not mix their replies.
 
 `lifecycle.py`
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ def create_service(
     pids: tuple[int, ...],
     *,
     root: Path | None = None,
-) -> tuple[ServiceGroup, tuple[str, ...]]:
+) -> tuple[ServiceGroup, tuple[dict[str, Any], ...]]:
     """Check the process ledger, then save one service. Nothing is started or stopped."""
     from kernel.process.ledger import ProcessLedger
     from kernel.process.process_manager.liveness import process_matches, reap_dead
@@ -27,7 +26,7 @@ def create_service(
     folder = _folder(root)
     book = ProcessResourceBook(ProcessLedger(folder / "processes.json"))
     reap_dead(book)
-    lines: list[str] = []
+    lines: list[dict[str, Any]] = []
     for pid in pids:
         record = book.get(pid)
         if (
@@ -36,36 +35,29 @@ def create_service(
             or not process_matches(record.pid, record.started or None)
         ):
             raise ValueError(f"No such open process: {pid}")
-        lines.append(f"pid={record.pid} capability={record.capability_id}")
+        lines.append({"pid": record.pid, "capability": record.capability_id})
     group = ServiceBook(folder / "services.json").add(pids)
     return group, tuple(lines)
 
 
 def entry_of(group: ServiceGroup, processes: Any) -> int:
-    """The one living model process of this service. The order of the list does not matter."""
-    from kernel.command.process.listen import _capability_of, _pid_of
+    """Return a living service member without assigning it a model role."""
+    from kernel.command.process.listen import _pid_of
 
     members = set(group.pids)
-    living = [
-        process
-        for process in processes
-        if getattr(process, "is_alive", False) and _pid_of(process) in members
-    ]
-    models = sorted(
-        _pid_of(process)
-        for process in living
-        if str(_capability_of(process)).startswith("model" + ".")
+    living = sorted(
+        (
+            _pid_of(process)
+            for process in processes
+            if getattr(process, "is_alive", False) and _pid_of(process) in members
+        ),
     )
-    if len(models) == 1:
-        return models[0]
-    if not models:
-        alive = ", ".join(str(pid) for pid in sorted(_pid_of(p) for p in living)) or "none"
-        raise ValueError(f"This service has no open model process. Still open: {alive}")
-    listed = ", ".join(str(pid) for pid in models)
-    raise ValueError(f"This service has more than one model process: {listed}. Use load message <pid>")
+    if living:
+        return living[0]
+    raise ValueError("This service has no open process")
 
 
-def accept(window: Any, service_id: int, body: str, *, root: Path | None = None) -> str:
+def accept(runtime: Any, service_id: int, body: str, *, root: Path | None = None) -> str:
     """Hand words that already arrived to this service's one model, as ``load message``.
 
     The channel that carried the words stays with the caller. This records them
@@ -74,8 +66,8 @@ def accept(window: Any, service_id: int, body: str, *, root: Path | None = None)
     from kernel.command.process.listen import PING_TIMEOUT, _one_line, _processes
     from kernel.services.collection import ServiceBook
 
-    if window is None:
-        raise ValueError("No such window")
+    if runtime is None:
+        raise ValueError("No kernel runtime")
     try:
         number = int(service_id)
     except (TypeError, ValueError) as exc:
@@ -85,12 +77,12 @@ def accept(window: Any, service_id: int, body: str, *, root: Path | None = None)
     group = ServiceBook(_folder(root) / "services.json").get(number)
     if group is None:
         raise ValueError(f"No such service: {number}")
-    line = f"load message {entry_of(group, _processes(window))} -- {body}"
-    _one_line(window, line, PING_TIMEOUT, emit_done=False)
+    line = f"load message {entry_of(group, _processes(runtime))} -- {body}"
+    _one_line(runtime, line, PING_TIMEOUT, emit_done=False)
     return line
 
 
-def service_line(window: Any, text: str, *, root: Path | None = None) -> str:
+def service_line(runtime: Any, text: str, *, root: Path | None = None) -> str:
     """Turn ``service load <service id> -- <body>`` into the ``load message`` line of its entry."""
     from kernel.command.process.listen import _processes
     from kernel.services.collection import ServiceBook
@@ -108,7 +100,7 @@ def service_line(window: Any, text: str, *, root: Path | None = None) -> str:
     group = ServiceBook(_folder(root) / "services.json").get(int(words[2]))
     if group is None:
         raise ValueError(f"No such service: {words[2]}")
-    return f"load message {entry_of(group, _processes(window))} -- {body}"
+    return f"load message {entry_of(group, _processes(runtime))} -- {body}"
 
 
 def _folder(root: Path | None) -> Path:
@@ -128,34 +120,33 @@ def _pids(argv: list[str]) -> tuple[int, ...]:
     return tuple(found)
 
 
-def _speak() -> int:
+def _speak(
+    runtime: Any = None,
+    request: dict[str, Any] | None = None,
+) -> int:
     from kernel.command.process.listen import PING_TIMEOUT, _one_line
-    from kernel.command.window import current_line, current_window
 
-    window = current_window()
-    if window is None:
+    target = runtime
+    if target is None:
         raise UsageError(LOAD_USAGE)
-    try:
-        line = service_line(window, current_line())
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    if _one_line(window, line, PING_TIMEOUT, emit_done=False):
-        window.close_once(line)
+    line = service_line(target, str((request or {}).get("line") or ""))
+    if _one_line(target, line, PING_TIMEOUT, emit_done=False):
+        target.close_once(line)
     return 0
 
 
 @guard(USAGE)
-def run(argv: list[str]) -> int:
+def run(
+    argv: list[str],
+    *,
+    runtime: Any = None,
+    request: dict[str, Any] | None = None,
+) -> int:
     if argv[:1] == ["load"]:
-        return _speak()
-    try:
-        pids = _pids(argv)
-        group, lines = create_service(pids)
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    print(f"service={group.service_id}", flush=True)
-    for line in lines:
-        print(line, flush=True)
-    return 0
+        return _speak(runtime, request)
+    pids = _pids(argv)
+    group, lines = create_service(pids)
+    return {
+        "service_id": group.service_id,
+        "processes": list(lines),
+    }

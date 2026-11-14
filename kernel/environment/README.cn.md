@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-一个能力进程能碰到的工作目录、能读写的路径、能读的密钥名字、能跑多久、外部命令要不要套沙箱，都记在这里。进程启动时按资源记录装好这一份，之后不再放宽。
+一个能力进程的工作目录、sandbox 返回的访问策略、能跑多久、外部命令要不要套沙箱，都在这里传递。访问范围由 [`capability/sandbox`](../../capability/sandbox/README.cn.md) 决定；kernel 不再把启动 cwd 自动当成必须安全的 workspace。
 
 聊天内容和记忆行不在这里。[`kernel/communication`](../communication/README.cn.md) 管模型页，[`kernel/resource`](../resource/README.cn.md) 管记忆。本目录不复制那两处。
 
@@ -32,7 +32,7 @@
 
 `filesystem.py`
 
-这个进程能看见哪些地方：工作区、它自己的文件、临时目录。每个地方有一条：路径，以及能不能写。必须有一块名叫 `workspace`。`locate` 把一条路径收进允许的地方，收不进去就拒绝。
+这个进程能看见哪些地方由 sandbox policy 的 roots/scope 决定。`FilesystemView` 只是把策略变成房间里的可序列化视图；host scope 可以覆盖当前主机的驱动器根，`locate` 仍执行策略返回的路径和写权限检查。
 
 `file_io.py`
 
@@ -48,11 +48,11 @@
 
 `mount.py`
 
-路径规则。工作区根从 `--change workspace=`、`workspace_root` 或 `cwd` 来，没有就用后备路径。每个进程自己的临时目录在项目根下的 `.linope-tmp/<pid>`。主目录、`.git`、`.ssh`、`.aws`、`.env`、私钥和证书文件不让进这个视图。
+路径规则和敏感路径名称由 sandbox policy 提供。`cwd` 只作为相对路径和命令启动目录；host scope 不把主目录或盘符根视为错误。`.git`、`.ssh`、`.aws`、`.env`、私钥和证书等仍可由策略列入阻止规则。
 
 `sandbox_vocab.py`
 
-从 `capability/sandbox/sandbox/src` 读模式表和可写根规则。`check_mode` 拒绝不认识的模式。`confines` 回答这条命令要不要包起来。`writes` 回答这个模式允不允许写。
+从 `capability/sandbox/gate.py` 读取模式表、roots 和运行时 policy。`check_mode` 拒绝不认识的模式，`resolve_policy` 获取本次访问范围；`confines` 回答外部命令要不要包起来。
 
 `session_mode.py`
 

@@ -3,9 +3,12 @@
 English | [中文](README.cn.md)
 
 This family turns a provider card into a process declaration and a provider SDK call. It does not walk a model turn. The turn is [`kernel/scheduler`](../../kernel/scheduler/README.md).
+The kernel may copy one installed card to several configured model cores;
+this directory only parses cards and performs one provider call, not core
+assignment.
 
 | Directory | Role |
-|---|---|
+| --- | --- |
 | [`model_provider/`](model_provider/README.md) | One card and `capability_profile` per provider |
 | [`model_API/`](model_API/README.md) | SDK wrappers, rough token estimates, and context-window recovery |
 | [`model_message/`](model_message/README.md) | In-process content blocks |

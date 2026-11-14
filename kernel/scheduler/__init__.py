@@ -1,6 +1,6 @@
-"""One scheduler for resource routing and thread admission."""
+"""One scheduler for resource routing. Model turns are tasks."""
 
-__all__ = ["route", "run_runtime"]
+__all__ = ["route"]
 
 
 def __getattr__(name: str):
@@ -8,8 +8,4 @@ def __getattr__(name: str):
         from kernel.scheduler.route import route
 
         return route
-    if name == "run_runtime":
-        from kernel.scheduler.threads import run_runtime
-
-        return run_runtime
     raise AttributeError(name)

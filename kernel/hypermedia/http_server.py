@@ -12,7 +12,7 @@ from enum import StrEnum
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from kernel.hypermedia.link import Link
@@ -218,6 +218,7 @@ def serve_resources(
     *,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
+    on_started: Callable[[str, int], None] | None = None,
 ) -> None:
     """Serve one local resource store on a loopback address."""
     if host not in _LOOPBACK:
@@ -239,7 +240,8 @@ def serve_resources(
             "resource_store": locator,
         },
     )
-    print(f"Resource service listening on {host}:{actual_port}", flush=True)
+    if on_started is not None:
+        on_started(host, actual_port)
     try:
         server.serve_forever()
     finally:
