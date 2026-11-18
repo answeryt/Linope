@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "linope"
-version = "0.1.0"
+version = "0.1.2"
 description = "Linope kernel and terminal"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,7 +28,7 @@ linope = "tui.launch:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tui*", "kernel*", "capability*", "bindings*"]
+include = ["tui*", "kernel*", "capability*", "bindings*", "connection*"]
 exclude = ["*.tests", "*.tests.*", "*node_modules*"]
 namespaces = true
 
