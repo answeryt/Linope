@@ -49,10 +49,13 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       next.processes = []
       next.status = 'ready'
       return next
-    case 'process.started':
+    case 'process.started': {
       if (event.pid === undefined) return next
-      upsertProcess(next, String(event.pid), textOf(event.data.capability), 'waiting')
+      const capability = textOf(event.data.capability)
+      upsertProcess(next, String(event.pid), capability, 'waiting')
+      appendSystem(next, `${capability || 'process'} started (pid ${event.pid})`)
       return next
+    }
     case 'process.activity':
       if (event.pid === undefined) return next
       upsertProcess(

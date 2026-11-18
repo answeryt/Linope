@@ -116,7 +116,10 @@ projected = reduceKernelEvent(projected, {
   turn_id: 'turn-1',
   version: 1
 })
-assert.deepEqual(projected.turns, [{ role: 'assistant', text: '你好' }])
+assert.deepEqual(projected.turns, [
+  { role: 'system', text: 'tools.bash started (pid 50040)' },
+  { role: 'assistant', text: '你好' }
+])
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('clerk'), true)
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('tools.bash waiting'), true)
 
