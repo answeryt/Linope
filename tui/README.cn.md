@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-这个目录是蓝色终端。它画一屏，读键盘，把每一行发给内核会话。内核会话是 `python -m kernel.command session`。
+这个目录是蓝色终端。它画一屏，读键盘，把每一行发给共享连接网关。网关再驱动现有的 `python -m kernel.command session`。
 
 ## 脚本
 
@@ -76,7 +76,7 @@
 
 `theme.ts` 是这一套颜色：标志的蓝、边框、框底、正文、较淡的字、提示符和错误。`fg` 给文字上色，然后恢复默认。`fill` 给背景上色。`paint` 给前景上色，并把颜色留在后面的输出上。
 
-`link/session.ts` 是 `startTerminalSession`。它在用户启动 `linope` 时的当前目录启动 `python -u -m kernel.command session`，并强制 UTF-8。解释器先用 `LINOPE_PYTHON`，再用 `PYTHON`，都没有时用 `python`。标准输出的每一行必须是 `link/protocol.ts` 接受的版本化 JSONL 事件；无帧文本只能成为协议错误，不能进入 transcript。标准错误只是诊断事件，不能成为模型回答。`send` 写出去掉首尾空白的一行。`stop` 写出 `exit`；这一写失败就杀掉进程。
+`link/session.ts` 是 `startTerminalSession`。它在用户启动 `linope` 时的当前目录启动 `python -u -m connection.gateway`，并强制 UTF-8。解释器先用 `LINOPE_PYTHON`，再用 `PYTHON`，都没有时用 `python`。标准输出的每一行必须是 `link/protocol.ts` 接受的版本化 JSONL 事件；无帧文本只能成为协议错误，不能进入 transcript。标准错误只是诊断事件，不能成为模型回答。普通 TUI 输入通过 `command.execute` 兼容动作发送，语义动作由共享连接层统一编译。`stop` 发送 `exit`；这一写失败就杀掉进程。
 
 `link/protocol.ts` 校验协议版本、序列、关联 id、pid 和数据记录。`state.ts` 是从这些事实到 transcript 和进程面板的纯投影；渲染器不解析命令语法或后端文本。
 

@@ -2,7 +2,7 @@
 
 English | [中文](README.cn.md)
 
-This directory is the blue terminal. It draws one screen, reads the keyboard, and sends each line to the kernel session. The kernel session is `python -m kernel.command session`.
+This directory is the blue terminal. It draws one screen, reads the keyboard, and sends each line to the shared connection gateway. The gateway drives the existing `python -m kernel.command session`.
 
 ## Scripts
 
@@ -76,7 +76,7 @@ The info box shows four fields: whether the clerk is here (`clerk` / `here`), ho
 
 `theme.ts` is the palette: logo blues, the border, the box fill, the text, the muted text, the prompt, and errors. `fg` paints text and then resets. `fill` paints the background. `paint` paints the foreground and leaves the color on.
 
-`link/session.ts` is `startTerminalSession`. It starts `python -u -m kernel.command session` in the directory where `linope` was started, with UTF-8 forced on. The interpreter is `LINOPE_PYTHON`, then `PYTHON`, then `python`. Every stdout line must be a versioned JSONL event accepted by `link/protocol.ts`; an unframed line is a protocol error, never transcript text. Stderr is a diagnostic event and never a model answer. `send` writes one trimmed line. `stop` writes `exit`, and kills the process when that write fails.
+`link/session.ts` is `startTerminalSession`. It starts `python -u -m connection.gateway` in the directory where `linope` was started, with UTF-8 forced on. The interpreter is `LINOPE_PYTHON`, then `PYTHON`, then `python`. Every stdout line must be a versioned JSONL event accepted by `link/protocol.ts`; an unframed line is a protocol error, never transcript text. Stderr is a diagnostic event and never a model answer. TUI input is sent through the `command.execute` compatibility action, while semantic actions are compiled by the shared connection layer. `stop` sends `exit`, and kills the process when that write fails.
 
 `link/protocol.ts` validates the wire version, sequence, correlation ids, pid and data record. `state.ts` is the pure projection from those facts to the transcript and process panel. Rendering does not inspect command syntax or backend payload text.
 

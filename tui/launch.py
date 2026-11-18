@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def open_desktop() -> int:
     root = Path(__file__).resolve().parents[1]
-    desktop = root / "ui" / "desktop"
+    desktop = root / "ui"
     npm_name = "npm.cmd" if os.name == "nt" else "npm"
     npm = shutil.which(npm_name)
     if npm is None:

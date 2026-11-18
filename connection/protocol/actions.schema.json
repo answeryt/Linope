@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "linope://connection/actions.schema.json",
+  "title": "Linope action request",
+  "type": "object",
+  "required": ["version", "request_id", "action", "payload"],
+  "properties": {
+    "version": { "const": 1 },
+    "request_id": { "type": "string", "minLength": 1 },
+    "action": {
+      "enum": [
+        "chat.send",
+        "process.send",
+        "process.create",
+        "environment.load",
+        "model.configure",
+        "command.execute"
+      ]
+    },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}
