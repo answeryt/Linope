@@ -90,6 +90,10 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       appendError(next, errorText(event.data.error))
       next.status = next.activeTurns.size ? 'running' : 'ready'
       return next
+    case 'action.failed':
+      appendError(next, errorText(event.data.error) || 'Connection action failed')
+      next.status = next.activeTurns.size ? 'running' : 'ready'
+      return next
     case 'protocol.error':
     case 'diagnostic':
       appendError(next, textOf(event.data.message) || 'Invalid kernel event')

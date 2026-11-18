@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "linope://connection/events.schema.json",
+  "title": "Linope connection event",
+  "type": "object",
+  "required": ["version", "kind", "seq", "data"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "request_id": { "type": "string" },
+    "turn_id": { "type": "string" },
+    "pid": { "type": "integer", "minimum": 1 },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": false
+}

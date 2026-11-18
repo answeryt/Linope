@@ -12,6 +12,7 @@ const pythonCommand = () => process.env.LINOPE_PYTHON?.trim() || process.env.PYT
 
 export function startTerminalSession(onEvent: (event: KernelEvent) => void): TerminalLink {
   let stderr = ''
+  let requestSequence = 0
   const emitStderr = () => {
     const text = stderr.trim()
 
@@ -28,7 +29,7 @@ export function startTerminalSession(onEvent: (event: KernelEvent) => void): Ter
   }
   const proc: ChildProcessWithoutNullStreams = spawn(
     pythonCommand(),
-    ['-u', '-m', 'kernel.command', 'session'],
+    ['-u', '-m', 'connection.gateway'],
     {
       cwd: process.cwd(),
       env: {
@@ -86,12 +87,28 @@ export function startTerminalSession(onEvent: (event: KernelEvent) => void): Ter
         return
       }
 
-      proc.stdin.write(`${text.trim()}\n`)
+      requestSequence += 1
+      proc.stdin.write(
+        `${JSON.stringify({
+          action: 'command.execute',
+          payload: { command: text.trim() },
+          request_id: `request-${requestSequence}`,
+          version: 1
+        })}\n`
+      )
     },
     stop() {
       if (proc.exitCode === null && !proc.killed) {
         try {
-          proc.stdin.write('exit\n')
+          requestSequence += 1
+          proc.stdin.write(
+            `${JSON.stringify({
+              action: 'command.execute',
+              payload: { command: 'exit' },
+              request_id: `request-${requestSequence}`,
+              version: 1
+            })}\n`
+          )
         } catch {
           proc.kill()
         }
