@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -48,6 +49,28 @@ class ToolSpec:
 
 
 Submit = Callable[[str], CommandResult]
+
+
+@dataclass
+class _Shared:
+    """What every turn of one process uses together."""
+
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    pids: dict[str, int] = field(default_factory=dict)
+    model_ready: bool = False
+    hub_ready: bool = False
+    replayed: bool = False
+    seeded: bool = False
+    seeding: bool = False
+    committed: list[dict[str, Any]] = field(default_factory=list)
+    tools: tuple[ToolSpec, ...] = ()
+    model: str = ""
+    pid: int = 0
+    session: Any = None
+    session_root: Path = field(default_factory=Path.cwd)
+
+    def __post_init__(self) -> None:
+        self.seed_cv = threading.Condition(self.lock)
 
 
 def load_catalog(path: Path | None = None) -> dict[str, Any]:
@@ -122,27 +145,116 @@ class Loop:
         names = settings.get("tools") or []
         if not isinstance(names, list):
             raise ValueError("agent loop tools must be a list")
-        self.model = model
-        self.submit = submit
         chosen = [str(name) for name in names]
         table = load_catalog() if catalog is None else catalog
-        self.tools = declared_tools(chosen, table)
-        self._hub_ready = HUB_CAPABILITY not in chosen
+        shared = _Shared()
+        shared.model = model
+        shared.tools = declared_tools(chosen, table)
+        shared.hub_ready = HUB_CAPABILITY not in chosen
+        shared.session_root = session_root or Path.cwd()
+        self._shared = shared
+        self._submit_fn = submit
         self.messages: list[dict[str, Any]] = []
         prompt = system_prompt() if identity is None else identity.strip()
         if prompt:
-            self.messages.append({"role": "system", "content": prompt})
-        self._pids: dict[str, int] = {}
-        self._model_ready = False
-        self.pid = 0
+            row = {"role": "system", "content": prompt}
+            self.messages.append(row)
+            shared.committed.append(dict(row))
         self.thread_id = "0"
         self._seq = 1
         self._phase = "ask_model"
         self._forks: list[dict[str, Any]] = []
         self._miss: CommandResult | None = None
-        self._session_root = session_root or Path.cwd()
-        self._session: SessionLog | None = None
-        self._replayed = False
+        self._shares_history = True
+        self._continue = False
+        self._base = 0
+        self._committed_turn = False
+
+    @property
+    def model(self) -> str:
+        return self._shared.model
+
+    @property
+    def tools(self) -> tuple[ToolSpec, ...]:
+        return self._shared.tools
+
+    @tools.setter
+    def tools(self, value: tuple[ToolSpec, ...]) -> None:
+        self._shared.tools = value
+
+    @property
+    def submit(self) -> Submit:
+        return self._submit_fn
+
+    @submit.setter
+    def submit(self, value: Submit) -> None:
+        self._submit_fn = value
+
+    @property
+    def pid(self) -> int:
+        return self._shared.pid
+
+    @pid.setter
+    def pid(self, value: int) -> None:
+        self._shared.pid = int(value)
+
+    @property
+    def _pids(self) -> dict[str, int]:
+        return self._shared.pids
+
+    @property
+    def _model_ready(self) -> bool:
+        return self._shared.model_ready
+
+    @_model_ready.setter
+    def _model_ready(self, value: bool) -> None:
+        self._shared.model_ready = bool(value)
+
+    @property
+    def _hub_ready(self) -> bool:
+        return self._shared.hub_ready
+
+    @_hub_ready.setter
+    def _hub_ready(self, value: bool) -> None:
+        self._shared.hub_ready = bool(value)
+
+    @property
+    def _session(self) -> SessionLog | None:
+        return self._shared.session
+
+    @_session.setter
+    def _session(self, value: SessionLog | None) -> None:
+        self._shared.session = value
+
+    @property
+    def _session_root(self) -> Path:
+        return self._shared.session_root
+
+    @property
+    def _replayed(self) -> bool:
+        return self._shared.replayed
+
+    @_replayed.setter
+    def _replayed(self, value: bool) -> None:
+        self._shared.replayed = bool(value)
+
+    def open_turn(self, thread_id: str) -> Loop:
+        """One more sentence. It starts from history that has already finished."""
+
+        turn = Loop.__new__(Loop)
+        turn._shared = self._shared
+        turn._submit_fn = self._submit_fn
+        turn.messages = []
+        turn.thread_id = str(thread_id)
+        turn._seq = 0
+        turn._phase = "ask_model"
+        turn._forks = []
+        turn._miss = None
+        turn._shares_history = False
+        turn._continue = False
+        turn._base = 0
+        turn._committed_turn = False
+        return turn
 
     def bind(self, pid: int, thread_id: str = "") -> None:
         """Bind the loop to the process leader task."""
@@ -177,7 +289,16 @@ class Loop:
     def prepare(self, question: str) -> None:
         """Remember the user sentence and get ready to ask the model."""
 
-        self._resume(question)
+        self._ensure_seeded(question)
+        if self._shares_history and self._continue:
+            self._index()
+        else:
+            with self._shared.lock:
+                self.messages = [dict(item) for item in self._shared.committed]
+            if self._shares_history:
+                self._continue = True
+        self._base = len(self.messages)
+        self._committed_turn = False
         self.messages.append({"role": "user", "content": question})
         self._phase = "ask_model"
         self._forks = []
@@ -242,6 +363,7 @@ class Loop:
                 return None
             self._phase = "done"
             self._index()
+            self._commit()
             return text
         self.messages.append(_assistant_message(_assistant_blocks(turn, calls), turn))
         if len(calls) == 1:
@@ -314,9 +436,55 @@ class Loop:
             )
         return False
 
+    def _commit(self) -> None:
+        """Fold this finished turn into the history the next turn starts from."""
+
+        if self._committed_turn:
+            return
+        with self._shared.lock:
+            self._shared.committed.extend(dict(item) for item in self.messages[self._base:])
+        self._committed_turn = True
+
+    def _ensure_seeded(self, question: str) -> None:
+        """Load saved history once. Another turn waits instead of loading it again."""
+
+        shared = self._shared
+        with shared.lock:
+            while shared.seeding:
+                shared.seed_cv.wait()
+            if shared.seeded:
+                return
+            shared.seeding = True
+        try:
+            self._seed(question)
+        except Exception:
+            with shared.lock:
+                shared.seeding = False
+                shared.seed_cv.notify_all()
+            raise
+        with shared.lock:
+            shared.seeded = True
+            shared.seeding = False
+            shared.seed_cv.notify_all()
+
+    def _seed(self, question: str) -> None:
+        saved = self.messages
+        with self._shared.lock:
+            base = [dict(item) for item in self._shared.committed]
+        self.messages = base
+        try:
+            self._resume(question)
+            with self._shared.lock:
+                self._shared.committed = [dict(item) for item in self.messages]
+        finally:
+            self.messages = saved
+
     def _fork(self, call: ToolCallBlock) -> dict[str, Any]:
         self._seq += 1
-        task_id = f"{self.pid}.{self._seq}"
+        if self.thread_id and self.thread_id != str(self.pid):
+            task_id = f"{self.thread_id}.{self._seq}"
+        else:
+            task_id = f"{self.pid}.{self._seq}"
         line = self._tool_line(call)
         item: dict[str, Any] = {
             "id": task_id,
@@ -333,11 +501,12 @@ class Loop:
 
     def _model_line(self) -> str:
         self._ensure_hub()
-        if not self._model_ready:
-            reply = self.submit(f"model use {self.model}")
-            if reply.error:
-                raise RuntimeError(reply.error)
-            self._model_ready = True
+        with self._shared.lock:
+            if not self._model_ready:
+                reply = self.submit(f"model use {self.model}")
+                if reply.error:
+                    raise RuntimeError(reply.error)
+                self._model_ready = True
         body = json.dumps(
             {"messages": self._messages_for_model(), "tools": _tool_payload(self.tools)},
             ensure_ascii=False,
@@ -350,17 +519,18 @@ class Loop:
         if spec is None:
             self._miss = CommandResult(result=f"This page does not offer {call.name}")
             return ""
-        pid = self._pids.get(spec.capability)
-        if pid is None:
-            reply = self.submit(CommandOffer("start", spec.capability).pointer)
-            if reply.error:
-                self._miss = CommandResult(result=reply.error)
-                return ""
-            self._remember(reply.result)
+        with self._shared.lock:
             pid = self._pids.get(spec.capability)
             if pid is None:
-                self._miss = CommandResult(result=reply.result or f"Could not start {spec.capability}")
-                return ""
+                reply = self.submit(CommandOffer("start", spec.capability).pointer)
+                if reply.error:
+                    self._miss = CommandResult(result=reply.error)
+                    return ""
+                self._remember(reply.result)
+                pid = self._pids.get(spec.capability)
+                if pid is None:
+                    self._miss = CommandResult(result=reply.result or f"Could not start {spec.capability}")
+                    return ""
         arguments = call.arguments if isinstance(call.arguments, dict) else {}
         body: Any = {"name": spec.remote_name, "arguments": arguments} if spec.remote_name else arguments
         return CommandOffer("tool", spec.capability, pid=pid).pointer + _json_object(body)
@@ -368,8 +538,12 @@ class Loop:
     def _ensure_hub(self) -> None:
         """Ask MCPHub for its tools before the model sees them."""
 
-        if self._hub_ready:
-            return
+        with self._shared.lock:
+            if self._hub_ready:
+                return
+            self._load_hub()
+
+    def _load_hub(self) -> None:
         reply = self.submit(CommandOffer("start", HUB_CAPABILITY).pointer)
         if reply.error:
             raise RuntimeError(_hub_failure(reply.error))
@@ -445,9 +619,14 @@ class Loop:
         earlier = self._session.entries()
         if earlier:
             self.messages.extend(self._restore(page, earlier))
-        fresh = self._session.note(rows_of(page))
-        skip = _question_real(fresh, rows_of(page), question)
-        extra = [item for item in fresh if item.real != skip]
+        rows = rows_of(page)
+        fresh = self._session.note(rows)
+        skip = _question_real(fresh, rows, question)
+        extra = [
+            item
+            for item in fresh
+            if item.real != skip and _settled_row(rows, item.real)
+        ]
         if extra:
             self.messages.extend(self._session.messages(self._read, extra))
 
@@ -467,6 +646,10 @@ class Loop:
     def _index(self, calls: list[tuple[str, str]] | None = None) -> None:
         """Ask show for this process and append addresses that are new."""
 
+        with self._shared.lock:
+            self._index_rows(calls)
+
+    def _index_rows(self, calls: list[tuple[str, str]] | None = None) -> None:
         if self.pid <= 0:
             return
         page = self._page()
@@ -718,6 +901,17 @@ def _parse_turn(raw: Any) -> ModelTurn:
 
 def _has_real(page: dict[str, Any], real: str) -> bool:
     return any(str(row.get("real") or "") == real for row in rows_of(page))
+
+
+def _settled_row(rows: list[dict[str, Any]], real: str) -> bool:
+    """A trailing user line is still this turn, or another turn that has not finished."""
+
+    index = next((i for i, row in enumerate(rows) if str(row.get("real") or "") == real), -1)
+    if index < 0:
+        return False
+    if str(rows[index].get("kind") or "") != "user":
+        return True
+    return any(str(row.get("kind") or "") in {"model", "tool"} for row in rows[index + 1 :])
 
 
 def _question_real(fresh: list[Any], rows: list[dict[str, Any]], question: str) -> str:

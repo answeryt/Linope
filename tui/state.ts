@@ -5,6 +5,7 @@ export type UiTurn = {
   source?: string
   stream?: boolean
   text: string
+  turnId?: string
 }
 
 export type UiProcess = {
@@ -82,7 +83,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       next.status = 'running'
       return next
     case 'model.delta':
-      appendStream(next, textOf(event.data.text), sourceOf(event))
+      appendStream(next, textOf(event.data.text), sourceOf(event), turnIdOf(event))
       return next
     case 'turn.completed':
       if (event.turn_id) next.activeTurns.delete(event.turn_id)
@@ -122,6 +123,10 @@ function sourceOf(event: KernelEvent): string {
   return event.request_id ?? ''
 }
 
+function turnIdOf(event: KernelEvent): string {
+  return event.turn_id ?? ''
+}
+
 function sameSource(turn: UiTurn, source: string): boolean {
   return (turn.source ?? '') === source
 }
@@ -129,6 +134,7 @@ function sameSource(turn: UiTurn, source: string): boolean {
 function completeTurn(state: UiState, event: KernelEvent): void {
   const error = event.data.error
   const source = sourceOf(event)
+  const turnId = turnIdOf(event)
   if (error) {
     appendError(state, errorText(error), source)
     return
@@ -136,7 +142,7 @@ function completeTurn(state: UiState, event: KernelEvent): void {
   const result = event.data.result
   const text = modelText(result)
   if (!text) return
-  const index = streamingIndex(state, source)
+  const index = streamingIndex(state, source, turnId)
   if (index >= 0) {
     const current = state.turns[index]
     state.turns[index] = source ? { role: 'assistant', source, text: text || current?.text || '' } : { role: 'assistant', text: text || current?.text || '' }
@@ -145,24 +151,40 @@ function completeTurn(state: UiState, event: KernelEvent): void {
   state.turns.push(source ? { role: 'assistant', source, text } : { role: 'assistant', text })
 }
 
-function appendStream(state: UiState, text: string, source: string): void {
+function appendStream(state: UiState, text: string, source: string, turnId = ''): void {
   if (!text) return
-  const index = streamingIndex(state, source)
+  const index = streamingIndex(state, source, turnId)
   if (index >= 0) {
     const current = state.turns[index]
     const next = `${current?.text ?? ''}${text}`
-    state.turns[index] = source
-      ? { role: 'assistant', source, stream: true, text: next }
-      : { role: 'assistant', stream: true, text: next }
+    const keptId = turnId || current?.turnId || ''
+    state.turns[index] = {
+      role: 'assistant',
+      stream: true,
+      text: next,
+      ...(source ? { source } : {}),
+      ...(keptId ? { turnId: keptId } : {})
+    }
     return
   }
-  state.turns.push(source ? { role: 'assistant', source, stream: true, text } : { role: 'assistant', stream: true, text })
+  state.turns.push({
+    role: 'assistant',
+    stream: true,
+    text,
+    ...(source ? { source } : {}),
+    ...(turnId ? { turnId } : {})
+  })
 }
 
-function streamingIndex(state: UiState, source: string): number {
+function streamingIndex(state: UiState, source: string, turnId = ''): number {
   for (let index = state.turns.length - 1; index >= 0; index -= 1) {
     const turn = state.turns[index]
-    if (turn?.role === 'assistant' && turn.stream && sameSource(turn, source)) return index
+    if (turn?.role !== 'assistant' || !turn.stream) continue
+    if (turnId && turn.turnId) {
+      if (turn.turnId === turnId) return index
+      continue
+    }
+    if (sameSource(turn, source)) return index
   }
   return -1
 }

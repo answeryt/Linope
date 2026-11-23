@@ -197,6 +197,18 @@ def _open_turn(service: Any, process: Any) -> bool:
     return any(_pid_of(getattr(turn, "process", None)) == pid for turn in turns.values())
 
 
+def _accepts_threads(process: Any) -> bool:
+    """True when this process can hold another turn beside the one already open."""
+
+    return bool(getattr(process, "accepts_threads", False))
+
+
+def _busy_blocks(service: Any, process: Any) -> bool:
+    """A second sentence is refused only when the process cannot open another turn."""
+
+    return _can_schedule(service) and _open_turn(service, process) and not _accepts_threads(process)
+
+
 def _can_schedule(service: Any) -> bool:
     if not getattr(service, "offers_turns", False):
         return False
@@ -214,7 +226,12 @@ def _load(
     source: str = "",
 ) -> Any:
     process = _choose(service, pid)
-    if _can_schedule(service) and _open_turn(service, process):
+    threaded = (
+        _can_schedule(service)
+        and _accepts_threads(process)
+        and _open_turn(service, process)
+    )
+    if _busy_blocks(service, process):
         raise RuntimeError("process_busy")
     addressed = bool(selector)
     if addressed and (
@@ -232,9 +249,10 @@ def _load(
             selector,
         )
     if kind == "message" and isinstance(body, str):
-        from kernel.thread.task import note_arrival
+        if not threaded:
+            from kernel.thread.task import note_arrival
 
-        note_arrival(process, body)
+            note_arrival(process, body)
         _remember(process, "user", body)
     _maybe_relieve(process)
     message = {
@@ -295,7 +313,7 @@ def _pages(service: Any, process: Any) -> bool:
 def _ask(service: Any, pid: str | int, task: str, source: str = "") -> Any:
     """Hand one task to the named process. The sender's memory stays here."""
     receiver = _choose(service, pid)
-    if _can_schedule(service) and _open_turn(service, receiver):
+    if _busy_blocks(service, receiver):
         raise RuntimeError("process_busy")
     sender = _sender(service, receiver)
     if _can_schedule(service):

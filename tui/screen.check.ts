@@ -156,6 +156,33 @@ assert.equal(firstReply?.text, '甲一')
 assert.equal(firstReply?.stream, undefined)
 assert.equal(secondReply?.text, '乙')
 assert.equal(secondReply?.stream, true)
+
+projected = reduceKernelEvent(projected, {
+  data: { text: 'A' },
+  kind: 'model.delta',
+  pid: 30,
+  seq: 11,
+  turn_id: '30',
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { text: 'B' },
+  kind: 'model.delta',
+  pid: 30,
+  seq: 12,
+  turn_id: '30.t1',
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { text: '2' },
+  kind: 'model.delta',
+  pid: 30,
+  seq: 13,
+  turn_id: '30',
+  version: 1
+})
+const samePid = projected.turns.filter(turn => turn.source === '30')
+assert.deepEqual(samePid.map(turn => turn.text), ['A2', 'B'])
 const beforeEmpty = projected.turns.length
 projected = reduceKernelEvent(projected, {
   data: { command: 'list', value: null },
