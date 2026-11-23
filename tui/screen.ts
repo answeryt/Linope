@@ -6,6 +6,7 @@ export type Role = 'assistant' | 'error' | 'system' | 'user'
 
 export type Turn = {
   role: Role
+  source?: string
   stream?: boolean
   text: string
 }
@@ -40,6 +41,7 @@ export type ScreenState = {
   follow?: boolean
   focus?: Focus
   status: 'ready' | 'running'
+  runningTurns?: number
   notice?: string
   turns: Turn[]
 }
@@ -382,7 +384,8 @@ const turnColor = (role: Role) => {
 }
 
 const paintedTurn = (turn: Turn, contentWidth: number): string[] => {
-  const prefix = turn.role === 'user' ? '❯ ' : turn.role === 'error' ? '! ' : '  '
+  const marker = turn.source && /^\d+$/.test(turn.source) ? `[${turn.source}] ` : ''
+  const prefix = turn.role === 'user' ? '❯ ' : turn.role === 'error' ? '! ' : marker || '  '
   const color = turnColor(turn.role)
   const pad = ' '.repeat(prefix.length)
   const lines = wrap(turn.text, contentWidth - prefix.length).map((line, index) =>
@@ -459,7 +462,9 @@ const statusLine = (state: ScreenState, width: number) => {
   const paused = state.follow === false ? ' │ follow paused' : ''
   const clerk = state.clerk === 'here' ? 'clerk here' : 'clerk away'
   const note = state.notice ? ` │ ${state.notice}` : ''
-  const full = `${state.status} │ ${clerk} │ ${focusLabel}${paused}${note} │ /help`
+  const running = state.runningTurns ?? 0
+  const status = running > 0 ? `running ${running}` : state.status
+  const full = `${status} │ ${clerk} │ ${focusLabel}${paused}${note} │ /help`
   const maxText = Math.max(8, width - 6)
   const text = ` ${clip(full, maxText)} `
   const fillWidth = Math.max(2, width - displayWidth(text))

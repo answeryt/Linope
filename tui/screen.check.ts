@@ -120,6 +120,58 @@ assert.deepEqual(projected.turns, [
   { role: 'system', text: 'tools.bash started (pid 50040)' },
   { role: 'assistant', text: '你好' }
 ])
+
+projected = reduceKernelEvent(projected, {
+  data: { text: '甲' },
+  kind: 'model.delta',
+  pid: 20,
+  seq: 6,
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { text: '乙' },
+  kind: 'model.delta',
+  pid: 21,
+  seq: 7,
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { text: '一' },
+  kind: 'model.delta',
+  pid: 20,
+  seq: 8,
+  version: 1
+})
+projected = reduceKernelEvent(projected, {
+  data: { result: '甲一' },
+  kind: 'turn.completed',
+  pid: 20,
+  seq: 9,
+  turn_id: 'turn-20',
+  version: 1
+})
+const firstReply = projected.turns.find(turn => turn.source === '20')
+const secondReply = projected.turns.find(turn => turn.source === '21')
+assert.equal(firstReply?.text, '甲一')
+assert.equal(firstReply?.stream, undefined)
+assert.equal(secondReply?.text, '乙')
+assert.equal(secondReply?.stream, true)
+const beforeEmpty = projected.turns.length
+projected = reduceKernelEvent(projected, {
+  data: { command: 'list', value: null },
+  kind: 'command.completed',
+  seq: 10,
+  version: 1
+})
+assert.equal(projected.turns.length, beforeEmpty)
+assert.equal(
+  renderScreen({ ...state, columns: 80, runningTurns: 2, turns: projected.turns }).includes('running 2'),
+  true
+)
+assert.equal(
+  renderScreen({ ...state, columns: 80, turns: [{ role: 'assistant', source: '9748', text: '好' }] }).includes('[9748]'),
+  true
+)
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('clerk'), true)
 assert.equal(renderScreen({ ...state, columns: 80 }).includes('tools.bash waiting'), true)
 

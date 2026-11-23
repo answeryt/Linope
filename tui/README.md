@@ -48,7 +48,7 @@ This directory is the blue terminal. It draws one screen, reads the keyboard, an
 | Drag | Selects the text under the pointer and copies it when you release |
 | Double-click / triple-click | Copies the word, or the whole line |
 | Right-click, middle-click, or Ctrl+V | Pastes into the input line. A newline in the paste becomes a space |
-| A line that is still running | Editing keys wait. Focus, scrolling, and copying still work |
+| A line that is still running | Editing, pasting, and sending the next line still work. Each process keeps its own reply, marked with its pid |
 
 A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does not paint once per piece. Any other event paints immediately. New lines stay at the bottom while follow is on. Scrolling up, including Shift+↑, pauses follow. Reaching the bottom again turns it back on. A window resize paints again after 100 milliseconds when the size actually changed. Leaving the screen turns the cursor back on, turns mouse tracking and bracketed paste off, and leaves the alternate screen.
 
@@ -70,7 +70,7 @@ A `text-delta` redraws after 30 milliseconds, so a stream of small pieces does n
 | `retainScroll` | Keeps a paused pane in place when new lines arrive. A following pane stays on the newest line |
 | `scrollLimit` | The largest `scrollY`. Zero means the transcript fits |
 
-The info box shows four fields: whether the clerk is here (`clerk` / `here`), how many processes are alive (`alive`), the last three of those processes (`process`), and the project directory (`project`). Process and turn state comes from correlated backend events; no transcript text is parsed to reconstruct it. A `model.delta` appends to the turn identified by `turn_id`, and `turn.completed` finalizes it.
+The info box shows four fields: whether the clerk is here (`clerk` / `here`), how many processes are alive (`alive`), the last three of those processes (`process`), and the project directory (`project`). Process and turn state comes from correlated backend events; no transcript text is parsed to reconstruct it. A `model.delta` appends to the open reply from the same source (the pid, or the request id when there is no pid), and `turn.completed` finalizes that same reply. A reply that came from a process is marked with its pid. The status line shows how many turns are in progress. Sending another line to a busy process shows the kernel's `process_busy` error.
 
 `banner.ts` is `logoLines`. When the window is at least as wide as the block logo and at least 16 rows tall, it draws the six-line `LINOPE KERNEL` logo. A smaller window gets one line, `LINOPE-KERNEL`, between rules.
 
