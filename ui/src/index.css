@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+@source "../../capability/tools/agent_tools/file_tools";
+@source "../../capability/tools/agent_tools/code_tools";
+@source "../../capability/tools/agent_tools/terminal_tools";
+@source "../../capability/tools/agent_tools/web_search_tools";
+@source "../../capability/tools/external_tools/mcp";
+@source "../../capability/sandbox";
+@source "../../capability/context/context_compression";
+@source "../../capability/agent_loop/linope";
+@source "../../capability/agent_loop/pi/desktop.tsx";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  --font-display: "Bricolage Grotesque", "Inter", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace,
+    Menlo, monospace;
+}
+
+:root {
+  color-scheme: light;
+
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --muted: #f1f1f4;
+  --muted-foreground: #8a8a93;
+  --accent: #f4f4f6;
+  --border: #e8e8ec;
+  --ring: #18181b;
+
+  --code-bg: #f7f7f9;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+@utility glass-lens {
+  background: color-mix(in srgb, var(--card) 25%, transparent);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.08);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+@utility lens-depth {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 1.5px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.06);
+}
+
+@utility glass {
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 9px 16px 4px rgba(0, 0, 0, 0.15);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+}
+
+@utility glass-strong {
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 9px 16px 4px rgba(0, 0, 0, 0.15);
+  -webkit-backdrop-filter: blur(60px) saturate(1.8);
+  backdrop-filter: blur(60px) saturate(1.8);
+}
+
+@utility glass-chip {
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.6),
+    0 3px 6px rgba(0, 0, 0, 0.06);
+  -webkit-backdrop-filter: blur(3px) saturate(1.4);
+  backdrop-filter: blur(3px) saturate(1.4);
+}
+
+.shiki-block .shiki {
+  background-color: transparent !important;
+  padding: 14px 18px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.shiki-block .shiki code {
+  display: block;
+  min-width: max-content;
+}
+
+.docs-range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  background: transparent;
+}
+.docs-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.docs-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(40, 30, 90, 0.08);
+  box-shadow: 0 1px 3px rgba(40, 30, 90, 0.25);
+}
+.docs-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.docs-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(40, 30, 90, 0.08);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(40, 30, 90, 0.25);
+}

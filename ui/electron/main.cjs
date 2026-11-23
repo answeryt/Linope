@@ -1,0 +1,139 @@
+const { app, BrowserWindow, ipcMain } = require("electron");
+const path = require("node:path");
+const { KernelSession } = require("./kernel-session.cjs");
+const { SecureEnvironmentFile } = require("./secure-environment.cjs");
+
+const devUrl = process.env.VITE_DEV_SERVER_URL;
+const repoRoot = path.resolve(__dirname, "../..");
+
+let mainWindow = null;
+let kernelSession = null;
+const secureEnvironment = new SecureEnvironmentFile();
+const semanticActions = new Set([
+  "chat.send",
+  "process.send",
+  "process.create",
+  "environment.load",
+  "model.catalog",
+  "model.configure",
+]);
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    backgroundColor: "#000000",
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, "preload.cjs"),
+    },
+  });
+  mainWindow = win;
+  kernelSession = new KernelSession({
+    cwd: repoRoot,
+    onEvent(event) {
+      if (!win.isDestroyed()) {
+        win.webContents.send("kernel:event", event);
+      }
+    },
+  });
+
+  win.once("ready-to-show", () => {
+    win.maximize();
+    win.show();
+  });
+
+  win.on("closed", () => {
+    kernelSession?.stop();
+    secureEnvironment.cleanup();
+    kernelSession = null;
+    mainWindow = null;
+  });
+
+  if (devUrl) {
+    win.loadURL(devUrl);
+    return;
+  }
+
+  win.loadFile(path.join(__dirname, "../dist/index.html"));
+}
+
+ipcMain.on("connection:action", (event, request) => {
+  if (
+    event.sender !== mainWindow?.webContents ||
+    !request ||
+    typeof request !== "object" ||
+    !semanticActions.has(request.action) ||
+    !request.payload ||
+    typeof request.payload !== "object" ||
+    typeof request.request_id !== "string" ||
+    !request.request_id
+  ) {
+    return;
+  }
+  kernelSession?.request(request.action, request.payload, request.request_id);
+});
+
+ipcMain.on("connection:secret", (event, request) => {
+  if (
+    event.sender !== mainWindow?.webContents ||
+    !request ||
+    typeof request !== "object" ||
+    typeof request.request_id !== "string" ||
+    !request.request_id ||
+    typeof request.key !== "string" ||
+    !request.key ||
+    typeof request.value !== "string" ||
+    request.key.includes("=") ||
+    /[\s\0]/.test(request.key) ||
+    /[\r\n\0]/.test(request.value)
+  ) {
+    return;
+  }
+  try {
+    const secretFile = secureEnvironment.write(request.key, request.value);
+    kernelSession?.request(
+      "environment.load",
+      { keys: [request.key], path: secretFile },
+      request.request_id,
+    );
+  } catch (error) {
+    if (!mainWindow?.isDestroyed()) {
+      mainWindow?.webContents.send("kernel:event", {
+        data: {
+          action: "environment.secret",
+          error: {
+            code: "secret_write_failed",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        },
+        kind: "action.failed",
+        request_id: request.request_id,
+        seq: Number.MAX_SAFE_INTEGER,
+        version: 1,
+      });
+    }
+  }
+});
+
+ipcMain.on("connection:stop", (event) => {
+  if (event.sender === mainWindow?.webContents) {
+    kernelSession?.stop();
+  }
+});
+
+app.whenReady().then(createWindow);
+
+app.on("before-quit", () => {
+  kernelSession?.stop();
+  secureEnvironment.cleanup();
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
