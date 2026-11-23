@@ -39,6 +39,7 @@ def declaration_from_card(
         "model",
         "provider",
         "base_url",
+        "stream",
         "permission",
         "capabilities",
     }

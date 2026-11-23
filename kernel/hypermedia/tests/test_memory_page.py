@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from kernel.communication.page import CommandOffer, model_page
 from kernel.hypermedia.memory_page import memory_page, page_document
+from kernel.hypermedia.process_page import page_document as process_document
 from kernel.hypermedia.process_page import process_page
 
 
@@ -61,6 +62,21 @@ def test_a_memory_projection_lists_addresses_without_commands() -> None:
     assert "answer" not in document["_links"]
     assert "memory" not in document["_links"]
     assert all(not name.startswith("start:") for name in document["_links"])
+
+
+def test_a_process_page_names_the_memory_entity() -> None:
+    record = SimpleNamespace(
+        pid=41,
+        status="ready",
+        capability_id="agent_loop",
+        leases=(
+            SimpleNamespace(kind="memory", resource_id="memory-a", identity={"scope": "chat"}),
+        ),
+        started="t",
+    )
+    document = process_document(process_page(record, "sleeping"))
+    assert document["facts"]["memory_id"] == "memory-a"
+    assert {"rel": "memory", "resource": "chat"} in document["links"]
 
 
 def test_stop_is_not_followed_with_the_bare_pid() -> None:

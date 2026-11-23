@@ -19,7 +19,9 @@ sees a function name the chat API accepts. A dot in the capability name
 becomes an underscore, so `tools.read` is sent as `tools_read`. The loop still
 starts tools by capability name. The parameters are the schemas already stored
 in the capability table. A configured tool with no schema fails when this
-process starts.
+process starts. `tools.mcp_tool_manager` is listed from MCPHub on the first
+question, and its call body is the tool name plus the arguments. A question
+fails when MCPHub is not running.
 
 Tool calls run one at a time, in the order the model gave them. The command door accepts one line and returns one result. A command error comes back as the tool result, and the loop asks the model again.
 

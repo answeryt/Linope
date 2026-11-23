@@ -13,7 +13,7 @@
 | 工具还没起来 | `process start <工具>` |
 | 执行工具 | `load tool <进程号> -- <JSON>` |
 
-工具的 `process start` 和 `load tool` 用的是 `CommandOffer` 的指针。模型卡片由 `model use` 安装，不是进程。模型看到的是聊天接口接受的函数名。能力名里的点换成下划线，所以 `tools.read` 以 `tools_read` 传出去。循环仍按能力名启动工具进程。参数来自能力表里已经写好的 schema。配置里点了名、表里却没有 schema 的工具，会在这个进程启动时失败。
+工具的 `process start` 和 `load tool` 用的是 `CommandOffer` 的指针。模型卡片由 `model use` 安装，不是进程。模型看到的是聊天接口接受的函数名。能力名里的点换成下划线，所以 `tools.read` 以 `tools_read` 传出去。循环仍按能力名启动工具进程。参数来自能力表里已经写好的 schema。配置里点了名、表里却没有 schema 的工具，会在这个进程启动时失败。`tools.mcp_tool_manager` 是例外：第一个问题会先向它要 MCPHub 正在提供的工具，调用体是工具名加上参数。MCPHub 没开时，这个问题会失败。
 
 多个工具一起跑。内核每完成一份，就写回这一份信号。循环按这份信号写下一行 `model run`，不等其余的份。命令出错时，错误文本当作这份结果。
 

@@ -26,6 +26,20 @@ def address_scope(leases: Any) -> str:
     return ""
 
 
+def memory_entity(leases: Any) -> str:
+    """The memory resource id on this process. Empty when it has none.
+
+    Exclusive memories with the same scope name still have different ids.
+    A shared memory keeps one id for every process that holds it.
+    """
+
+    for item in leases:
+        if _kind(item) != "memory":
+            continue
+        return str(getattr(item, "resource_id", "") or "")
+    return ""
+
+
 def memory_grant(grants: Any) -> Any | None:
     """The memory lease on this process, if it asked for one."""
 

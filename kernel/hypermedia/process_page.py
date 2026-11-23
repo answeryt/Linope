@@ -7,7 +7,7 @@ from typing import Any
 from kernel.hypermedia.handle import opaque
 from kernel.hypermedia.link import Link
 from kernel.hypermedia.representation import Representation
-from kernel.communication.address import address_scope
+from kernel.communication.address import address_scope, memory_entity
 
 
 def process_page(
@@ -29,7 +29,8 @@ def process_page(
     for partner in shares:
         if partner and partner != pid:
             links.append(Link("share", partner, partner))
-    scope = address_scope(getattr(record, "leases", ()) or ())
+    leases = getattr(record, "leases", ()) or ()
+    scope = address_scope(leases)
     if scope:
         links.append(Link("memory", scope, scope))
     facts = {
@@ -37,6 +38,9 @@ def process_page(
         "capability_id": str(record.capability_id),
         "pid": int(record.pid),
     }
+    memory_id = memory_entity(leases)
+    if memory_id:
+        facts["memory_id"] = memory_id
     if state == "with":
         facts["way"] = way
     return Representation(facts, tuple(links))

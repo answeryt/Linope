@@ -24,6 +24,15 @@ def test_base_url_change_updates_the_profile() -> None:
     assert declaration.model == CARD_CONFIG["model"]
 
 
+def test_stream_change_updates_the_profile() -> None:
+    declaration = capability_profile(
+        "model.openai_chat_model",
+        (("stream", "false"),),
+    )
+
+    assert declaration.call_params["stream"] is False
+
+
 def test_model_and_temperature_changes_update_the_profile() -> None:
     declaration = capability_profile(
         "model.openai_chat_model",

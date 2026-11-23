@@ -146,6 +146,8 @@ def _declaration_payload(instance_id: str, row: dict[str, Any], changes: Any) ->
     allowed = {str(item) for item in row.get("changes") or ()}
     for topic, raw in changes or ():
         name = str(topic)
+        if name == "scope":
+            continue
         if name not in allowed:
             raise ValueError(f"Unknown topic: {name}")
         settings[name] = _parse_value(str(raw))

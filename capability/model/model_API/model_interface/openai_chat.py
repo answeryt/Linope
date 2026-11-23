@@ -424,22 +424,32 @@ async def call_api(payload: dict[str, Any]) -> Any:
 
     async def send(request: dict[str, Any]) -> Any:
         stream = request.get("stream") is True
-        client = openai.AsyncClient(
-            api_key=request["api_key"],
-            organization=request.get("organization"),
-            base_url=request.get("base_url"),
+        client_args = {
+            "api_key": request["api_key"],
+            "organization": request.get("organization"),
+            "base_url": request.get("base_url"),
             **(request.get("client_kwargs") or {}),
-        )
-        return await client.chat.completions.create(
-            model=request["model"],
-            messages=format_messages(request.get("messages") or []),
-            stream=stream,
+        }
+        request_args = {
+            "model": request["model"],
+            "messages": format_messages(request.get("messages") or []),
+            "stream": stream,
             **_request_kwargs(
                 request.get("parameters"),
                 stream,
                 request.get("generate_kwargs"),
                 request.get("extra_body"),
             ),
-        )
+        }
+        if stream:
+            async def stream_result() -> Any:
+                async with openai.AsyncClient(**client_args) as client:
+                    result = await client.chat.completions.create(**request_args)
+                    async for chunk in result:
+                        yield chunk
+
+            return stream_result()
+        async with openai.AsyncClient(**client_args) as client:
+            return await client.chat.completions.create(**request_args)
 
     return await _with_recovery(payload, send)

@@ -7,6 +7,7 @@ does not ask whether the next one belongs to another process or thread.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,6 +55,7 @@ class Task:
             self.registers.update(registers)
         if items:
             self.registers.update(items)
+        publish_step(self)
 
 
 class ThreadTable:
@@ -103,6 +105,7 @@ class ThreadTable:
             state=_STATE.get(program_counter, "idle"),
         )
         self._items[ident] = task
+        publish_step(task)
         return task
 
     def get(self, task_id: str) -> Task | None:
@@ -163,11 +166,71 @@ def note_arrival(process: Any, body: Any) -> Task:
     """A user sentence lands on the process's leader task."""
 
     task = ensure_threads(process).first
+    wrote = False
     if isinstance(body, str) and body:
         task.registers["question"] = body
+        wrote = True
     if task.program_counter in {"", "idle", "done"}:
         task.move("ask_model")
+        return task
+    if wrote:
+        publish_step(task)
     return task
+
+
+def publish_step(task: Task) -> None:
+    """Copy this task's counter and registers onto the host event stream.
+
+    The task keeps the full command. Only the delivered copy is shortened.
+    """
+
+    from kernel.command.events import KernelEvent, current_event_sink
+
+    pid = int(task.pid)
+    current_event_sink().emit(
+        KernelEvent(
+            "task.step",
+            {
+                "task_id": task.id,
+                "leader": bool(task.leader),
+                "pc": task.program_counter,
+                "registers": _delivery_registers(task.registers),
+            },
+            pid=pid or None,
+        )
+    )
+
+
+def _delivery_registers(registers: dict[str, Any]) -> dict[str, Any]:
+    delivered: dict[str, Any] = {}
+    for key, value in registers.items():
+        if key == "command":
+            delivered[key] = _command_preview(value)
+        else:
+            delivered[key] = _plain(value)
+    return delivered
+
+
+def _command_preview(value: Any) -> str:
+    text = value if isinstance(value, str) else str(value)
+    head, separator, _body = text.partition(" -- ")
+    try:
+        parts = shlex.split(head if separator else text)
+    except ValueError:
+        parts = text.split()
+    if parts[:2] == ["model", "run"]:
+        return "让模型看当前这句话"
+    return text
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return str(value)
 
 
 def _pid_of(process: Any) -> int:

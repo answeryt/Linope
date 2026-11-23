@@ -22,7 +22,6 @@ def run(
     runtime: Any = None,
     request: dict[str, Any] | None = None,
 ) -> Any:
-    del request
     if not argv:
         raise UsageError(USAGE)
     from kernel.scheduler.model_scheduler.cores import get_cores
@@ -55,7 +54,11 @@ def run(
         invocation = parse(argv[1:], flags={}, usage=USAGE)
         if invocation.position or invocation.body is None:
             raise UsageError(USAGE)
-        return resource.run(_body(invocation.body))
+        request_id = str((request or {}).get("request_id") or "")
+        return resource.run(
+            _body(invocation.body),
+            on_notice=_notice_forwarder(runtime, request_id),
+        )
     raise UsageError(USAGE)
 
 
@@ -66,6 +69,22 @@ def _change(raw: str) -> tuple[str, str]:
     if not topic:
         raise UsageError("change is written as --change topic=value")
     return topic, value
+
+
+def _notice_forwarder(runtime: Any, request_id: str) -> Any:
+    if runtime is None:
+        return None
+
+    def forward(notice: Any) -> None:
+        if not isinstance(notice, dict):
+            return
+        kind = notice.get("kind")
+        if kind not in {"model.delta", "model.reasoning.delta"}:
+            return
+        data = {key: value for key, value in notice.items() if key != "kind"}
+        runtime.emit(str(kind), data, request_id=request_id)
+
+    return forward
 
 
 def _body(raw: str) -> Any:

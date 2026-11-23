@@ -49,7 +49,6 @@ import { fg, reset, theme } from './theme.js'
 import { takeKey, type Key } from './keys.js'
 
 let uiState = initialUiState(process.cwd())
-let busy = false
 let link: TerminalLink | null = null
 let focus: Focus = 'input'
 let view: HistoryScroll = { scrollY: 0, follow: true }
@@ -84,6 +83,7 @@ const screenState = () => ({
   scrollY: view.scrollY,
   follow: view.follow,
   notice,
+  runningTurns: uiState.activeTurns.size,
   status: uiState.status,
   turns: uiState.turns
 })
@@ -197,10 +197,6 @@ const stick = () => {
 }
 
 const submit = (line: string) => {
-  if (busy) {
-    return
-  }
-
   const text = line.trim()
   if (text) {
     editor = recordSubmission(editor, text)
@@ -237,8 +233,6 @@ const submit = (line: string) => {
 
   uiState.turns.push({ role: 'user', text })
   stick()
-  busy = true
-  uiState.status = 'running'
   draw()
   link?.send(text)
 }
@@ -424,7 +418,7 @@ const cancelPaste = () => {
 const insertPaste = (text: string) => {
   cancelPaste()
 
-  if (busy || stopping) {
+  if (stopping) {
     return
   }
 
@@ -445,7 +439,7 @@ const insertPaste = (text: string) => {
 const pasteClipboard = () => {
   // A right-click can also arrive as a bracketed paste in the same chunk.
   // Wait one beat, and skip the clipboard read when that paste already landed.
-  if (busy || stopping || Date.now() - pastedAt < 100) {
+  if (stopping || Date.now() - pastedAt < 100) {
     return
   }
 
@@ -453,7 +447,7 @@ const pasteClipboard = () => {
   pasteTimer = setTimeout(() => {
     pasteTimer = undefined
 
-    if (busy || stopping) {
+    if (stopping) {
       return
     }
 
@@ -549,7 +543,7 @@ const onKey = (key: Key) => {
 
     if (result.copy) {
       copyMark()
-    } else if (result.cell && result.cell.row === inputRow(screenState()) && !busy) {
+    } else if (result.cell && result.cell.row === inputRow(screenState())) {
       placeCaret(result.cell.column)
     }
 
@@ -638,7 +632,7 @@ const onKey = (key: Key) => {
     return
   }
 
-  if (busy || (command.type !== 'editor' && command.type !== 'submit')) {
+  if (command.type !== 'editor' && command.type !== 'submit') {
     if (hadMark) {
       draw()
     }
@@ -716,13 +710,6 @@ process.stdout.on('resize', () => {
 setWindowTitle()
 link = startTerminalSession((event: KernelEvent) => {
   uiState = reduceKernelEvent(uiState, event)
-  if (event.kind === 'command.completed' || event.kind === 'command.failed') {
-    busy = uiState.activeTurns.size > 0
-  } else if (event.kind === 'turn.started' || event.kind === 'turn.completed') {
-    busy = uiState.activeTurns.size > 0
-  } else if (event.kind === 'session.closed') {
-    busy = false
-  }
 
   if (!gesture.anchor && gesture.mark) {
     gesture = { ...gesture, mark: null }

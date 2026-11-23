@@ -140,6 +140,45 @@ class ModelMainTest(unittest.TestCase):
         emit_notice.assert_called_once_with({"kind": "model.delta", "text": "hi"})
         self.assertEqual(result["blocks"][0]["text"], "hi")
 
+    def test_a_reasoning_fragment_goes_to_a_separate_notice(self) -> None:
+        import asyncio
+
+        main = _load()
+
+        class _Chunks:
+            def __init__(self) -> None:
+                self._sent = False
+
+            def __aiter__(self) -> "_Chunks":
+                return self
+
+            async def __anext__(self) -> dict:
+                if self._sent:
+                    raise StopAsyncIteration
+                self._sent = True
+                return {"type": "reasoning-delta", "text": "thinking"}
+
+        runtime = SimpleNamespace(
+            call_model=AsyncMock(return_value=_Chunks()),
+            load_interface=lambda _card: SimpleNamespace(
+                parse_stream_parts=lambda chunk: [chunk],
+            ),
+        )
+        with patch("capability.model.model_runtime.call_model.call_model", runtime.call_model):
+            with patch("capability.model.model_runtime.call_model.load_interface", runtime.load_interface):
+                with patch(
+                    "kernel.process.process_runtime.runtime.emit_notice"
+                ) as emit_notice:
+                    result = asyncio.run(
+                        main.load_named_card_async("openai_chat_model", "message", "hello")
+                    )
+
+        emit_notice.assert_called_once_with(
+            {"kind": "model.reasoning.delta", "text": "thinking"}
+        )
+        self.assertEqual(result["blocks"][0]["text"], "thinking")
+        self.assertEqual(result["blocks"][0]["type"], "reasoning")
+
 
 if __name__ == "__main__":
     unittest.main()

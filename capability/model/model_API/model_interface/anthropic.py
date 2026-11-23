@@ -339,21 +339,31 @@ async def call_api(payload: dict[str, Any]) -> Any:
 
     async def send(request: dict[str, Any]) -> Any:
         parameters = request.get("parameters") or {}
-        client = anthropic.AsyncAnthropic(
-            api_key=request["api_key"],
-            base_url=request.get("base_url"),
+        client_args = {
+            "api_key": request["api_key"],
+            "base_url": request.get("base_url"),
             **(request.get("client_kwargs") or {}),
-        )
-        return await client.messages.create(
-            model=request["model"],
-            messages=format_messages(request.get("messages") or []),
-            max_tokens=_max_tokens(request),
-            stream=request.get("stream") is True,
+        }
+        request_args = {
+            "model": request["model"],
+            "messages": format_messages(request.get("messages") or []),
+            "max_tokens": _max_tokens(request),
+            "stream": request.get("stream") is True,
             **_request_kwargs(
                 parameters,
                 request.get("generate_kwargs"),
                 request.get("extra_body"),
             ),
-        )
+        }
+        if request.get("stream") is True:
+            async def stream_result() -> Any:
+                async with anthropic.AsyncAnthropic(**client_args) as client:
+                    result = await client.messages.create(**request_args)
+                    async for chunk in result:
+                        yield chunk
+
+            return stream_result()
+        async with anthropic.AsyncAnthropic(**client_args) as client:
+            return await client.messages.create(**request_args)
 
     return await _with_recovery(payload, send)

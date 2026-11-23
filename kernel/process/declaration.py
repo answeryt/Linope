@@ -57,6 +57,36 @@ class ProcessDeclaration:
         )
 
 
+def stamp_memory_scope(declaration: ProcessDeclaration, changes) -> ProcessDeclaration:
+    """Copy ``--change scope=`` onto the memory identity before the lease is compiled.
+
+    The scope name is the session address. Two conversations pass two names, so
+    their session lists do not share one file.
+    """
+
+    scope = ""
+    for topic, raw in changes or ():
+        if str(topic) == "scope" and str(raw).strip():
+            scope = str(raw).strip()
+    if not scope:
+        return declaration
+    if scope in {".", ".."} or "/" in scope or "\\" in scope or ".." in scope:
+        raise ValueError(f"Bad memory scope: {scope}")
+    updated: list[ResourceClaim] = []
+    stamped = False
+    for claim in declaration.resources:
+        if kind_name(claim.kind) != "memory":
+            updated.append(claim)
+            continue
+        identity = dict(claim.identity)
+        identity["scope"] = scope
+        updated.append(replace(claim, identity=identity))
+        stamped = True
+    if not stamped:
+        raise ValueError("scope requires a memory claim")
+    return replace(declaration, resources=tuple(updated))
+
+
 def stamp_memory_space(declaration: ProcessDeclaration, changes) -> ProcessDeclaration:
     """Copy ``--change space=`` onto the memory claim before the lease is compiled."""
     space = ""

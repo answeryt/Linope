@@ -25,6 +25,7 @@ class Turn:
     body: Any
     keep: bool
     line: str
+    request_id: str = ""
     sender: Any | None = None
     phase: str = "listen"
     pending: str = ""
@@ -135,6 +136,7 @@ class Drive:
             body=body,
             keep=keep,
             line=line,
+            request_id=_request_id(self.runtime),
             sender=sender,
             task=task,
         )
@@ -220,7 +222,10 @@ class Drive:
             task.move(program_counter, registers)
             return
         if registers:
+            from kernel.thread.task import publish_step
+
             task.registers.update(registers)
+            publish_step(task)
 
     def _task_for(self, turn: Turn, task_id: str) -> Any:
         from kernel.thread.task import ensure_threads
@@ -394,6 +399,15 @@ class Drive:
             raise RuntimeError("model_core_not_assigned")
         model = self.cores.model_for(turn.core)
         context = contextvars.copy_context()
+        notice = _notice_handler(self.runtime, turn.process)
+
+        def on_notice(payload: Any) -> None:
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                payload.setdefault("turn_id", turn.key)
+                if turn.request_id:
+                    payload.setdefault("request_id", turn.request_id)
+            notice(payload)
 
         def work() -> None:
             error = ""
@@ -402,7 +416,7 @@ class Drive:
                 body = _model_body(turn.pending)
                 result = model.run(
                     body,
-                    on_notice=_notice_handler(self.runtime, turn.process),
+                    on_notice=on_notice,
                 )
             except Exception as exc:
                 error = str(exc) or type(exc).__name__
@@ -525,9 +539,17 @@ class Drive:
         emitter(
             kind,
             data,
+            request_id="" if turn is None else turn.request_id,
             turn_id="" if turn is None else turn.key,
             pid=None if turn is None else _pid_of(turn.process),
         )
+
+
+def _request_id(runtime: Any) -> str:
+    reader = getattr(runtime, "current_request_id", None)
+    if not callable(reader):
+        return ""
+    return str(reader() or "")
 
 
 def is_model_process(process: Any) -> bool:

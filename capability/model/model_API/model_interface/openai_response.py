@@ -341,28 +341,35 @@ async def call_api(payload: dict[str, Any]) -> Any:
 
     async def send(request: dict[str, Any]) -> Any:
         stream = request.get("stream") is True
-        client = openai.AsyncClient(
-            api_key=request["api_key"],
-            organization=request.get("organization"),
-            base_url=request.get("base_url"),
+        client_args = {
+            "api_key": request["api_key"],
+            "organization": request.get("organization"),
+            "base_url": request.get("base_url"),
             **(request.get("client_kwargs") or {}),
-        )
+        }
         items = request.get("input_items")
         if items is None:
             items = format_messages(request.get("messages") or [])
-        created = await client.responses.create(
-            model=request["model"],
-            input=items,
-            stream=stream,
+        request_args = {
+            "model": request["model"],
+            "input": items,
+            "stream": stream,
             **_request_kwargs(
                 request.get("parameters"),
                 stream,
                 request.get("generate_kwargs"),
                 request.get("extra_body"),
             ),
-        )
+        }
         if stream:
-            return _DropRepeatedText(created)
-        return created
+            async def stream_result() -> Any:
+                async with openai.AsyncClient(**client_args) as client:
+                    result = await client.responses.create(**request_args)
+                    async for chunk in result:
+                        yield chunk
+
+            return _DropRepeatedText(stream_result())
+        async with openai.AsyncClient(**client_args) as client:
+            return await client.responses.create(**request_args)
 
     return await _with_recovery(payload, send)

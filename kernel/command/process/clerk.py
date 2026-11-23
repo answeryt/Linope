@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,14 @@ from kernel.command.process.listen import (
 )
 from kernel.command.process.start import _parse_start_options, launch_options
 from kernel.process.profile import ProfileUnavailable
+
+
+@dataclass(frozen=True)
+class CommandLine:
+    """One command plus the id the caller asked to see on later events."""
+
+    text: str
+    request_id: str = ""
 
 
 class _Batch:
@@ -170,7 +179,8 @@ class KernelRuntime:
                 if raw is _EOF:
                     leaving = True
                     continue
-                if self._command(raw):
+                text, request_id = _as_line(raw)
+                if self.command(text, request_id=request_id):
                     leaving = True
                 self.drive.step()
         except KeyboardInterrupt:
@@ -186,19 +196,29 @@ class KernelRuntime:
             self.emit("session.closed", {})
         return 0
 
-    def _command(self, raw: str) -> bool:
+    def current_request_id(self) -> str:
+        """The id of the command this thread is running. Empty outside one."""
+
+        return str(getattr(self._tls, "request_id", "") or "")
+
+    def _command(self, raw: str, request_id: str = "") -> bool:
         text = raw.strip()
         if not text:
             return False
-        self._request_seq += 1
-        request_id = f"request-{self._request_seq}"
+        if not request_id:
+            self._request_seq += 1
+            request_id = f"request-{self._request_seq}"
+        self._tls.request_id = request_id
         _note_line(self, text)
         if text in {"exit", "quit"}:
+            self._tls.request_id = ""
             return not self.nested
         self.deferred = False
+        failed = False
         try:
             result = self._execute_text(text, request_id=request_id)
-        except (UsageError, ProfileUnavailable, ValueError, KeyError, RuntimeError, OSError) as exc:
+        except Exception as exc:
+            failed = True
             self.emit(
                 "command.failed",
                 {
@@ -211,6 +231,10 @@ class KernelRuntime:
                 request_id=request_id,
             )
             result = None
+        finally:
+            self._tls.request_id = ""
+        if failed:
+            self.deferred = False
         if self.nested:
             return False
         if self.deferred:
@@ -221,7 +245,7 @@ class KernelRuntime:
             )
             self.deferred = False
             return False
-        if result is not None:
+        if not failed:
             self.emit(
                 "command.completed",
                 {"command": text, "value": result},
@@ -229,10 +253,10 @@ class KernelRuntime:
             )
         return False
 
-    def command(self, raw: str) -> bool:
+    def command(self, raw: str, request_id: str = "") -> bool:
         """Handle one explicit IPC command request."""
 
-        return self._command(raw)
+        return self._command(raw, request_id=request_id)
 
     def _execute_text(self, text: str, *, request_id: str = "") -> Any:
         """Run one command without selecting a presentation."""
@@ -259,10 +283,17 @@ class KernelRuntime:
         from kernel.process.profile import load_declaration
 
         declaration, definition = load_declaration(parsed[0], parsed[1])
-        from kernel.process.declaration import append_chosen, stamp_memory_space
+        from kernel.process.declaration import (
+            append_chosen,
+            stamp_memory_scope,
+            stamp_memory_space,
+        )
 
-        declaration = stamp_memory_space(
-            append_chosen(declaration, options.chosen),
+        declaration = stamp_memory_scope(
+            stamp_memory_space(
+                append_chosen(declaration, options.chosen),
+                parsed[1],
+            ),
             parsed[1],
         )
         started = self._reconciler.launch(
@@ -291,6 +322,7 @@ class KernelRuntime:
             self.emit(
                 "process.started",
                 {"capability": parsed[0]},
+                request_id=self.current_request_id(),
                 pid=int(process.pid),
             )
         if parsed[2] and not _startup_ping(_Batch(tuple(batch)), PING_TIMEOUT):
@@ -332,6 +364,12 @@ class KernelRuntime:
             pid = int(process.pid)
             if pid in self._once and _line_names_pid(text, pid) and process.is_alive:
                 process.stop()
+
+
+def _as_line(raw: Any) -> tuple[str, str]:
+    if isinstance(raw, CommandLine):
+        return raw.text, raw.request_id
+    return str(raw), ""
 
 
 def _line_names_pid(text: str, pid: int) -> bool:
