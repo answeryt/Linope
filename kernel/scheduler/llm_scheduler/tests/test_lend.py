@@ -193,6 +193,67 @@ def test_a_file_read_lends_the_model_to_the_other_process() -> None:
     assert False in slots
 
 
+def test_a_second_message_to_a_busy_process_is_refused() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    agent = _Script(
+        41,
+        "agent_loop",
+        [
+            {"event": "command", "line": "model run -- first"},
+            {"event": "result", "result": "first-done"},
+        ],
+    )
+    sink = CollectingEventSink()
+    clerk = KernelRuntime(sink)
+    clerk._items.append(("agent_loop", agent))
+
+    def model_run(body: object, **_kwargs: object) -> str:
+        del body
+        started.set()
+        assert release.wait(3)
+        return "ok"
+
+    clerk.drive.model.run = model_run
+    worker = threading.Thread(
+        target=lambda: clerk.serve(
+            lines=[
+                "load message 41 -- hello",
+                "load message 41 -- again",
+                "exit",
+            ]
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        assert started.wait(3)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if any(
+                event.kind == "command.failed"
+                and event.data.get("error", {}).get("message") == "process_busy"
+                for event in sink.events
+            ):
+                break
+            time.sleep(0.01)
+        assert any(
+            event.kind == "command.failed"
+            and event.data.get("error", {}).get("message") == "process_busy"
+            for event in list(sink.events)
+        )
+        release.set()
+        worker.join(5)
+        assert not worker.is_alive()
+    finally:
+        release.set()
+        worker.join(5)
+    assert any(
+        event.kind == "turn.completed" and event.data.get("result") == "first-done"
+        for event in sink.events
+    )
+
+
 def test_two_cores_run_together_and_waiting_task_takes_first_free_core() -> None:
     started: dict[int, threading.Event] = {
         0: threading.Event(),

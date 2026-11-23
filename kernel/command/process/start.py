@@ -155,7 +155,11 @@ def open_capability(options: tuple) -> _Running:
     _reject_model_capability(str(options[0]))
     from pathlib import Path
 
-    from kernel.process.declaration import append_chosen, stamp_memory_space
+    from kernel.process.declaration import (
+        append_chosen,
+        stamp_memory_scope,
+        stamp_memory_space,
+    )
     from kernel.process.ledger import ProcessLedger
     from kernel.process.process_manager.liveness import reap_dead
     from kernel.process.profile import load_declaration
@@ -171,8 +175,11 @@ def open_capability(options: tuple) -> _Running:
     reap_dead(book)
     reconciler = ProcessReconciler(pool, book)
     declaration, definition = load_declaration(options[0], options[1])
-    declaration = stamp_memory_space(
-        append_chosen(declaration, launch.chosen),
+    declaration = stamp_memory_scope(
+        stamp_memory_space(
+            append_chosen(declaration, launch.chosen),
+            options[1],
+        ),
         options[1],
     )
     processes = reconciler.launch(

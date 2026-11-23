@@ -14,6 +14,18 @@ from unittest.mock import AsyncMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class _AsyncClientContext:
+    def __init__(self, client) -> None:
+        self.client = client
+        self.closed = False
+
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, *_args) -> None:
+        self.closed = True
+
+
 def _load(name: str):
     path = ROOT / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"{name}_leaf", path)
@@ -111,7 +123,8 @@ class OpenAIChatCallApiTest(unittest.TestCase):
     def test_call_api_uses_lazy_sdk(self) -> None:
         create = AsyncMock(return_value="ok")
         client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-        with patch.dict("sys.modules", {"openai": SimpleNamespace(AsyncClient=lambda **_: client)}):
+        context = _AsyncClientContext(client)
+        with patch.dict("sys.modules", {"openai": SimpleNamespace(AsyncClient=lambda **_: context)}):
             result = asyncio.run(
                 self.leaf.call_api(
                     {
@@ -127,6 +140,7 @@ class OpenAIChatCallApiTest(unittest.TestCase):
                 )
             )
         self.assertEqual(result, "ok")
+        self.assertTrue(context.closed)
         create.assert_awaited_once()
         self.assertEqual(create.await_args.kwargs["max_completion_tokens"], 8)
 
@@ -180,9 +194,10 @@ class OpenAIChatCallApiTest(unittest.TestCase):
         client = SimpleNamespace(
             chat=SimpleNamespace(completions=SimpleNamespace(create=create))
         )
+        context = _AsyncClientContext(client)
         with patch.dict(
             "sys.modules",
-            {"openai": SimpleNamespace(AsyncClient=lambda **_: client)},
+            {"openai": SimpleNamespace(AsyncClient=lambda **_: context)},
         ):
             result = asyncio.run(
                 self.leaf.call_api(
@@ -199,7 +214,43 @@ class OpenAIChatCallApiTest(unittest.TestCase):
                 )
             )
         self.assertEqual(result, "ok")
+        self.assertTrue(context.closed)
         self.assertEqual(len(calls), 2)
+
+    def test_stream_closes_client_after_consumption(self) -> None:
+        class Stream:
+            def __init__(self) -> None:
+                self.items = iter(["one", "two"])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        create = AsyncMock(return_value=Stream())
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        context = _AsyncClientContext(client)
+        with patch.dict("sys.modules", {"openai": SimpleNamespace(AsyncClient=lambda **_: context)}):
+            async def request_and_consume():
+                result = await self.leaf.call_api(
+                    {
+                        "api_key": "k",
+                        "model": "m",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "stream": True,
+                        "client_kwargs": {},
+                        "parameters": {},
+                    }
+                )
+                self.assertFalse(context.closed)
+                return [item async for item in result]
+
+            self.assertEqual(asyncio.run(request_and_consume()), ["one", "two"])
+        self.assertTrue(context.closed)
 
 
 class OpenAIResponseCallApiTest(unittest.TestCase):
@@ -240,9 +291,10 @@ class AnthropicCallApiTest(unittest.TestCase):
         leaf = _load("anthropic")
         create = AsyncMock(return_value="ok")
         client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        context = _AsyncClientContext(client)
         with patch.dict(
             "sys.modules",
-            {"anthropic": SimpleNamespace(AsyncAnthropic=lambda **_: client)},
+            {"anthropic": SimpleNamespace(AsyncAnthropic=lambda **_: context)},
         ):
             asyncio.run(
                 leaf.call_api(
@@ -257,6 +309,7 @@ class AnthropicCallApiTest(unittest.TestCase):
                     }
                 )
             )
+        self.assertTrue(context.closed)
         self.assertEqual(create.await_args.kwargs["max_tokens"], 128000)
         self.assertNotIn("tokens/tokens.py", leaf._PARAM_CACHE)
 

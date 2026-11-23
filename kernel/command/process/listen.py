@@ -186,6 +186,17 @@ class _Later:
 _LATER = _Later()
 
 
+def _open_turn(service: Any, process: Any) -> bool:
+    """True when this process already has a turn the scheduler has not finished."""
+
+    drive = getattr(service, "_drive", None)
+    if drive is None:
+        return False
+    pid = _pid_of(process)
+    turns = getattr(drive, "turns", {})
+    return any(_pid_of(getattr(turn, "process", None)) == pid for turn in turns.values())
+
+
 def _can_schedule(service: Any) -> bool:
     if not getattr(service, "offers_turns", False):
         return False
@@ -203,6 +214,8 @@ def _load(
     source: str = "",
 ) -> Any:
     process = _choose(service, pid)
+    if _can_schedule(service) and _open_turn(service, process):
+        raise RuntimeError("process_busy")
     addressed = bool(selector)
     if addressed and (
         kind != "message" or not isinstance(body, str) or not _pages(service, process)
@@ -257,12 +270,14 @@ def _notice_handler(service: Any, process: Any):
         kind = str(notice.get("kind") or "capability.notice")
         data = dict(notice)
         turn_id = str(data.pop("turn_id", "") or "")
+        request_id = str(data.pop("request_id", "") or "")
         data.pop("pid", None)
         emitter = getattr(service, "emit", None)
         if callable(emitter):
             emitter(
                 kind,
                 data,
+                request_id=request_id,
                 turn_id=turn_id,
                 pid=_pid_of(process),
             )
@@ -280,6 +295,8 @@ def _pages(service: Any, process: Any) -> bool:
 def _ask(service: Any, pid: str | int, task: str, source: str = "") -> Any:
     """Hand one task to the named process. The sender's memory stays here."""
     receiver = _choose(service, pid)
+    if _can_schedule(service) and _open_turn(service, receiver):
+        raise RuntimeError("process_busy")
     sender = _sender(service, receiver)
     if _can_schedule(service):
         service.admit_ask(sender, receiver, task, source or f"ask {_pid_of(receiver)}")

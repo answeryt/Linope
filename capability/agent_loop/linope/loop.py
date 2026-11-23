@@ -24,6 +24,7 @@ from capability.session.session import SessionError, SessionLog, parse_page, row
 from kernel.communication.page import CommandOffer
 
 _CALL_NAME = re.compile(r"[^A-Za-z0-9_-]")
+HUB_CAPABILITY = "tools.mcp_tool_manager"
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]
     aliases: tuple[str, ...] = ()
+    remote_name: str = ""
 
 
 Submit = Callable[[str], CommandResult]
@@ -65,6 +67,10 @@ def declared_tools(names: list[str], catalog: dict[str, Any]) -> tuple[ToolSpec,
     taken: dict[str, str] = {}
     for capability in names:
         row = catalog.get(capability)
+        if capability == HUB_CAPABILITY:
+            if not isinstance(row, dict):
+                raise ValueError(f"{capability} has no schema")
+            continue
         schemas = row.get("schemas") if isinstance(row, dict) else None
         if not isinstance(schemas, list) or not schemas:
             raise ValueError(f"{capability} has no schema")
@@ -118,8 +124,10 @@ class Loop:
             raise ValueError("agent loop tools must be a list")
         self.model = model
         self.submit = submit
+        chosen = [str(name) for name in names]
         table = load_catalog() if catalog is None else catalog
-        self.tools = declared_tools([str(name) for name in names], table)
+        self.tools = declared_tools(chosen, table)
+        self._hub_ready = HUB_CAPABILITY not in chosen
         self.messages: list[dict[str, Any]] = []
         prompt = system_prompt() if identity is None else identity.strip()
         if prompt:
@@ -324,6 +332,7 @@ class Loop:
         return item
 
     def _model_line(self) -> str:
+        self._ensure_hub()
         if not self._model_ready:
             reply = self.submit(f"model use {self.model}")
             if reply.error:
@@ -352,7 +361,30 @@ class Loop:
             if pid is None:
                 self._miss = CommandResult(result=reply.result or f"Could not start {spec.capability}")
                 return ""
-        return CommandOffer("tool", spec.capability, pid=pid).pointer + _json_object(call.arguments)
+        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        body: Any = {"name": spec.remote_name, "arguments": arguments} if spec.remote_name else arguments
+        return CommandOffer("tool", spec.capability, pid=pid).pointer + _json_object(body)
+
+    def _ensure_hub(self) -> None:
+        """Ask MCPHub for its tools before the model sees them."""
+
+        if self._hub_ready:
+            return
+        reply = self.submit(CommandOffer("start", HUB_CAPABILITY).pointer)
+        if reply.error:
+            raise RuntimeError(_hub_failure(reply.error))
+        self._remember(_record(reply.result))
+        pid = self._pids.get(HUB_CAPABILITY)
+        if pid is None:
+            raise RuntimeError("MCPHub is not running")
+        reply = self.submit(
+            CommandOffer("tool", HUB_CAPABILITY, pid=pid).pointer
+            + _json_object({"name": "list"})
+        )
+        if reply.error:
+            raise RuntimeError(_hub_failure(reply.error))
+        self.tools = _merge_tools(self.tools, _hub_specs(reply.result))
+        self._hub_ready = True
 
     def _messages_for_model(self) -> list[dict[str, Any]]:
         """Drop tool calls that do not yet have a tool result."""
@@ -451,7 +483,7 @@ class Loop:
         scope = scope_of(page)
         if not scope:
             return
-        self._session = SessionLog(self._session_root, scope)
+        self._session = SessionLog(self._session_root, scope, name=_memory_id(page) or scope)
 
     def _page(self, real: str = "") -> dict[str, Any] | None:
         selector = self._stored(real)
@@ -489,6 +521,15 @@ class Loop:
         return None
 
 
+def _memory_id(page: dict[str, Any]) -> str:
+    """The memory entity this page names. Empty on a page that has only a scope."""
+
+    facts = page.get("facts")
+    if not isinstance(facts, dict):
+        return ""
+    return str(facts.get("memory_id") or "")
+
+
 def _capability_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -522,6 +563,72 @@ def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def _hub_failure(text: str) -> str:
+    message = str(text or "").strip()
+    if message.startswith("MCPHub is not running"):
+        return message
+    if not message:
+        return "MCPHub is not running"
+    return f"MCPHub is not running: {message}"
+
+
+def _record(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value) if value.strip() else {}
+    except json.JSONDecodeError:
+        return value
+
+
+def _hub_specs(result: Any) -> tuple[ToolSpec, ...]:
+    payload = _record(result)
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        message = str(payload.get("error") or "") if isinstance(payload, dict) else ""
+        raise RuntimeError(_hub_failure(message))
+    tools = payload.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise RuntimeError("MCPHub returned no tools")
+    specs: list[ToolSpec] = []
+    taken: dict[str, str] = {}
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise RuntimeError("MCPHub returned no tools")
+        remote = str(tool.get("name") or "").strip()
+        if not remote:
+            raise RuntimeError("MCPHub returned no tools")
+        name = _call_name(remote)
+        owner = taken.get(name)
+        if owner is not None:
+            raise ValueError(f"{remote} and {owner} share the call name {name}")
+        taken[name] = remote
+        parameters = tool.get("parameters")
+        specs.append(ToolSpec(
+            capability=HUB_CAPABILITY,
+            name=name,
+            description=str(tool.get("description") or ""),
+            parameters=parameters if isinstance(parameters, dict) else {
+                "type": "object",
+                "properties": {},
+            },
+            aliases=(remote,) if remote != name else (),
+            remote_name=remote,
+        ))
+    return tuple(specs)
+
+
+def _merge_tools(existing: tuple[ToolSpec, ...], extra: tuple[ToolSpec, ...]) -> tuple[ToolSpec, ...]:
+    taken = {tool.name: tool.capability for tool in existing}
+    merged = list(existing)
+    for spec in extra:
+        owner = taken.get(spec.name)
+        if owner is not None:
+            raise ValueError(f"{spec.remote_name or spec.name} and {owner} share the call name {spec.name}")
+        taken[spec.name] = spec.capability
+        merged.append(spec)
+    return tuple(merged)
 
 
 def _call_name(shown: str) -> str:

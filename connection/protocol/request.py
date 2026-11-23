@@ -31,6 +31,7 @@ SUPPORTED_ACTIONS = frozenset(
         "process.send",
         "process.create",
         "environment.load",
+        "model.catalog",
         "model.configure",
         "command.execute",
     }

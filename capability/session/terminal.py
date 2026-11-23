@@ -1,6 +1,6 @@
 """External interactive session capability.
 
-The session owns the user's terminal.  Kernel state is reached through the
+The session owns the user's terminal. Kernel state is reached through the
 JSONL server rather than by importing the kernel command loop.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from typing import Any
+import threading
 
 
 def main() -> int:
@@ -23,50 +23,36 @@ def main() -> int:
     )
     assert server.stdin is not None
     assert server.stdout is not None
-    try:
-        for raw in sys.stdin:
-            command = raw.strip()
-            if not command:
-                continue
-            server.stdin.write(json.dumps({"command": command}, ensure_ascii=False) + "\n")
-            server.stdin.flush()
-            leaving = _read_reply(server.stdout)
-            if leaving:
-                break
-    finally:
+
+    def forward_input() -> None:
         try:
-            server.stdin.close()
-        except OSError:
+            for raw in sys.stdin:
+                command = raw.strip()
+                if not command:
+                    continue
+                server.stdin.write(
+                    json.dumps({"command": command}, ensure_ascii=False) + "\n"
+                )
+                server.stdin.flush()
+        except (OSError, ValueError):
             pass
+        finally:
+            try:
+                server.stdin.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=forward_input, name="linope-session-in", daemon=True).start()
+    try:
+        while True:
+            line = server.stdout.readline()
+            if not line:
+                break
+            sys.stdout.write(line)
+            sys.stdout.flush()
+    finally:
         server.wait()
     return int(server.returncode or 0)
-
-
-def _read_reply(stream: Any) -> bool:
-    while True:
-        raw = stream.readline()
-        if not raw:
-            return True
-        payload = json.loads(raw)
-        event = payload.get("event")
-        if event == "kernel":
-            _write(payload.get("payload") or {})
-            continue
-        if event == "error":
-            _write(
-                {
-                    "kind": "command.failed",
-                    "data": dict(payload.get("error") or {}),
-                }
-            )
-            return False
-        if event == "done":
-            return bool(payload.get("leaving"))
-
-
-def _write(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
 
 
 if __name__ == "__main__":

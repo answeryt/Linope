@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from connection.protocol.request import ActionRequest, ProtocolError, parse_request
 from connection.semantic.action_compiler import compile_action
-from connection.semantic.action_types import CompiledAction, EnvironmentDefaults
+from connection.semantic.action_types import EnvironmentDefaults
+from connection.semantic.model_catalog import discover_model_cards
 from connection.transport.event_stream import EventStream
-from connection.transport.kernel_session import KernelSession
+from connection.transport.kernel_session import KernelSession, KernelWireError
 
 
 class GatewayCommandError(RuntimeError):
@@ -23,29 +26,54 @@ class GatewayCommandError(RuntimeError):
         self.message = message
 
 
+@dataclass
+class _Pending:
+    """One action waiting on the kernel."""
+
+    request: ActionRequest
+    commands: tuple[str, ...]
+    index: int = 0
+    completion: str = "command"
+    environment_update: EnvironmentDefaults | None = None
+    phase: str = "command"
+    result: Any = None
+
+
+@dataclass
 class ConnectionGateway:
     """Translate semantic actions and drive one existing kernel session."""
 
-    def __init__(self, cwd: str | Path | None = None) -> None:
-        self._session = KernelSession(cwd=cwd)
+    cwd: str | Path | None = None
+    _session: KernelSession = field(init=False)
+    _events: EventStream = field(init=False)
+    _environment: EnvironmentDefaults = field(default_factory=EnvironmentDefaults)
+    _pending: dict[str, _Pending] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _reader: threading.Thread | None = field(default=None)
+    _closed: bool = False
+
+    def __post_init__(self) -> None:
+        self._session = KernelSession(cwd=self.cwd)
         self._events = EventStream(sys.stdout)
-        self._environment = EnvironmentDefaults()
 
     def serve(self) -> int:
-        """Read action requests until stdin or the kernel session closes."""
+        """Read action requests until stdin closes or the kernel session ends."""
 
         try:
             for raw in sys.stdin:
                 if not raw.strip():
                     continue
-                should_leave = self._handle_line(raw)
-                if should_leave:
+                if self._closed:
                     break
+                self._handle_line(raw)
         finally:
             self._session.close()
+            reader = self._reader
+            if reader is not None:
+                reader.join(timeout=5)
         return 0
 
-    def _handle_line(self, raw: str) -> bool:
+    def _handle_line(self, raw: str) -> None:
         try:
             request = parse_request(json.loads(raw))
         except json.JSONDecodeError as exc:
@@ -54,15 +82,23 @@ class ConnectionGateway:
                 {"message": f"Invalid JSON request: {exc.msg}"},
                 request_id="connection",
             )
-            return False
+            return
         except ProtocolError as exc:
             self._events.failed("connection", "connection", exc.code, str(exc), exc.details)
-            return False
+            return
 
         self._events.accepted(request.request_id, request.action)
+        if request.action == "model.catalog":
+            self._events.completed(
+                request.request_id,
+                request.action,
+                discover_model_cards(Path.cwd()),
+            )
+            return
         try:
-            compiled = compile_action(request, self._environment)
-            result = self._run_action(request, compiled)
+            with self._lock:
+                defaults = self._environment
+            compiled = compile_action(request, defaults)
         except ProtocolError as exc:
             self._events.failed(
                 request.request_id,
@@ -71,64 +107,151 @@ class ConnectionGateway:
                 str(exc),
                 exc.details,
             )
-            return False
-        except GatewayCommandError as exc:
-            self._events.failed(
-                request.request_id,
-                request.action,
-                exc.code,
-                exc.message,
-            )
-            return False
+            return
+
+        pending = _Pending(
+            request=request,
+            commands=compiled.commands,
+            completion=compiled.completion,
+            environment_update=compiled.environment_update,
+        )
+        with self._lock:
+            self._pending[request.request_id] = pending
+        self._ensure_reader()
+        try:
+            self._session.send(pending.commands[0], request.request_id)
         except (OSError, RuntimeError, EOFError) as exc:
-            self._events.failed(
-                request.request_id,
-                request.action,
-                type(exc).__name__,
-                str(exc),
-            )
-            return False
+            self._fail(request.request_id, type(exc).__name__, str(exc))
 
-        if compiled.environment_update is not None:
-            self._environment = compiled.environment_update
-        self._events.completed(request.request_id, request.action, result)
-        return compiled.completion == "session"
+    def _ensure_reader(self) -> None:
+        if self._reader is not None:
+            return
+        reader = threading.Thread(target=self._read_loop, name="linope-gateway", daemon=True)
+        self._reader = reader
+        reader.start()
 
-    def _run_action(self, request: ActionRequest, compiled: CompiledAction) -> Any:
-        """Run each compiled command and wait for its terminal event."""
+    def _read_loop(self) -> None:
+        while not self._closed:
+            try:
+                event = self._session.read_event()
+            except EOFError:
+                self._on_session_closed()
+                return
+            except KernelWireError as exc:
+                self._fail_open(exc.code, exc.message)
+                return
+            except (OSError, RuntimeError) as exc:
+                self._fail_open(type(exc).__name__, str(exc))
+                return
+            self._on_kernel(event)
 
-        result: Any = None
-        for index, command in enumerate(compiled.commands):
-            self._session.send(command)
-            completion = compiled.completion if index == len(compiled.commands) - 1 else "command"
-            result = self._read_until_complete(request.request_id, completion)
-        return result
+    def _on_kernel(self, event: dict[str, Any]) -> None:
+        kind = str(event.get("kind") or "")
+        data = event.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        request_id = event.get("request_id")
+        owner = request_id if isinstance(request_id, str) and request_id else ""
 
-    def _read_until_complete(self, request_id: str, completion: str) -> Any:
-        """Relay kernel events until the current action has reached its boundary."""
+        if kind == "command.failed":
+            code, message = _failure(data)
+            self._fail(owner, code, message)
+            return
 
-        while True:
-            event = self._session.read_event()
-            self._events.relay_kernel(event, request_id)
-            kind = event["kind"]
-            data = event["data"]
-            if kind == "command.failed":
-                error = data.get("error")
-                if isinstance(error, dict):
-                    code = str(error.get("code") or "command_failed")
-                    message = str(error.get("message") or "Kernel command failed")
-                else:
-                    code = "command_failed"
-                    message = str(error or "Kernel command failed")
-                raise GatewayCommandError(code, message)
-            if kind == "session.closed":
-                if completion == "session":
-                    return None
-                raise RuntimeError("kernel_session_closed")
-            if completion == "command" and kind == "command.completed":
-                return data.get("value")
-            if completion == "turn" and kind in {"turn.completed", "command.completed"}:
-                return data.get("result", data.get("value"))
+        self._relay(event, owner or "connection")
+
+        if kind == "session.closed":
+            self._on_session_closed()
+            return
+
+        with self._lock:
+            pending = self._pending.get(owner)
+        if pending is None:
+            return
+
+        if kind == "command.accepted" and data.get("deferred") is True:
+            with self._lock:
+                current = self._pending.get(owner)
+                if current is not None:
+                    current.phase = "turn"
+            return
+
+        if kind == "command.completed":
+            self._advance(owner, data.get("value"))
+            return
+
+        if kind == "turn.completed" and pending.phase == "turn":
+            self._finish(owner, data.get("result", data.get("value")))
+
+    def _advance(self, request_id: str, value: Any) -> None:
+        with self._lock:
+            pending = self._pending.get(request_id)
+            if pending is None:
+                return
+            pending.result = value
+            pending.index += 1
+            if pending.index < len(pending.commands):
+                command = pending.commands[pending.index]
+            else:
+                command = ""
+                done = pending.phase != "turn"
+            if command:
+                done = False
+        if command:
+            try:
+                self._session.send(command, request_id)
+            except (OSError, RuntimeError, EOFError) as exc:
+                self._fail(request_id, type(exc).__name__, str(exc))
+            return
+        if done:
+            self._finish(request_id, value)
+
+    def _finish(self, request_id: str, result: Any) -> None:
+        with self._lock:
+            pending = self._pending.pop(request_id, None)
+        if pending is None:
+            return
+        if pending.environment_update is not None:
+            with self._lock:
+                self._environment = pending.environment_update
+        self._events.completed(request_id, pending.request.action, result)
+
+    def _fail(self, request_id: str, code: str, message: str) -> None:
+        owner = request_id or "connection"
+        with self._lock:
+            pending = self._pending.pop(owner, None)
+        action = pending.request.action if pending is not None else owner
+        self._events.failed(owner, action, code, message)
+
+    def _fail_open(self, code: str, message: str) -> None:
+        with self._lock:
+            owners = list(self._pending)
+        for owner in owners:
+            self._fail(owner, code, message)
+        if not owners:
+            self._events.failed("connection", "connection", code, message)
+        self._closed = True
+
+    def _on_session_closed(self) -> None:
+        with self._lock:
+            owners = list(self._pending)
+        for owner in owners:
+            pending = self._pending.get(owner)
+            if pending is not None and pending.completion == "session":
+                self._finish(owner, None)
+            else:
+                self._fail(owner, "kernel_session_closed", "kernel_session_closed")
+        self._closed = True
+
+    def _relay(self, event: dict[str, Any], request_id: str) -> None:
+        self._events.relay_kernel(event, request_id)
+
+
+def _failure(data: dict[str, Any]) -> tuple[str, str]:
+    error = data.get("error")
+    if isinstance(error, dict):
+        return str(error.get("code") or "command_failed"), str(error.get("message") or "Kernel command failed")
+    return "command_failed", str(error or "Kernel command failed")
 
 
 def main() -> int:

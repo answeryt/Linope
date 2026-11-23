@@ -40,11 +40,13 @@ class SessionLog:
         root: Path,
         scope: str,
         *,
+        name: str | None = None,
         clock: Callable[[], str] | None = None,
         ids: Callable[[], str] | None = None,
     ) -> None:
         self.scope = _safe_scope(scope)
-        self.path = Path(root) / ".linope" / "sessions" / f"{self.scope}.jsonl"
+        self.name = _safe_scope(name) if name else self.scope
+        self.path = Path(root) / ".linope" / "sessions" / f"{self.name}.jsonl"
         self._clock = clock or _utc_now
         self._ids = ids or (lambda: uuid.uuid4().hex)
 

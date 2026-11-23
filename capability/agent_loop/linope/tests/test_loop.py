@@ -344,13 +344,76 @@ def test_two_tools_that_share_a_call_name_fail() -> None:
 
 
 def test_a_configured_tool_without_a_schema_fails() -> None:
-    with pytest.raises(ValueError, match="tools.mcp_tool_manager"):
+    with pytest.raises(ValueError, match="tools.other"):
         Loop(
-            _settings(["tools.mcp_tool_manager"]),
+            _settings(["tools.other"]),
             lambda _line: CommandResult(),
-            catalog={"tools.mcp_tool_manager": {}},
+            catalog={"tools.other": {}},
             identity="",
         )
+
+
+def test_mcp_tools_fail_when_the_hub_is_down() -> None:
+    loop = Loop(
+        _settings(["tools.mcp_tool_manager"]),
+        lambda _line: CommandResult(),
+        catalog={"tools.mcp_tool_manager": {}},
+        identity="",
+    )
+    with pytest.raises(RuntimeError, match="MCPHub is not running"):
+        loop.ask("现在几点？")
+
+
+def test_a_hub_tool_is_called_with_its_name() -> None:
+    lines: list[str] = []
+    asked = {"n": 0}
+
+    def submit(line: str) -> CommandResult:
+        lines.append(line)
+        if line == "process start tools.mcp_tool_manager":
+            return CommandResult(result={"processes": [{"pid": 12, "capability": "tools.mcp_tool_manager"}]})
+        if line == 'load tool 12 -- {"name": "list"}':
+            return CommandResult(result=json.dumps({
+                "success": True,
+                "tools": [{
+                    "name": "time-get_current_time",
+                    "description": "Current time",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"timezone": {"type": "string"}},
+                    },
+                }, {
+                    "name": "fetch-fetch",
+                    "description": "Fetch a page",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"url": {"type": "string"}},
+                        "required": ["url"],
+                    },
+                }],
+            }))
+        if line == "model use model.openai_chat_model":
+            return CommandResult(result={"configured": True})
+        if line.startswith("model run -- "):
+            asked["n"] += 1
+            if asked["n"] == 1:
+                assert "time-get_current_time" in line
+                assert "fetch-fetch" in line
+                return CommandResult(result=_turn("time-get_current_time", {"timezone": "UTC"}))
+            return CommandResult(result="现在是 UTC 零点。")
+        if line == 'load tool 12 -- {"name": "time-get_current_time", "arguments": {"timezone": "UTC"}}':
+            return CommandResult(result="2026-11-20T00:00:00Z")
+        raise AssertionError(line)
+
+    answer = Loop(
+        _settings(["tools.mcp_tool_manager"]),
+        submit,
+        catalog={"tools.mcp_tool_manager": {}},
+        identity="",
+    ).ask("现在几点？")
+
+    assert answer == "现在是 UTC 零点。"
+    assert lines.count("process start tools.mcp_tool_manager") == 1
 
 
 def _row(seq: int, real: str, kind: str, content: str) -> dict:
@@ -443,6 +506,38 @@ def test_show_appends_new_addresses_and_a_new_process_reads_them(tmp_path: Path)
         {"role": "assistant", "content": "The file is note."},
         {"role": "user", "content": "again"},
     ]
+
+
+def test_two_memories_keep_separate_session_files(tmp_path: Path) -> None:
+    def page(memory_id: str, question: str) -> str:
+        return json.dumps({
+            "facts": {"pid": 4, "memory_id": memory_id},
+            "links": [{"rel": "memory", "resource": "chat"}],
+            "memory": {"system": "", "items": [_row(1, "message/0", "user", question)]},
+        }, ensure_ascii=False)
+
+    def ask(memory_id: str, question: str) -> None:
+        def submit(line: str) -> CommandResult:
+            if line.startswith("show "):
+                return CommandResult(result=page(memory_id, question))
+            if line.startswith("model run -- "):
+                return CommandResult(result="ok")
+            raise AssertionError(line)
+
+        loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="", session_root=tmp_path)
+        loop.bind(4, "4")
+        loop._model_ready = True
+        assert loop.ask(question) == "ok"
+
+    ask("memory-a", "one")
+    ask("memory-b", "two")
+    first = tmp_path / ".linope" / "sessions" / "memory-a.jsonl"
+    second = tmp_path / ".linope" / "sessions" / "memory-b.jsonl"
+    assert first.is_file()
+    assert second.is_file()
+    assert "message/0" in first.read_text(encoding="utf-8")
+    assert json.loads(first.read_text(encoding="utf-8").splitlines()[0])["scope"] == "chat"
+    assert (tmp_path / ".linope" / "sessions" / "chat.jsonl").exists() is False
 
 
 def test_a_missing_indexed_line_fails_before_the_model_is_asked(tmp_path: Path) -> None:

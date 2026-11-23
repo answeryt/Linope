@@ -80,12 +80,19 @@ async def _collect(
 
 def _forward_display(part: Any, *, on_notice: Any = None) -> None:
     """Publish one model fragment as a structured capability notice."""
-    if not isinstance(part, dict) or part.get("type") not in {"text", "text-delta"}:
+    if not isinstance(part, dict):
+        return
+    part_type = part.get("type")
+    if part_type in {"text", "text-delta"}:
+        kind = "model.delta"
+    elif part_type in {"reasoning", "reasoning-delta"}:
+        kind = "model.reasoning.delta"
+    else:
         return
     text = part.get("text")
     if not text:
         return
-    notice = {"kind": "model.delta", "text": str(text)}
+    notice = {"kind": kind, "text": str(text)}
     if callable(on_notice):
         on_notice(notice)
         return

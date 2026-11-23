@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, TextIO
 
 from connection.transport.jsonl import write_json_line
@@ -13,6 +14,7 @@ class EventStream:
     def __init__(self, output: TextIO) -> None:
         self._output = output
         self._sequence = 0
+        self._lock = threading.Lock()
 
     def emit(
         self,
@@ -25,21 +27,22 @@ class EventStream:
     ) -> dict[str, Any]:
         """Write one normalized event and return its payload."""
 
-        self._sequence += 1
-        event: dict[str, Any] = {
-            "version": 1,
-            "kind": kind,
-            "seq": self._sequence,
-            "data": data,
-        }
-        if request_id is not None:
-            event["request_id"] = request_id
-        if turn_id is not None:
-            event["turn_id"] = turn_id
-        if pid is not None:
-            event["pid"] = pid
-        write_json_line(self._output, event)
-        return event
+        with self._lock:
+            self._sequence += 1
+            event: dict[str, Any] = {
+                "version": 1,
+                "kind": kind,
+                "seq": self._sequence,
+                "data": data,
+            }
+            if request_id is not None:
+                event["request_id"] = request_id
+            if turn_id is not None:
+                event["turn_id"] = turn_id
+            if pid is not None:
+                event["pid"] = pid
+            write_json_line(self._output, event)
+            return event
 
     def relay_kernel(self, event: dict[str, Any], request_id: str) -> dict[str, Any]:
         """Forward one kernel event while correlating it to the action."""
