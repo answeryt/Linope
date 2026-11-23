@@ -139,7 +139,6 @@ _SKIP_ENV_DIRS = frozenset(
     {
         "node_modules",
         ".git",
-        "deepseek-harness-master",
         "Agent-libOS-main",
     }
 )
