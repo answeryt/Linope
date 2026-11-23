@@ -70,7 +70,7 @@
 | `retainScroll` | 暂停时，新行到来仍留在原地。跟随时，面板留在最新一行 |
 | `scrollLimit` | 最大的 `scrollY`。零表示对话装得下 |
 
-信息框有四项：管家在不在（`clerk` / `here`）、还活着几个进程（`alive`）、其中最近三个（`process`）、项目目录（`project`）。进程和回合状态来自带关联 id 的后端事实，不从 transcript 文本反推。`model.delta` 追加到同一来源（pid，没有 pid 时用 request id）那块还没收束的回复，`turn.completed` 收束同一来源的那一块。来自进程的回复前面标着 pid。状态行在有轮次进行时写出进行中的轮次数。给一个正忙的进程再发一句时，内核返回 `process_busy`，画面把它显示成错误。
+信息框有四项：管家在不在（`clerk` / `here`）、还活着几个进程（`alive`）、其中最近三个（`process`）、项目目录（`project`）。进程和回合状态来自带关联 id 的后端事实，不从 transcript 文本反推。`model.delta` 追加到同一回合那块还没收束的回复：有 `turn_id` 时按它区分，否则按 pid，没有 pid 时用 request id。`turn.completed` 收束同一块。来自进程的回复前面标着 pid。状态行在有轮次进行时写出进行中的轮次数。进程不能再开一回合时，内核返回 `process_busy`，画面把它显示成错误。声明了多回合的进程会收下下一句。
 
 `banner.ts` 是 `logoLines`。窗口至少有标志那么宽，并且至少有 16 行时，画出六行的 `LINOPE KERNEL` 标志。更小的窗口改成一行：横线中间写 `LINOPE-KERNEL`。
 

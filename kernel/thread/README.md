@@ -12,6 +12,11 @@ One process may have several tasks. They share that process's memory, files,
 and network. The ledger does not store the program counter. When the process
 stops, its task group goes with it.
 
+A sentence that arrives while the leader turn is still open becomes another
+task, id `pid.tN`. Tool threads keep `pid.N`. The model scheduler does not
+care whether two tasks belong to one process or two: they share one ready
+line, and each keeps its own registers.
+
 ## Scripts
 
 | Script | Role |

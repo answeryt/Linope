@@ -45,6 +45,10 @@ class CapabilityProcess:
         self._ready = False
         self._secret_copy = ""
         self._talk = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._exchange_lock = threading.Lock()
+        self._exchange_count = 0
+        self._accepts_threads = False
         self._in_talk = False
         self._on_notice: Callable[[dict[str, Any]], None] | None = None
         self._exchange_message: dict[str, Any] = {}
@@ -71,6 +75,12 @@ class CapabilityProcess:
         from kernel.process.process_manager.handle import ProcessHandle
 
         return ProcessHandle(self)
+
+    @property
+    def accepts_threads(self) -> bool:
+        """True after ``ready`` says this program can hold more than one turn."""
+
+        return bool(self._accepts_threads)
 
     def channel_name(self) -> str:
         """The network channel this process asked for. Empty when it has none."""
@@ -115,6 +125,7 @@ class CapabilityProcess:
         if reply.get("event") != "ready":
             self._abandon_child(child)
             raise RuntimeError(str(reply.get("error") or "This capability's program is not ready"))
+        self._accepts_threads = reply.get("threads") is True
         self._ready = True
         self._os_pid = int(self.activation.pid)
         self.status = ProcessStatus.RUNNING
@@ -174,9 +185,26 @@ class CapabilityProcess:
         ``wait`` is how long to stand in line for this process. ``0`` tries
         once and raises when somebody else is already talking. ``None`` waits
         until the line is free. A positive number waits at most that many
-        seconds and returns False when the line stays busy.
+        seconds and returns False when the line stays busy. A program that
+        said ``threads`` on its ready line takes the next sentence immediately
+        and stays open until the last of those sentences ends.
         """
 
+        if self._accepts_threads:
+            with self._exchange_lock:
+                self._exchange_count += 1
+                self._in_talk = True
+                if on_notice is not None:
+                    self._on_notice = on_notice
+                self._exchange_message = dict(message)
+                if self._exchange_count == 1:
+                    self._buffered = None
+            try:
+                self._hand_off(message)
+            except Exception:
+                self.end_exchange()
+                raise
+            return True
         if not self._acquire_talk(wait):
             return False
         self._in_talk = True
@@ -234,11 +262,27 @@ class CapabilityProcess:
         child = self._child
         if child is None or child.stdin is None:
             return
-        _write_command_result(child, result, error, thread)
+        with self._write_lock:
+            _write_command_result(child, result, error, thread)
 
     def end_exchange(self) -> None:
-        """Let somebody else talk to this process."""
+        """Let somebody else talk to this process.
 
+        A program that accepts threads stays open until its last turn ends.
+        """
+
+        if self._accepts_threads:
+            with self._exchange_lock:
+                if not self._in_talk or self._exchange_count <= 0:
+                    return
+                self._exchange_count -= 1
+                if self._exchange_count > 0:
+                    return
+                self._in_talk = False
+                self._on_notice = None
+                self._exchange_message = {}
+                self._buffered = None
+            return
         if not self._in_talk:
             return
         self._in_talk = False
@@ -359,8 +403,9 @@ class CapabilityProcess:
             self._buffered = {"event": "closed"}
             return
         try:
-            child.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-            child.stdin.flush()
+            with self._write_lock:
+                child.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+                child.stdin.flush()
         except OSError:
             self._mark_dead()
             self._buffered = {"event": "closed"}

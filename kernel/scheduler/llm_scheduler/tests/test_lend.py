@@ -193,6 +193,181 @@ def test_a_file_read_lends_the_model_to_the_other_process() -> None:
     assert False in slots
 
 
+class _Multi(_Script):
+    """One process that accepts a second turn and tags each line with its thread."""
+
+    def __init__(self, pid: int, name: str) -> None:
+        super().__init__(pid, name, [])
+        self.accepts_threads = True
+        self.scripts: dict[str, list[dict[str, str]]] = {}
+        self._left: dict[str, list[dict[str, str]]] = {}
+
+    def begin_exchange(
+        self,
+        message: dict,
+        on_notice: object = None,
+        *,
+        wait: float | None = 0,
+    ) -> bool:
+        del on_notice, wait
+        self._open = True
+        thread = str(message.get("thread") or self.pid)
+        self._left[thread] = [dict(item) for item in self.scripts.get(thread, [])]
+        self._push_thread(thread)
+        return True
+
+    def reply_command(self, result: str = "", error: str = "", thread: str = "") -> None:
+        del result, error
+        self._push_thread(str(thread or self.pid))
+
+    def _push_thread(self, thread: str) -> None:
+        left = self._left.get(thread)
+        if not left:
+            return
+        line = dict(left.pop(0))
+        line.setdefault("thread", thread)
+        self._box.put(line)
+
+
+def test_a_second_message_to_a_threaded_process_is_a_new_task() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    agent = _Multi(76, "agent_loop")
+    agent.scripts["76"] = [
+        {"event": "command", "line": "model run -- first"},
+        {"event": "result", "result": "first-done"},
+    ]
+    agent.scripts["76.t1"] = [
+        {"event": "command", "line": "model run -- second"},
+        {"event": "result", "result": "second-done"},
+    ]
+    sink = CollectingEventSink()
+    clerk = KernelRuntime(sink)
+    clerk._items.append(("agent_loop", agent))
+
+    def model_run(body: object, **_kwargs: object) -> str:
+        if str(body) == "first":
+            started.set()
+            assert release.wait(3)
+        return "ok"
+
+    clerk.drive.model.run = model_run
+    worker = threading.Thread(
+        target=lambda: clerk.serve(
+            lines=[
+                "load message 76 -- one",
+                "load message 76 -- two",
+                "exit",
+            ]
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        assert started.wait(3)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            started_ids = [
+                event.turn_id for event in sink.events if event.kind == "turn.started"
+            ]
+            if "76" in started_ids and "76.t1" in started_ids:
+                break
+            time.sleep(0.01)
+        assert "76.t1" in [
+            event.turn_id for event in sink.events if event.kind == "turn.started"
+        ]
+        assert not any(
+            event.kind == "command.failed"
+            and event.data.get("error", {}).get("message") == "process_busy"
+            for event in sink.events
+        )
+        assert agent.threads.first.registers.get("question") == "one"
+        sibling = agent.threads.get("76.t1")
+        assert sibling is not None
+        assert sibling.registers.get("question") == "two"
+        release.set()
+        worker.join(5)
+        assert not worker.is_alive()
+    finally:
+        release.set()
+        worker.join(5)
+    assert any(
+        event.kind == "turn.completed" and event.data.get("result") == "first-done"
+        for event in sink.events
+    )
+    assert any(
+        event.kind == "turn.completed" and event.data.get("result") == "second-done"
+        for event in sink.events
+    )
+
+
+def test_a_tool_wait_lends_the_model_to_the_same_process() -> None:
+    order: list[str] = []
+    guard = threading.Lock()
+    agent = _Multi(77, "agent_loop")
+    agent.scripts["77"] = [
+        {"event": "command", "line": "model run -- first"},
+        {"event": "command", "line": "load tool 20 -- notes"},
+        {"event": "command", "line": "model run -- second"},
+        {"event": "result", "result": "file-answer"},
+    ]
+    agent.scripts["77.t1"] = [
+        {"event": "command", "line": "model run -- bee"},
+        {"event": "result", "result": "bee-answer"},
+    ]
+    sink = CollectingEventSink()
+    clerk = KernelRuntime(sink)
+    clerk._items.extend(
+        [
+            ("agent_loop", agent),
+            ("tools.read", _seat(20, "tools.read")),
+        ]
+    )
+
+    def run_command(line: str) -> str:
+        with guard:
+            order.append(line)
+        if "load tool" in line:
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                with guard:
+                    if any("bee" in item for item in order):
+                        break
+                time.sleep(0.01)
+            time.sleep(0.15)
+            with guard:
+                order.append("tool-end")
+            return "file"
+        return "ok"
+
+    clerk.drive.model.run = lambda body, **_kwargs: (order.append(f"model run -- {body}") or "ok")
+    clerk.drive.run_command = run_command
+    assert (
+        clerk.serve(
+            lines=[
+                "load message 77 -- read the notes",
+                "load message 77 -- what is one plus one",
+                "exit",
+            ]
+        )
+        == 0
+    )
+    with guard:
+        found = list(order)
+    first = next(index for index, line in enumerate(found) if "first" in line)
+    tool = next(index for index, line in enumerate(found) if "load tool" in line)
+    bee = next(index for index, line in enumerate(found) if "bee" in line)
+    ended = found.index("tool-end")
+    second = next(index for index, line in enumerate(found) if "model run -- second" in line)
+    assert first < tool < bee < ended < second
+    results = [
+        event.data.get("result")
+        for event in sink.events
+        if event.kind == "turn.completed"
+    ]
+    assert results.index("bee-answer") < results.index("file-answer")
+
+
 def test_a_second_message_to_a_busy_process_is_refused() -> None:
     started = threading.Event()
     release = threading.Event()

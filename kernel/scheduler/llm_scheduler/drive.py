@@ -123,11 +123,17 @@ class Drive:
         from kernel.thread.task import ensure_threads, note_arrival
 
         self._seq += 1
-        task = note_arrival(process, body)
-        if task.id in self.turns:
-            task = ensure_threads(process).open()
+        table = ensure_threads(process)
+        leader = table.first
+        if leader.id in self.turns:
+            task = table.open_turn(
+                {"question": body} if isinstance(body, str) and body else None
+            )
+        else:
+            task = note_arrival(process, body)
         message = dict(message)
         message["turn_id"] = task.id
+        message["thread"] = task.id
         turn = Turn(
             key=task.id,
             process=process,
@@ -186,11 +192,14 @@ class Drive:
             turn.phase = "listen"
 
     def _poll(self) -> None:
+        polled: set[int] = set()
         for turn in list(self.turns.values()):
-            if turn.phase not in {"listen", "after"}:
+            if turn.phase not in {"listen", "after"} or turn.worker is not None:
                 continue
-            if turn.worker is not None:
+            marker = id(turn.process)
+            if marker in polled:
                 continue
+            polled.add(marker)
             try:
                 reply = turn.process.next_line(0)
             except Exception as exc:
@@ -198,7 +207,34 @@ class Drive:
                 continue
             if reply is None:
                 continue
-            self._on_reply(turn, reply)
+            owner = self._turn_for_line(turn.process, reply)
+            if owner is None or owner.phase not in {"listen", "after"} or owner.worker is not None:
+                continue
+            self._on_reply(owner, reply)
+
+    def _turn_for_line(self, process: Any, reply: dict[str, Any]) -> Turn | None:
+        """The turn a process line belongs to. One listener needs no thread id."""
+
+        thread = str(reply.get("thread") or "")
+        if thread:
+            found = self.turns.get(thread)
+            if found is not None and found.process is process:
+                return found
+            parent_key = self._parents.get(thread)
+            parent = None if parent_key is None else self.turns.get(parent_key)
+            if parent is not None and parent.process is process:
+                return parent
+            return None
+        listening = [
+            item
+            for item in self.turns.values()
+            if item.process is process
+            and item.phase in {"listen", "after"}
+            and item.worker is None
+        ]
+        if len(listening) == 1:
+            return listening[0]
+        return None
 
     def _on_reply(self, turn: Turn, reply: dict[str, Any]) -> None:
         event = reply.get("event")
@@ -456,7 +492,7 @@ class Drive:
         reply = getattr(turn.process, "reply_command", None)
         if reply is None:
             return
-        reply(result, error)
+        reply(result, error, turn.key)
 
     def _finish_reply(self, turn: Turn, reply: Any, error: str) -> None:
         if error:
@@ -484,6 +520,11 @@ class Drive:
             return
         if turn.task is not None:
             turn.task.move("done")
+        others = [
+            item
+            for item in self.turns.values()
+            if item is not turn and item.process is turn.process
+        ]
         end = getattr(turn.process, "end_exchange", None)
         if end is not None:
             try:
@@ -492,11 +533,17 @@ class Drive:
                 pass
         self.book.finish(turn.key)
         turn.core = None
-        if getattr(turn.process, "is_alive", False):
+        if not others and getattr(turn.process, "is_alive", False):
             _note(turn.process, "sleeping")
             self._emit("process.activity", {"activity": "sleeping"}, turn=turn)
         if turn.sender is not None and getattr(turn.sender, "is_alive", False):
-            _note(turn.sender, "sleeping")
+            sender_busy = any(
+                item is not turn
+                and (item.process is turn.sender or item.sender is turn.sender)
+                for item in self.turns.values()
+            )
+            if not sender_busy:
+                _note(turn.sender, "sleeping")
         self.turns.pop(turn.key, None)
         if error:
             self._emit(

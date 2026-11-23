@@ -28,9 +28,17 @@ Tool calls run one at a time, in the order the model gave them. The command door
 The loop keeps its own messages and sends them in each `model run`; the model
 does not own a memory or a pid.
 
+One process can hold several turns. Each turn has its own messages, phase, and
+program counter. The process shares the tool processes, whether the model card
+is installed, and the history that has already finished. A new turn starts from
+that finished history and appends its own question and answer only when it
+ends, so a tool call is not split from its result. The `ready` line carries
+`threads: true`. Helper threads hang under that turn's id. The leader turn
+still uses `pid.N`.
+
 | File | Role |
 |---|---|
-| [`__main__.py`](__main__.py) | One capability process. It speaks the stdin door and writes command lines |
+| [`__main__.py`](__main__.py) | One capability process. It keeps the stdin door and returns each command result to the turn named by `thread` |
 | [`loop.py`](loop.py) | The turn. It decides whether the next line asks the model or runs a tool |
 | [`../linope.json`](../linope.json) | The start declaration. The command is `python -m capability.agent_loop.linope` |
 

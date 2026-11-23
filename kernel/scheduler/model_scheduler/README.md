@@ -7,7 +7,9 @@ to a core while it is ready; the next free core takes the front task.
 
 File reads, searches, commands, and tool starts are waits. A waiting task
 lends its core to the next ready task, and returns to the back of the shared
-line when the wait ends. A model call that has started is allowed to finish.
+line when the wait ends. That next task may belong to another process, or it
+may be a later sentence of the same process (`pid.tN`). It carries its own
+registers and its own turn. A model call that has started is allowed to finish.
 Consecutive model requests stay on the same core until the task waits or ends.
 
 `model cores <count>` sets the number of model cores, defaulting to one.

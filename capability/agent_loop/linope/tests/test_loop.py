@@ -330,8 +330,41 @@ def test_the_stdio_door_returns_the_model_text(monkeypatch) -> None:
         item.get("event") == "command" and item["line"] == "model use model.openai_chat_model"
         for item in lines
     )
-    assert lines[-1] == {"event": "result", "result": "hello"}
+    assert lines[0]["threads"] is True
+    assert lines[-1]["event"] == "result"
+    assert lines[-1]["result"] == "hello"
+    assert lines[-1]["thread"] == "4"
     assert any(item.get("event") == "command" and item.get("line") == "show 4" for item in lines)
+
+
+def test_two_turns_keep_their_own_messages_until_each_finishes() -> None:
+    def submit(line: str) -> CommandResult:
+        if line.startswith("show ") or line.startswith("model use "):
+            return CommandResult(result="{}")
+        raise AssertionError(line)
+
+    loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="")
+    loop.bind(41, "41")
+    loop._model_ready = True
+    loop._pids["tools.read"] = 8
+    loop.prepare("read")
+    assert loop.land(CommandResult(result=_turn("tools.read", {"file_path": "note.txt"}))) is None
+    other = loop.open_turn("41.t1")
+    other.prepare("hello")
+    assert "read" not in json.dumps(other.messages, ensure_ascii=False)
+    assert other.land(CommandResult(result="hi")) == "hi"
+    assert "hello" not in json.dumps(loop.messages, ensure_ascii=False)
+    assert loop.land(CommandResult(result="note")) is None
+    assert loop.land(CommandResult(result="The note.")) == "The note."
+    third = loop.open_turn("41.t2")
+    third.prepare("next")
+    assert [item["content"] for item in third.messages[:2]] == ["hello", "hi"]
+    tail = third.messages[2:-1]
+    assert [item["role"] for item in tail] == ["user", "assistant", "tool", "assistant"]
+    assert tail[2]["content"] == "note"
+    assert tail[2]["tool_call_id"] == "call-1"
+    assert tail[0]["content"] == "read"
+    assert tail[-1]["content"] == "The note."
 
 
 def test_two_tools_that_share_a_call_name_fail() -> None:

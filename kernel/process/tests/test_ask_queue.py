@@ -98,6 +98,55 @@ def test_a_short_wait_returns_quietly() -> None:
         process.stop()
 
 
+def test_a_threaded_process_accepts_another_line_and_releases_on_the_last() -> None:
+    process = CapabilityProcess(
+        ProcessActivation(
+            definition=CapabilityDefinition(instance_id="agent_loop"),
+            pid=1,
+        )
+    )
+    process._accepts_threads = True
+    assert process.begin_exchange({"operation": "load", "body": "one"})
+    assert process.begin_exchange({"operation": "load", "body": "two"})
+    assert process._in_talk
+    assert process._exchange_count == 2
+    process.end_exchange()
+    assert process._in_talk
+    assert process._exchange_count == 1
+    process.end_exchange()
+    assert not process._in_talk
+    assert process._exchange_count == 0
+
+
+def test_a_ready_line_marks_a_process_that_accepts_threads() -> None:
+    stub = """
+import json, sys
+sys.stdin.readline()
+sys.stdout.write(json.dumps({"event": "ready", "threads": True}) + "\\n")
+sys.stdout.flush()
+"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", stub],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+    )
+    process = CapabilityProcess(
+        ProcessActivation(
+            definition=CapabilityDefinition(instance_id="agent_loop"),
+            pid=int(child.pid or 0),
+        ),
+        child=child,
+    )
+    try:
+        process.open_program(timeout=2)
+        assert process.accepts_threads
+    finally:
+        process.stop()
+
+
 def test_a_new_line_still_does_not_wait() -> None:
     process = CapabilityProcess(
         ProcessActivation(

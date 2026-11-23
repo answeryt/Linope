@@ -68,6 +68,7 @@ class ThreadTable:
     def __init__(self, pid: int, first_id: str = "") -> None:
         self.pid = int(pid)
         self._seq = 1
+        self._turn_seq = 0
         self._items: dict[str, Task] = {}
         # ``first_id`` remains accepted for activation compatibility, but a
         # process leader always has the process pid as its task id.
@@ -107,6 +108,20 @@ class ThreadTable:
         self._items[ident] = task
         publish_step(task)
         return task
+
+    def open_turn(self, registers: dict[str, Any] | None = None) -> Task:
+        """Another user sentence while the leader task is still in a turn.
+
+        The id is ``pid.tN`` so it does not collide with tool threads, which
+        keep the ``pid.N`` ids the loop already sends.
+        """
+
+        self._turn_seq += 1
+        return self.open(
+            task_id=f"{self.pid}.t{self._turn_seq}",
+            registers=registers,
+            program_counter="ask_model",
+        )
 
     def get(self, task_id: str) -> Task | None:
         return self._items.get(str(task_id))
