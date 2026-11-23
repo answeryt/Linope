@@ -1,0 +1,226 @@
+.model-flow {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.model-flow .react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: rgba(28, 28, 30, 0.48);
+  background: transparent;
+  color-scheme: light;
+}
+
+.model-flow .react-flow__attribution {
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  color: rgba(28, 28, 30, 0.48);
+  font-size: 10px;
+  margin: 4px;
+  padding: 2px 5px;
+}
+
+.model-flow .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 0;
+  background: rgba(28, 28, 30, 0.45);
+}
+
+.model-flow .react-flow__handle-left {
+  left: -4px;
+}
+
+.model-flow .react-flow__handle-right {
+  right: -4px;
+}
+
+.model-flow .react-flow__handle-bottom {
+  bottom: -4px;
+}
+
+.model-flow .react-flow__node {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  transition: transform 520ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-flow .react-flow__node {
+    transition: none;
+  }
+}
+
+.model-flow-node {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 5px 12px rgba(28, 28, 30, 0.08);
+  color: #1c1c1e;
+  cursor: default;
+  line-height: 18px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.model-flow-node.is-selected {
+  border-color: rgba(28, 28, 30, 0.78);
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.55),
+    0 6px 16px rgba(28, 28, 30, 0.14);
+  transform: translateY(-1px);
+}
+
+.model-flow-node-queue,
+.model-flow-node-waiting {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+
+.model-flow-node-queue {
+  background: rgba(220, 232, 255, 0.62);
+  border-style: dashed;
+  border-color: rgba(70, 110, 180, 0.45);
+}
+
+.model-flow-node-core {
+  justify-content: space-between;
+  box-sizing: border-box;
+  padding: 6px 8px 8px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.model-flow-node-core.is-busy {
+  border-color: rgba(48, 176, 90, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(48, 176, 90, 0.28),
+    0 5px 12px rgba(28, 28, 30, 0.08);
+}
+
+.model-flow-node-core.is-idle {
+  border-color: rgba(142, 142, 147, 0.9);
+  background: rgba(236, 236, 240, 0.94);
+}
+
+.model-flow-node-waiting {
+  background: rgba(255, 243, 198, 0.82);
+}
+
+.model-flow-node-person {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(28, 28, 30, 0.28);
+}
+
+.model-flow-node-person .model-flow-node-detail {
+  font-size: 13px;
+}
+
+.model-flow-node-title {
+  color: rgba(28, 28, 30, 0.6);
+  font-size: 12px;
+}
+
+.model-flow-node-detail {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.model-flow-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 10px;
+  margin-top: 2px;
+}
+
+.model-flow-cell {
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.model-flow-cell-run {
+  background: #34c759;
+}
+
+.model-flow-cell-idle {
+  background: #8e8e93;
+}
+
+.model-flow .react-flow__edge-text {
+  font-size: 11px;
+}
+
+.model-flow .react-flow__panel {
+  margin: 0;
+  max-width: min(280px, 70%);
+}
+
+.model-flow-panel {
+  display: flex;
+  min-width: 168px;
+  max-width: 280px;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 12px rgba(28, 28, 30, 0.08);
+  color: #1c1c1e;
+  font-size: 12px;
+  line-height: 16px;
+  padding: 6px 9px;
+}
+
+.model-flow-panel span {
+  color: rgba(28, 28, 30, 0.58);
+  font-size: 11px;
+}
+
+.model-flow-panel .model-flow-caption {
+  color: #1c1c1e;
+  font-size: 12px;
+  line-height: 17px;
+  white-space: pre-line;
+}
+
+.model-flow-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.model-flow-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 12px rgba(28, 28, 30, 0.14);
+  color: #1c1c1e;
+  font-size: 11px;
+  line-height: 15px;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.model-flow-toolbar span:last-child {
+  color: rgba(28, 28, 30, 0.58);
+}
