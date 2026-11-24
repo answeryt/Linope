@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld("linopeKernel", {
       return ipcRenderer.invoke("prompt:stage", input);
     },
   },
+  desktop: {
+    presented() {
+      ipcRenderer.send("ui:presented");
+    },
+  },
   stop() {
     ipcRenderer.send("connection:stop");
   },

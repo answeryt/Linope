@@ -108,6 +108,9 @@ interface LinopeKernelApi {
       cwd?: string;
     }): string;
   };
+  desktop: {
+    presented(): void;
+  };
   stop(): void;
   onEvent(callback: (event: unknown) => void): () => void;
 }
