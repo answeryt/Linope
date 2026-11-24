@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
+import { useDeferredBody } from "@/desktop/dialog/defer-body";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
 import { lensShadow } from "@/desktop/dialog/ChatPanel";
 import { WindowControls } from "@/desktop/dialog/WindowControls";
@@ -177,6 +178,7 @@ function AppsBodySlot({
   onResizeStart: ResizeStart;
   open: boolean;
 }) {
+  const bodyReady = useDeferredBody(open);
   return (
     <AnimatePresence>
       {open ? (
@@ -192,7 +194,9 @@ function AppsBodySlot({
             onWheel={(event) => event.stopPropagation()}
             style={{ color: ink, opacity: frame.textOpacity }}
           >
-            <AppsHome focusFeatureId={focusFeatureId} onFocusConsumed={onFocusConsumed} />
+            {bodyReady ? (
+              <AppsHome focusFeatureId={focusFeatureId} onFocusConsumed={onFocusConsumed} />
+            ) : null}
           </motion.div>
           <ResizeEdges onResizeStart={onResizeStart} />
           <WindowControls

@@ -1,6 +1,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { desktops } from "virtual:capability-desktops";
+import { useDeferredBody } from "@/desktop/dialog/defer-body";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
 import { lensShadow } from "@/desktop/dialog/ChatPanel";
 import { WindowControls } from "@/desktop/dialog/WindowControls";
@@ -154,6 +155,7 @@ function ToolBodySlot({
 }) {
   const Desktop = desktops[appId];
   const label = toolName(appId);
+  const bodyReady = useDeferredBody(open);
   return (
     <AnimatePresence>
       {open ? (
@@ -169,20 +171,22 @@ function ToolBodySlot({
             onWheel={(event) => event.stopPropagation()}
             style={{ color: ink, opacity: frame.textOpacity }}
           >
-            {Desktop ? (
-              <Desktop
-                capability={capability}
-                conversations={conversations}
-                messages={messages}
-                onCreateConversation={onCreateConversation}
-                onSelectConversation={onSelectConversation}
-                process={process}
-                selectedId={selectedId}
-                tasks={tasks}
-              />
-            ) : (
-              <MissingTool name={label} />
-            )}
+            {bodyReady ? (
+              Desktop ? (
+                <Desktop
+                  capability={capability}
+                  conversations={conversations}
+                  messages={messages}
+                  onCreateConversation={onCreateConversation}
+                  onSelectConversation={onSelectConversation}
+                  process={process}
+                  selectedId={selectedId}
+                  tasks={tasks}
+                />
+              ) : (
+                <MissingTool name={label} />
+              )
+            ) : null}
           </motion.div>
           <ResizeEdges onResizeStart={onResizeStart} />
           <WindowControls

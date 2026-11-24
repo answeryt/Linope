@@ -87,6 +87,9 @@ interface LinopeKernelApi {
   memory: {
     configure(input: { backend: "memory" | "local"; path?: string }): string;
   };
+  desktop: {
+    presented(): void;
+  };
   stop(): void;
   onEvent(callback: (event: unknown) => void): () => void;
 }

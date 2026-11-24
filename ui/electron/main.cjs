@@ -1,10 +1,15 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, screen } = require("electron");
 const path = require("node:path");
 const { KernelSession } = require("./kernel-session.cjs");
 const { SecureEnvironmentFile } = require("./secure-environment.cjs");
 
 const devUrl = process.env.VITE_DEV_SERVER_URL;
 const repoRoot = path.resolve(__dirname, "../..");
+const PRESENT_TIMEOUT_MS = 1500;
+
+function cursorWorkArea() {
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+}
 
 let mainWindow = null;
 let kernelSession = null;
@@ -20,18 +25,23 @@ const semanticActions = new Set([
 ]);
 
 function createWindow() {
+  const area = cursorWorkArea();
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    x: area.x,
+    y: area.y,
+    width: area.width,
+    height: area.height,
     backgroundColor: "#000000",
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
+  win.setBounds(area);
   mainWindow = win;
   kernelSession = new KernelSession({
     cwd: repoRoot,
@@ -42,12 +52,28 @@ function createWindow() {
     },
   });
 
-  win.once("ready-to-show", () => {
-    win.maximize();
+  let shown = false;
+  const showWindow = () => {
+    if (shown || win.isDestroyed()) {
+      return;
+    }
+    shown = true;
+    clearTimeout(presentTimer);
+    ipcMain.removeListener("ui:presented", onPresented);
     win.show();
-  });
+  };
+  const onPresented = (event) => {
+    if (event.sender !== win.webContents) {
+      return;
+    }
+    showWindow();
+  };
+  const presentTimer = setTimeout(showWindow, PRESENT_TIMEOUT_MS);
+  ipcMain.on("ui:presented", onPresented);
 
   win.on("closed", () => {
+    clearTimeout(presentTimer);
+    ipcMain.removeListener("ui:presented", onPresented);
     kernelSession?.stop();
     secureEnvironment.cleanup();
     kernelSession = null;
