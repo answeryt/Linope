@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
+import { MessageMarkdown } from "@/desktop/dialog/MessageMarkdown";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
 import { lensShadow } from "@/desktop/dialog/ChatPanel";
 import { ModelFlow } from "@/desktop/setting/ModelFlow";
@@ -17,6 +18,7 @@ import {
   setDynamicCard,
   setLocalPath,
   setMemoryBackend,
+  setPromptOverride,
   setWallpaper,
   updateDraft,
   useImageRevision,
@@ -24,8 +26,14 @@ import {
   wallpaperById,
 } from "@/desktop/setting/settings";
 import { useInstalledApps } from "@/desktop/apps/installed";
-import { addressScopes, installedLoopLabel, installedLoops, loadedPromptText } from "@/desktop/setting/loaded-loops";
-import { useKernelSession } from "@/desktop/link/useKernelSession";
+import {
+  installedLoopLabel,
+  installedLoops,
+  loadedPromptText,
+  promptText,
+  type LoadedLoop,
+} from "@/desktop/setting/loaded-loops";
+import { forgetFixedPrompts, useKernelSession } from "@/desktop/link/useKernelSession";
 import { occupiedTokens, type ModelPlugin, type UiProcess, type UiTask } from "@/desktop/link/state";
 import { activityTaskStore } from "@/desktop/activity/task-store";
 
@@ -807,7 +815,10 @@ function ContextPage({ lines, processes, tasks }: { lines: string[]; processes: 
   const rootRef = useRef<HTMLDivElement>(null);
   const model = settings.drafts[settings.card].model.trim();
   const limit = contextLimit(model);
-  const occupied = occupiedTokens(loadedPromptText(installed.map((app) => app.id)), lines);
+  const occupied = occupiedTokens(
+    loadedPromptText(installed.map((app) => app.id), settings.promptOverrides),
+    lines,
+  );
 
   useEffect(() => {
     rootRef.current?.parentElement?.scrollTo({ top: 0 });
@@ -1153,7 +1164,11 @@ function WindowDetail({
   onBack: () => void;
 }) {
   const installed = useInstalledApps();
-  const occupied = occupiedTokens(loadedPromptText(installed.map((app) => app.id)), lines);
+  const settings = useSettings();
+  const occupied = occupiedTokens(
+    loadedPromptText(installed.map((app) => app.id), settings.promptOverrides),
+    lines,
+  );
   const outputReserve = Math.max(1, Math.floor(limit / 8));
   const safetyMargin = Math.max(1, Math.floor(limit / 50));
 
@@ -1187,14 +1202,7 @@ function CeilingRow({ label, name, value }: { label: string; name: string; value
   );
 }
 
-const realNames = [
-  ["system", "提示文件拼成的一行"],
-  ["message/0", "user 和 model"],
-  ["task/0", "other"],
-  ["artifact/0", "tool"],
-] as const;
-
-type MemorySection = "store" | "address" | "prompt";
+type MemorySection = "store" | "prompt";
 
 function MemoryPage() {
   const settings = useSettings();
@@ -1215,13 +1223,11 @@ function MemoryPage() {
           onOpen={setSection}
           rows={[
             { id: "store", title: "存放", detail: "进程内存储，或本地文件夹", value: backend },
-            { id: "address", title: "地址", detail: "真名、页表和带 scope 的读法", value: addressScopes(installedIds).join("、") },
             { id: "prompt", title: "系统提示", detail: "已下载循环加载的提示词", value: installedLoopLabel(installedIds) },
           ]}
         />
       ) : null}
       {section === "store" ? <StoreDetail onBack={() => setSection(null)} /> : null}
-      {section === "address" ? <AddressDetail onBack={() => setSection(null)} /> : null}
       {section === "prompt" ? <PromptDetail onBack={() => setSection(null)} /> : null}
     </div>
   );
@@ -1274,90 +1280,240 @@ function StoreDetail({ onBack }: { onBack: () => void }) {
   );
 }
 
-function AddressDetail({ onBack }: { onBack: () => void }) {
-  const installed = useInstalledApps();
-  const scopes = addressScopes(installed.map((app) => app.id));
-
-  return (
-    <div className="flex flex-col gap-3">
-      <DetailBack onBack={onBack} page="记忆" title="地址" />
-      <div className="flex items-baseline justify-between gap-3">
-        <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>scope</span>
-        <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{scopes.join("、")}</span>
-      </div>
-      <AddressBlock title="真名">
-        <div className="grid grid-cols-2 gap-2">
-          {realNames.map(([address, meaning]) => (
-            <div key={address} style={{ ...rowStyle, width: "auto" }}>
-              <div style={{ fontSize: 15, lineHeight: "20px" }}>{address}</div>
-              <div style={{ fontSize: 12, lineHeight: "16px", color: quiet }}>{meaning}</div>
-            </div>
-          ))}
-        </div>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>同一份记忆里的进程共用这些真名。</p>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message、task、artifact 按类从 0 编号。system 没有编号。</p>
-      </AddressBlock>
-      <AddressBlock title="本进程页表">
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message/0 是这个进程页表的第 0 格，可以指向另一条真名。</p>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>后启动的进程，自己的第 0 格不必和前人相同。</p>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>页表只在这次运行里有效，重启清空。真名还在存储里。</p>
-      </AddressBlock>
-      <AddressBlock title="带 scope 的读法">
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message/0 走自己的页表。</p>
-        {scopes.map((scope) => (
-          <p key={scope} style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
-            {scope}/message/0 按这份记忆里的真名顺序读。
-          </p>
-        ))}
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>也可以写范围，例如 message/0-10。</p>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>起点超出末尾，就是没有这个地址。</p>
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>scope 相同但没有共享记忆时，仍是两本，资源编号不同。</p>
-      </AddressBlock>
-    </div>
-  );
-}
-
-function AddressBlock({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{title}</span>
-      {children}
-    </section>
-  );
-}
-
 function PromptDetail({ onBack }: { onBack: () => void }) {
   const installed = useInstalledApps();
+  const settings = useSettings();
   const loops = installedLoops(installed.map((app) => app.id));
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = loops.find((loop) => loop.id === selectedId) ?? null;
+
+  useEffect(() => {
+    rootRef.current?.parentElement?.scrollTo({ top: 0 });
+  }, [selectedId]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <DetailBack onBack={onBack} page="记忆" title="系统提示" />
-      {loops.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>还没有下载的循环</p>
+    <div className="flex flex-col gap-3" ref={rootRef}>
+      {selected ? (
+        <PromptEditor
+          loop={selected}
+          onBack={() => setSelectedId(null)}
+          saved={promptText(selected, settings.promptOverrides)}
+          edited={selected.id in settings.promptOverrides}
+        />
       ) : (
-        loops.map((loop) => (
-          <div className="flex flex-col gap-1.5" key={loop.id}>
-            <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{loop.name}</span>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>{loop.note}</p>
-            <pre
-              aria-label={`${loop.name} 系统提示`}
-              style={{
-                ...inputStyle,
-                minHeight: 96,
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                fontFamily: "inherit",
-              }}
-            >
-              {loop.text}
-            </pre>
-          </div>
-        ))
+        <>
+          <DetailBack onBack={onBack} page="记忆" title="系统提示" />
+          {loops.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>还没有下载的循环</p>
+          ) : (
+            <div className="grid grid-cols-2 justify-items-center gap-x-4 gap-y-3">
+              {loops.map((loop) => (
+                <PromptCard
+                  edited={loop.id in settings.promptOverrides}
+                  key={loop.id}
+                  name={loop.name}
+                  onOpen={() => setSelectedId(loop.id)}
+                  text={promptText(loop, settings.promptOverrides)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+function PromptCard({
+  edited,
+  name,
+  onOpen,
+  text,
+}: {
+  edited: boolean;
+  name: string;
+  onOpen: () => void;
+  text: string;
+}) {
+  return (
+    <div className="flex w-full max-w-[210px] flex-col gap-1.5">
+      <div
+        aria-label={`${name} 系统提示`}
+        className="cursor-pointer overflow-hidden"
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onOpen();
+        }}
+        role="button"
+        style={{ aspectRatio: "3 / 4", borderRadius: 12, background: "#fff" }}
+        tabIndex={0}
+      >
+        <div
+          aria-hidden="true"
+          inert
+          style={{
+            padding: "12px 14px",
+            pointerEvents: "none",
+            transform: "scale(0.34)",
+            transformOrigin: "top left",
+            width: "294%",
+          }}
+        >
+          <MessageMarkdown source={text} />
+        </div>
+      </div>
+      <span style={{ fontSize: 13, lineHeight: "18px", textAlign: "center" }}>{name}</span>
+      {edited ? (
+        <span style={{ fontSize: 12, lineHeight: "16px", color: quiet, textAlign: "center" }}>已修改</span>
+      ) : null}
+    </div>
+  );
+}
+
+function PromptEditor({
+  edited,
+  loop,
+  onBack,
+  saved,
+}: {
+  edited: boolean;
+  loop: LoadedLoop;
+  onBack: () => void;
+  saved: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(saved);
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    setPromptOverride(loop.id, draft);
+    const result = await stagePrompt(loop.capability, draft);
+    setNotice(promptFileNotice(result, false));
+    setEditing(false);
+    setBusy(false);
+  };
+
+  const restore = async () => {
+    setBusy(true);
+    setPromptOverride(loop.id, null);
+    forgetFixedPrompts(loop.capability);
+    setDraft(loop.text);
+    setEditing(false);
+    const result = await stagePrompt(loop.capability, null);
+    setNotice(promptFileNotice(result, true));
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <DetailBack onBack={onBack} page="系统提示" title={loop.name} />
+      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>{loop.note}</p>
+      <p style={{ margin: 0, fontSize: 13, lineHeight: "18px", color: quiet }}>
+        保存后交给这个循环的进程。下一句问话只带这份提示。
+      </p>
+      {editing ? (
+        <textarea
+          aria-label={`${loop.name} 系统提示原文`}
+          onChange={(event) => setDraft(event.target.value)}
+          spellCheck={false}
+          style={{
+            ...inputStyle,
+            minHeight: 280,
+            resize: "vertical",
+            whiteSpace: "pre-wrap",
+            fontFamily: "inherit",
+          }}
+          value={draft}
+        />
+      ) : (
+        <div aria-label={`${loop.name} 系统提示`} style={{ ...inputStyle, padding: 12 }}>
+          <MessageMarkdown source={saved} />
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {editing ? (
+          <>
+            <PromptAction disabled={busy} label="保存" onClick={() => void save()} />
+            <PromptAction
+              disabled={busy}
+              label="取消"
+              onClick={() => {
+                setDraft(saved);
+                setEditing(false);
+              }}
+            />
+          </>
+        ) : (
+          <PromptAction
+            disabled={busy}
+            label="修改"
+            onClick={() => {
+              setDraft(saved);
+              setNotice("");
+              setEditing(true);
+            }}
+          />
+        )}
+        {edited && !editing ? <PromptAction disabled={busy} label="恢复默认" onClick={() => void restore()} /> : null}
+      </div>
+      {notice ? <p style={{ margin: 0, fontSize: 13, lineHeight: "18px", color: quiet }}>{notice}</p> : null}
+    </div>
+  );
+}
+
+function PromptAction({
+  disabled = false,
+  label,
+  onClick,
+}: {
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className="cursor-pointer border-0"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        borderRadius: 12,
+        padding: "8px 12px",
+        background: "rgba(255,255,255,0.55)",
+        color: ink,
+        fontSize: 15,
+        lineHeight: "20px",
+        opacity: disabled ? 0.45 : 1,
+      }}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function promptFileNotice(result: "saved" | "local" | "failed", restored: boolean): string {
+  if (restored && result === "saved") return "已恢复。已经盖掉的那一节留到该进程结束；新进程使用安装时的原文。";
+  if (restored && result === "local") return "已恢复界面上的原文。当前没有桌面后端，还不能交给进程。";
+  if (restored) return "界面已恢复原文，删除提示文件没有成功。";
+  if (result === "saved") return "已记下。这个循环已有进程时，下一句问话只带这份提示；否则在进程起来后、第一句问话之前加载。";
+  if (result === "local") return "这份修改只留在这台界面里，当前没有桌面后端，还不能交给进程。";
+  return "界面已记下修改，写成提示文件没有成功。";
+}
+
+async function stagePrompt(capability: string, text: string | null): Promise<"saved" | "local" | "failed"> {
+  const api = window.linopeKernel?.prompts;
+  if (!api) return "local";
+  try {
+    await api.stage({ capability, text });
+    return "saved";
+  } catch {
+    return "failed";
+  }
 }
 
 function DesktopPage() {

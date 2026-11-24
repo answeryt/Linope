@@ -61,6 +61,7 @@ export type UiState = {
   cwd: string;
   clerk: "here" | "away";
   failedRequests: Set<string>;
+  capabilityCalls: Set<string>;
   actionStates: Map<string, ActionLifecycle>;
   modelCatalog: ModelPlugin[];
   processes: UiProcess[];
@@ -89,6 +90,7 @@ export function initialUiState(cwd = ""): UiState {
     connection: "ready",
     cwd,
     failedRequests: new Set(),
+    capabilityCalls: new Set(),
     actionStates: new Map(),
     modelCatalog: [],
     processes: [],
@@ -290,6 +292,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
     ...state,
     activeTurns: new Map(state.activeTurns),
     failedRequests: new Set(state.failedRequests),
+    capabilityCalls: new Set(state.capabilityCalls),
     actionStates: new Map(state.actionStates),
     conversations: state.conversations.map((conversation) => ({
       ...conversation,
@@ -325,6 +328,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       next.requestConversation = new Map();
       next.activeTurns = new Map();
       next.turnRequests = new Map();
+      next.capabilityCalls = new Set();
       next.chatRequest = "";
       next.status = "ready";
       return next;
@@ -414,6 +418,10 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       finishConversation(next, event.pid);
       return next;
     case "command.completed":
+      if (event.request_id && next.capabilityCalls.has(event.request_id)) {
+        finishChat(next, event.request_id);
+        return next;
+      }
       if (textOf(event.data.command).startsWith("model run -- ")) {
         completeList(routeText(next, event), event, event.data.value, requestIdOf(next, event));
       } else {
@@ -424,6 +432,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
     case "action.accepted":
       if (event.request_id) {
         next.actionStates.set(event.request_id, { status: "accepted" });
+        if (event.data.action === "capability.call") next.capabilityCalls.add(event.request_id);
       }
       return next;
     case "command.failed":
@@ -449,6 +458,12 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
           error: errorText(event.data.error) || "连接动作失败",
           status: "failed",
         });
+      }
+      if (
+        event.data.action === "capability.call" ||
+        (event.request_id !== undefined && next.capabilityCalls.has(event.request_id))
+      ) {
+        return next;
       }
       if (failureSeen(next, event)) return next;
       appendErrorTo(routeText(next, event), errorText(event.data.error) || "连接动作失败");

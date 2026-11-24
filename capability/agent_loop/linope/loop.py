@@ -143,6 +143,7 @@ class Loop:
         self._pending_issue: list[ToolCallBlock] = []
         self._miss: CommandResult | None = None
         self._origin = 0
+        self._replaced_prompt = False
 
     @property
     def model(self) -> str:
@@ -196,6 +197,7 @@ class Loop:
         turn._pending_issue = []
         turn._miss = None
         turn._origin = 0
+        turn._replaced_prompt = False
         return turn
 
     def bind(self, pid: int, thread_id: str = "") -> None:
@@ -209,7 +211,7 @@ class Loop:
 
         prior = self._history()
         self.messages = []
-        if self._shared.prompt:
+        if self._shared.prompt and not self._replaced_prompt:
             self.messages.append({"role": "system", "content": self._shared.prompt})
         self.messages.extend(prior)
         self._origin = len(self.messages)
@@ -386,12 +388,15 @@ class Loop:
         """Finished memory rows. Trailing user lines are turns that have not ended."""
 
         if self.pid <= 0:
+            self._replaced_prompt = False
             return []
         reply = self.submit(f"show {self.pid}")
         if reply.error:
+            self._replaced_prompt = False
             return []
         page = parse_page(reply.result)
         if page is None:
+            self._replaced_prompt = False
             return []
         rows = rows_of(page)
         last = -1
@@ -402,6 +407,10 @@ class Loop:
             kept = [row for row in rows if str(row.get("kind") or "") == "system"]
         else:
             kept = rows[: last + 1]
+        self._replaced_prompt = any(
+            str(row.get("kind") or "") == "system" and str(row.get("state") or "") == "!"
+            for row in kept
+        )
         return _messages_from_memory(kept)
 
     def memory_rows(self) -> list[dict[str, str]]:

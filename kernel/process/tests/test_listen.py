@@ -467,6 +467,36 @@ def test_a_prompt_file_is_kept_in_memory_and_sent_with_the_next_question(
     assert "model answered" not in saved
 
 
+def test_a_trailing_mark_replaces_the_system_prompt(tmp_path: Path, monkeypatch) -> None:
+    first = tmp_path / "one.md"
+    second = tmp_path / "two.md"
+    first.write_text("alpha", encoding="utf-8")
+    second.write_text("beta", encoding="utf-8")
+    _book, process = _process(
+        tmp_path,
+        plugin=_recording_plugin(tmp_path),
+        resources=(
+            ResourceClaim(kind="network", identity={"channel": "ledger"}),
+            ResourceClaim(kind="memory", identity={"scope": "chat"}),
+        ),
+    )
+    pid = process.pid
+    service = _Service(process)
+    hold(
+        service,
+        lines=[
+            f"load message {pid} -- {first}",
+            f"load message {pid} -- {second} !",
+            f"show {pid}",
+        ],
+        timeout=5,
+    )
+    page = _pages(service)[-1]
+    assert page["memory"]["system"] == "beta"
+    system = [item for item in page["memory"]["items"] if item["kind"] == "system"]
+    assert system[0]["state"] == "!"
+
+
 def test_show_prints_the_words_kept_in_memory(tmp_path: Path, monkeypatch) -> None:
     prompt = tmp_path / "note.md"
     prompt.write_text("you are the assistant", encoding="utf-8")

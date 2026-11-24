@@ -251,4 +251,26 @@ if ((finished[3]?.reasoning ?? "").includes("想")) {
 const settled = mixed.conversations.find((item) => item.id === "c1");
 if (settled?.awaiting) throw new Error("the conversation stayed running after both turns finished");
 
+let capability = reduceKernelEvent(
+  initialUiState(),
+  event("action.accepted", { action: "capability.call" }, { request_id: "cap-1" }),
+);
+capability = reduceKernelEvent(
+  capability,
+  event(
+    "command.completed",
+    { command: 'load tool 3 -- {"path":"."}', value: '{"success":true,"entries":[]}' },
+    { request_id: "cap-1" },
+  ),
+);
+capability = reduceKernelEvent(
+  capability,
+  event(
+    "action.failed",
+    { action: "capability.call", error: { message: "没有完成" } },
+    { request_id: "cap-1" },
+  ),
+);
+if (capability.turns.length !== 0) throw new Error("a capability call was written into the chat");
+
 console.log("task routing checks passed");

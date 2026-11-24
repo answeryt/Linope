@@ -79,6 +79,7 @@ def keep_memory_system(
     *,
     name: str,
     place: int | None = None,
+    replace: bool = False,
 ) -> None:
     """Keep one prompt file after the scheduler accepts the system class."""
 
@@ -96,6 +97,7 @@ def keep_memory_system(
         name=name,
         text=text,
         place=place,
+        replace=replace,
     )
 
 
