@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Any, Protocol
@@ -158,81 +157,105 @@ class InMemoryStore:
             for key in [item for item in self._pages if item[1] == resource_id]:
                 self._pages.pop(key, None)
 
+    def restore(
+        self,
+        resource_id: str,
+        *,
+        scope: str,
+        seq: int,
+        nxt: dict[str, int],
+        prompts: list[dict[str, str]],
+        system: str,
+        rows: list[MemoryRow],
+        system_row: MemoryRow | None,
+    ) -> None:
+        """Install rows read from a folder. Page tables stay empty."""
 
-class SqliteStore:
-    """One durable file. Selected by the user, never assumed."""
+        with self._lock:
+            self._scopes[resource_id] = scope
+            self._seq[resource_id] = seq
+            self._next[resource_id] = {
+                "message": int(nxt.get("message") or 0),
+                "task": int(nxt.get("task") or 0),
+                "artifact": int(nxt.get("artifact") or 0),
+            }
+            self._prompts[resource_id] = [
+                {"name": str(item.get("name") or ""), "content": str(item.get("content") or "")}
+                for item in prompts
+            ]
+            self._system[resource_id] = system
+            stored: dict[str, MemoryRow] = {}
+            order: dict[str, list[str]] = {}
+            for row in rows:
+                stored[row.real] = row
+                order.setdefault(row.class_name, []).append(row.real)
+            if system_row is not None:
+                stored["system"] = system_row
+                order.setdefault("system", [])
+                if "system" not in order["system"]:
+                    order["system"].append("system")
+            self._rows[resource_id] = stored
+            self._order[resource_id] = order
 
-    name = "sqlite"
+    def state_snapshot(self, resource_id: str) -> dict[str, Any]:
+        with self._lock:
+            nxt = self._next.get(resource_id) or {"message": 0, "task": 0, "artifact": 0}
+            body: dict[str, Any] = {
+                "next": {
+                    "message": int(nxt.get("message") or 0),
+                    "task": int(nxt.get("task") or 0),
+                    "artifact": int(nxt.get("artifact") or 0),
+                },
+                "prompts": [dict(item) for item in self._prompts.get(resource_id) or []],
+                "scope": str(self._scopes.get(resource_id) or ""),
+                "seq": int(self._seq.get(resource_id) or 0),
+                "system": str(self._system.get(resource_id) or ""),
+            }
+            system_row = self._rows.get(resource_id, {}).get("system")
+            if system_row is not None:
+                body["system_seq"] = system_row.seq
+                body["system_time"] = system_row.time
+                body["system_tokens"] = system_row.tokens
+            return body
+
+    def page_snapshot(self, resource_id: str) -> dict[str, dict[str, list[str]]]:
+        with self._lock:
+            return {
+                pid: {key: list(value) for key, value in pages.items()}
+                for (pid, stored_id), pages in self._pages.items()
+                if stored_id == resource_id
+            }
+
+
+class LocalStore:
+    """One folder of dictionaries. Selected by the user, never assumed."""
+
+    name = "local"
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._lock = threading.RLock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self.path, check_same_thread=False)
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS rows (
-                resource_id TEXT NOT NULL,
-                real_name TEXT NOT NULL,
-                class_name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                content TEXT NOT NULL,
-                written_at TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                row_state TEXT NOT NULL,
-                tokens INTEGER NOT NULL,
-                PRIMARY KEY (resource_id, real_name)
-            );
-            CREATE TABLE IF NOT EXISTS counters (
-                resource_id TEXT PRIMARY KEY,
-                scope TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                message_next INTEGER NOT NULL,
-                task_next INTEGER NOT NULL,
-                artifact_next INTEGER NOT NULL,
-                system_text TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS prompts (
-                resource_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                content TEXT NOT NULL,
-                place INTEGER NOT NULL,
-                PRIMARY KEY (resource_id, name)
-            );
-            CREATE TABLE IF NOT EXISTS pages (
-                pid TEXT NOT NULL,
-                resource_id TEXT NOT NULL,
-                body TEXT NOT NULL,
-                PRIMARY KEY (pid, resource_id)
-            );
-            """
-        )
-        self._db.commit()
-
-    def close(self) -> None:
-        with self._lock:
-            self._db.close()
+        self._inner = InMemoryStore()
+        self._loaded: set[str] = set()
+        self.path.mkdir(parents=True, exist_ok=True)
+        self._clear_saved_pages()
 
     def append(self, resource_id: str, *, scope: str, kind: str, content: str, row_state: str, when: str) -> MemoryRow:
         with self._lock:
-            class_name = class_of(kind)
-            seq, nxt, _system = self._counter(resource_id, scope)
-            number = nxt[class_name]
-            nxt[class_name] = number + 1
-            seq += 1
-            real = f"{class_name}/{number}"
-            row = _row_from(real, class_name, kind, content, when, seq, row_state)
-            self._write_counter(resource_id, scope, seq, nxt, _system)
-            self._db.execute(
-                """
-                INSERT OR REPLACE INTO rows (
-                    resource_id, real_name, class_name, kind, content, written_at, seq, row_state, tokens
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (resource_id, real, class_name, kind, content, when, seq, row_state, row.tokens),
+            self._ensure(resource_id)
+            row = self._inner.append(
+                resource_id,
+                scope=scope,
+                kind=kind,
+                content=content,
+                row_state=row_state,
+                when=when,
             )
-            self._db.commit()
+            folder = self._folder(resource_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            with (folder / "rows.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(_row_body(row), ensure_ascii=False, sort_keys=True) + "\n")
+            _replace_json(folder / "state.json", self._inner.state_snapshot(resource_id))
             return row
 
     def write_system(
@@ -246,136 +269,123 @@ class SqliteStore:
         when: str,
     ) -> MemoryRow:
         with self._lock:
-            sections = self._sections(resource_id)
-            sections = _place_section(sections, name, text, place)
-            self._db.execute("DELETE FROM prompts WHERE resource_id = ?", (resource_id,))
-            for index, item in enumerate(sections, start=1):
-                self._db.execute(
-                    "INSERT INTO prompts (resource_id, name, content, place) VALUES (?, ?, ?, ?)",
-                    (resource_id, item["name"], item["content"], index),
-                )
-            joined = "\n\n".join(item["content"] for item in sections)
-            seq, nxt, _system = self._counter(resource_id, scope)
-            seq += 1
-            self._write_counter(resource_id, scope, seq, nxt, joined)
-            row = _row_from("system", "system", "system", joined, when, seq, "")
-            self._db.execute(
-                """
-                INSERT OR REPLACE INTO rows (
-                    resource_id, real_name, class_name, kind, content, written_at, seq, row_state, tokens
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (resource_id, "system", "system", "system", joined, when, seq, "", row.tokens),
+            self._ensure(resource_id)
+            row = self._inner.write_system(
+                resource_id,
+                scope=scope,
+                name=name,
+                text=text,
+                place=place,
+                when=when,
             )
-            self._db.commit()
+            folder = self._folder(resource_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            _replace_json(folder / "state.json", self._inner.state_snapshot(resource_id))
             return row
 
     def row(self, resource_id: str, real: str) -> MemoryRow | None:
         with self._lock:
-            found = self._db.execute(
-                """
-                SELECT real_name, class_name, kind, content, written_at, seq, row_state, tokens
-                FROM rows WHERE resource_id = ? AND real_name = ?
-                """,
-                (resource_id, real),
-            ).fetchone()
-            return None if found is None else _stored(found)
+            self._ensure(resource_id)
+            return self._inner.row(resource_id, real)
 
     def rows_of(self, resource_id: str, class_name: str) -> list[MemoryRow]:
         with self._lock:
-            found = self._db.execute(
-                """
-                SELECT real_name, class_name, kind, content, written_at, seq, row_state, tokens
-                FROM rows WHERE resource_id = ? AND class_name = ?
-                ORDER BY seq, real_name
-                """,
-                (resource_id, class_name),
-            ).fetchall()
-            return [_stored(item) for item in found]
+            self._ensure(resource_id)
+            return self._inner.rows_of(resource_id, class_name)
 
     def seq(self, resource_id: str) -> int:
         with self._lock:
-            found = self._db.execute("SELECT seq FROM counters WHERE resource_id = ?", (resource_id,)).fetchone()
-            return 0 if found is None else int(found[0])
+            self._ensure(resource_id)
+            return self._inner.seq(resource_id)
 
     def system_text(self, resource_id: str) -> str:
         with self._lock:
-            found = self._db.execute(
-                "SELECT system_text FROM counters WHERE resource_id = ?",
-                (resource_id,),
-            ).fetchone()
-            return "" if found is None else str(found[0] or "")
+            self._ensure(resource_id)
+            return self._inner.system_text(resource_id)
 
     def save_page(self, pid: str, resource_id: str, pages: dict[str, list[str]]) -> None:
         with self._lock:
-            self._db.execute(
-                "INSERT OR REPLACE INTO pages (pid, resource_id, body) VALUES (?, ?, ?)",
-                (pid, resource_id, json.dumps(pages)),
-            )
-            self._db.commit()
+            self._ensure(resource_id)
+            self._inner.save_page(pid, resource_id, pages)
+            folder = self._folder(resource_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            _replace_json(folder / "pages.json", self._inner.page_snapshot(resource_id))
 
     def load_page(self, pid: str, resource_id: str) -> dict[str, list[str]]:
         with self._lock:
-            found = self._db.execute(
-                "SELECT body FROM pages WHERE pid = ? AND resource_id = ?",
-                (pid, resource_id),
-            ).fetchone()
-            if found is None:
-                return {}
-            raw = json.loads(found[0])
-            return {str(key): [str(item) for item in value] for key, value in raw.items()}
+            self._ensure(resource_id)
+            return self._inner.load_page(pid, resource_id)
 
     def drop_pages(self, resource_id: str) -> None:
         with self._lock:
-            self._db.execute("DELETE FROM pages WHERE resource_id = ?", (resource_id,))
-            self._db.commit()
+            if resource_id in self._loaded:
+                self._inner.drop_pages(resource_id)
+            pages = self._folder(resource_id) / "pages.json"
+            if pages.is_file():
+                pages.unlink()
 
-    def _counter(self, resource_id: str, scope: str) -> tuple[int, dict[str, int], str]:
-        found = self._db.execute(
-            """
-            SELECT seq, message_next, task_next, artifact_next, system_text
-            FROM counters WHERE resource_id = ?
-            """,
-            (resource_id,),
-        ).fetchone()
-        if found is None:
-            return 0, {"message": 0, "task": 0, "artifact": 0}, ""
-        return (
-            int(found[0]),
-            {"message": int(found[1]), "task": int(found[2]), "artifact": int(found[3])},
-            str(found[4] or ""),
+    def _ensure(self, resource_id: str) -> None:
+        if resource_id in self._loaded:
+            return
+        self._load(resource_id)
+        self._loaded.add(resource_id)
+
+    def _load(self, resource_id: str) -> None:
+        folder = self._folder(resource_id)
+        rows = _read_rows(folder / "rows.jsonl")
+        raw = _read_json(folder / "state.json")
+        nxt = {"message": 0, "task": 0, "artifact": 0}
+        saved_next = raw.get("next") if isinstance(raw.get("next"), dict) else {}
+        for key in nxt:
+            nxt[key] = int(saved_next.get(key) or 0)
+        for row in rows:
+            if row.class_name not in nxt:
+                continue
+            part = row.real.rsplit("/", 1)[-1]
+            if part.isdigit():
+                nxt[row.class_name] = max(nxt[row.class_name], int(part) + 1)
+        prompts = []
+        for item in raw.get("prompts") or []:
+            if isinstance(item, dict):
+                prompts.append({"name": str(item.get("name") or ""), "content": str(item.get("content") or "")})
+        system = str(raw.get("system") or "")
+        system_seq = int(raw.get("system_seq") or 0)
+        system_row = None
+        if system or system_seq or raw.get("system_time"):
+            system_row = MemoryRow(
+                real="system",
+                class_name="system",
+                kind="system",
+                content=system,
+                time=str(raw.get("system_time") or ""),
+                seq=system_seq,
+                state="",
+                tokens=int(raw.get("system_tokens") or estimate_tokens(system)),
+                version=system_seq,
+            )
+        seq = max(
+            int(raw.get("seq") or 0),
+            system_seq,
+            max((row.seq for row in rows), default=0),
+        )
+        scope = str(raw.get("scope") or "")
+        self._inner.restore(
+            resource_id,
+            scope=scope,
+            seq=seq,
+            nxt=nxt,
+            prompts=prompts,
+            system=system,
+            rows=rows,
+            system_row=system_row,
         )
 
-    def _write_counter(self, resource_id: str, scope: str, seq: int, nxt: dict[str, int], system: str) -> None:
-        self._db.execute(
-            """
-            INSERT OR REPLACE INTO counters (
-                resource_id, scope, seq, message_next, task_next, artifact_next, system_text
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (resource_id, scope, seq, nxt["message"], nxt["task"], nxt["artifact"], system),
-        )
+    def _folder(self, resource_id: str) -> Path:
+        return self.path / _folder_name(resource_id)
 
-    def _sections(self, resource_id: str) -> list[dict[str, str]]:
-        found = self._db.execute(
-            "SELECT name, content FROM prompts WHERE resource_id = ? ORDER BY place",
-            (resource_id,),
-        ).fetchall()
-        return [{"name": str(name), "content": str(content)} for name, content in found]
-
-
-def _stored(found: tuple[Any, ...]) -> MemoryRow:
-    return MemoryRow(
-        real=str(found[0]),
-        class_name=str(found[1]),
-        kind=str(found[2]),
-        content=str(found[3]),
-        time=str(found[4]),
-        seq=int(found[5]),
-        state=str(found[6] or ""),
-        tokens=int(found[7]),
-        version=int(found[5]),
-    )
+    def _clear_saved_pages(self) -> None:
+        for pages in self.path.glob("*/pages.json"):
+            pages.unlink()
 
 
 def _place_section(
@@ -402,6 +412,74 @@ def _place_section(
     return sections
 
 
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{number}" for number in range(1, 10)} | {f"LPT{number}" for number in range(1, 10)}
+
+
+def _folder_name(resource_id: str) -> str:
+    encoded = "".join(char if char.isalnum() or char in "._-" else f"%{ord(char):02X}" for char in resource_id)
+    encoded = encoded.rstrip(" .")
+    stem = encoded.split(".", 1)[0].upper()
+    if not encoded or stem in _RESERVED:
+        encoded = f"_{encoded}"
+    return encoded
+
+
+def _row_body(row: MemoryRow) -> dict[str, Any]:
+    return {
+        "class": row.class_name,
+        "content": row.content,
+        "kind": row.kind,
+        "real": row.real,
+        "seq": row.seq,
+        "state": row.state,
+        "time": row.time,
+        "tokens": row.tokens,
+    }
+
+
+def _read_rows(path: Path) -> list[MemoryRow]:
+    if not path.is_file():
+        return []
+    rows: list[MemoryRow] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        raw = json.loads(line)
+        if not isinstance(raw, dict):
+            raise ValueError("memory row is not an object")
+        seq = int(raw.get("seq") or 0)
+        rows.append(
+            MemoryRow(
+                real=str(raw.get("real") or ""),
+                class_name=str(raw.get("class") or raw.get("class_name") or ""),
+                kind=str(raw.get("kind") or ""),
+                content=str(raw.get("content") or ""),
+                time=str(raw.get("time") or ""),
+                seq=seq,
+                state=str(raw.get("state") or ""),
+                tokens=int(raw.get("tokens") or 0),
+                version=seq,
+            )
+        )
+    return rows
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("memory state is not an object")
+    return raw
+
+
+def _replace_json(path: Path, body: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+
+
 def configured_backend(home: Path | None = None) -> tuple[str, str]:
     """Read the user's backend choice. Missing config means the memory backend."""
 
@@ -411,6 +489,8 @@ def configured_backend(home: Path | None = None) -> tuple[str, str]:
         return "memory", ""
     raw = json.loads(path.read_text(encoding="utf-8"))
     name = str(raw.get("name") or "memory")
+    if name == "sqlite":
+        return "memory", ""
     return name, str(raw.get("path") or "")
 
 
@@ -432,8 +512,11 @@ def open_store(name: str | None = None, path: str = "", home: Path | None = None
     location = path or configured
     if backend == "memory":
         return InMemoryStore()
-    if backend == "sqlite":
-        if not location:
-            raise ValueError("sqlite backend requires a path")
-        return SqliteStore(location)
+    if backend == "local":
+        if not str(location).strip():
+            raise ValueError("local backend requires a path")
+        folder = Path(location)
+        if not folder.is_absolute():
+            folder = (home or Path.cwd()) / folder
+        return LocalStore(folder)
     raise ValueError(f"Unknown memory backend: {backend}")

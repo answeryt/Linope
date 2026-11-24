@@ -18,7 +18,6 @@
       "tools.grep",
       "tools.pwsh",
       "tools.ddgs",
-      "tools.ask_user",
       "tools.mcp_tool_manager"
     ]
   },

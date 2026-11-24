@@ -127,14 +127,14 @@ type UploadMeta = {
   name: string;
 };
 
-type MemoryBackend = "memory" | "sqlite";
+type MemoryBackend = "memory" | "local";
 
 type SettingsState = {
   card: CardId;
   drafts: Record<CardId, CardDraft>;
   cores: number;
   memoryBackend: MemoryBackend;
-  sqlitePath: string;
+  localPath: string;
   systemPrompt: string;
   wallpaperId: string;
   uploads: UploadMeta[];
@@ -245,7 +245,7 @@ function defaults(): SettingsState {
     drafts: defaultDrafts(),
     cores: 1,
     memoryBackend: "memory",
-    sqlitePath: "",
+    localPath: "",
     systemPrompt: "",
     wallpaperId: DEFAULT_WALLPAPER_ID,
     uploads: [],
@@ -356,8 +356,8 @@ function parse(value: unknown): SettingsState {
     card,
     drafts,
     cores: cores >= 1 ? cores : 1,
-    memoryBackend: row.memoryBackend === "sqlite" ? "sqlite" : "memory",
-    sqlitePath: typeof row.sqlitePath === "string" ? row.sqlitePath : "",
+    memoryBackend: row.memoryBackend === "local" ? "local" : "memory",
+    localPath: typeof row.localPath === "string" ? row.localPath : "",
     systemPrompt: typeof row.systemPrompt === "string" ? row.systemPrompt : "",
     wallpaperId: typeof row.wallpaperId === "string" && row.wallpaperId ? row.wallpaperId : DEFAULT_WALLPAPER_ID,
     uploads,
@@ -563,9 +563,9 @@ function setMemoryBackend(memoryBackend: MemoryBackend) {
   commit({ ...state, memoryBackend });
 }
 
-function setSqlitePath(sqlitePath: string) {
-  if (sqlitePath === state.sqlitePath) return;
-  commit({ ...state, sqlitePath });
+function setLocalPath(localPath: string) {
+  if (localPath === state.localPath) return;
+  commit({ ...state, localPath });
 }
 
 function setSystemPrompt(systemPrompt: string) {
@@ -607,7 +607,7 @@ export {
   setCores,
   setDynamicCard,
   setMemoryBackend,
-  setSqlitePath,
+  setLocalPath,
   setSystemPrompt,
   setWallpaper,
   updateDraft,

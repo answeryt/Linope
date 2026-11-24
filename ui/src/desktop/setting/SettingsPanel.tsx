@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
@@ -15,8 +15,8 @@ import {
   setCard,
   setCores,
   setDynamicCard,
+  setLocalPath,
   setMemoryBackend,
-  setSqlitePath,
   setSystemPrompt,
   setWallpaper,
   updateDraft,
@@ -25,7 +25,7 @@ import {
   wallpaperById,
 } from "@/desktop/setting/settings";
 import { useKernelSession } from "@/desktop/link/useKernelSession";
-import type { ModelPlugin, UiProcess, UiTask } from "@/desktop/link/state";
+import { occupiedTokens, type ModelPlugin, type UiProcess, type UiTask } from "@/desktop/link/state";
 import { activityTaskStore } from "@/desktop/activity/task-store";
 
 type SettingsFrame = {
@@ -135,12 +135,14 @@ function SettingsBodySlot({
   onFullscreen,
   onMinimize,
   onResizeStart,
+  lines,
   open,
   processes,
   tasks,
 }: {
   frame: SettingsFrame;
   fullscreen: boolean;
+  lines: string[];
   onClose: () => void;
   onFullscreen: () => void;
   onMinimize: () => void;
@@ -164,7 +166,7 @@ function SettingsBodySlot({
             onWheel={(event) => event.stopPropagation()}
             style={{ color: ink, opacity: frame.textOpacity }}
           >
-            <SettingsNav processes={processes} tasks={tasks} />
+            <SettingsNav lines={lines} processes={processes} tasks={tasks} />
           </motion.div>
           <ResizeEdges onResizeStart={onResizeStart} />
           <WindowControls
@@ -180,7 +182,7 @@ function SettingsBodySlot({
   );
 }
 
-function SettingsNav({ processes, tasks }: { processes: UiProcess[]; tasks: UiTask[] }) {
+function SettingsNav({ lines, processes, tasks }: { lines: string[]; processes: UiProcess[]; tasks: UiTask[] }) {
   const [page, setPage] = useState<PageId>("model");
   useImageRevision();
 
@@ -216,7 +218,7 @@ function SettingsNav({ processes, tasks }: { processes: UiProcess[]; tasks: UiTa
         style={{ scrollbarWidth: "thin", overscrollBehavior: "contain" }}
       >
         {page === "model" ? <ModelPage /> : null}
-        {page === "context" ? <ContextPage processes={processes} tasks={tasks} /> : null}
+        {page === "context" ? <ContextPage lines={lines} processes={processes} tasks={tasks} /> : null}
         {page === "memory" ? <MemoryPage /> : null}
         {page === "desktop" ? <DesktopPage /> : null}
       </div>
@@ -797,12 +799,13 @@ const extraLabel: Record<string, string> = {
 
 type ContextSection = "registers" | "window";
 
-function ContextPage({ processes, tasks }: { processes: UiProcess[]; tasks: UiTask[] }) {
+function ContextPage({ lines, processes, tasks }: { lines: string[]; processes: UiProcess[]; tasks: UiTask[] }) {
   const settings = useSettings();
   const [section, setSection] = useState<ContextSection | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const model = settings.drafts[settings.card].model.trim();
   const limit = contextLimit(model);
+  const occupied = occupiedTokens(settings.systemPrompt, lines);
 
   useEffect(() => {
     rootRef.current?.parentElement?.scrollTo({ top: 0 });
@@ -820,7 +823,12 @@ function ContextPage({ processes, tasks }: { processes: UiProcess[]; tasks: UiTa
               detail: "程序计数器和这一拍的小抄",
               value: tasks.length ? `${tasks.length} 条任务` : "空着",
             },
-            { id: "window", title: "这次窗口", detail: "默认只装 system 和当前这句话", value: formatContext(limit) },
+            {
+              id: "window",
+              title: "这次窗口",
+              detail: "这一次对话写下的正文",
+              value: occupied > 0 ? occupied.toLocaleString("zh-CN") : formatContext(limit),
+            },
           ]}
         />
       ) : null}
@@ -828,7 +836,7 @@ function ContextPage({ processes, tasks }: { processes: UiProcess[]; tasks: UiTa
         <RegistersDetail onBack={() => setSection(null)} processes={processes} tasks={tasks} />
       ) : null}
       {section === "window" ? (
-        <WindowDetail limit={limit} model={model} onBack={() => setSection(null)} />
+        <WindowDetail limit={limit} lines={lines} model={model} onBack={() => setSection(null)} />
       ) : null}
     </div>
   );
@@ -1131,25 +1139,48 @@ function registerText(value: unknown): string {
   return "";
 }
 
-function WindowDetail({ limit, model, onBack }: { limit: number; model: string; onBack: () => void }) {
+function WindowDetail({
+  limit,
+  lines,
+  model,
+  onBack,
+}: {
+  limit: number;
+  lines: string[];
+  model: string;
+  onBack: () => void;
+}) {
+  const settings = useSettings();
+  const occupied = occupiedTokens(settings.systemPrompt, lines);
   const outputReserve = Math.max(1, Math.floor(limit / 8));
   const safetyMargin = Math.max(1, Math.floor(limit / 50));
 
   return (
     <div className="flex flex-col gap-3">
       <DetailBack onBack={onBack} page="上下文" title="这次窗口" />
-      <p style={{ margin: 0, fontSize: 32, fontWeight: 600, lineHeight: "36px" }}>{limit.toLocaleString("zh-CN")}</p>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "20px" }}>{model || "未命名模型"}</p>
+      <p style={{ margin: 0, fontSize: 32, fontWeight: 600, lineHeight: "36px" }}>{occupied.toLocaleString("zh-CN")}</p>
       <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
-        默认只装 system 和当前这句话。更早的话用 message/0 去读。
+        {occupied === 0 ? "这一次还没装文本" : "这次对话里已经写下的正文"}
       </p>
+      <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>这扇窗口的天花板</span>
+      <CeilingRow label="上限" name={model || "未命名模型"} value={limit} />
+      <CeilingRow label="输出预留" name="output_reserve" value={outputReserve} />
+      <CeilingRow label="安全余量" name="safety_margin" value={safetyMargin} />
       <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
-        满不满，比的是即将发出的文本和这个上限，不是整本历史。
+        这个数只来自当前这一次对话。别的对话各自算自己的。内核发请求时，没被点名的历史仍然留在记忆里；这里显示的是这一次对话写下的正文有多大，不是提供者账单。
       </p>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
-        输出预留大约是上限的八分之一（{outputReserve.toLocaleString("zh-CN")}），安全余量大约是五十分之一（
-        {safetyMargin.toLocaleString("zh-CN")}）。
-      </p>
+    </div>
+  );
+}
+
+function CeilingRow({ label, name, value }: { label: string; name: string; value: number }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3" style={{ ...rowStyle, width: "auto" }}>
+      <span style={{ fontSize: 15, lineHeight: "20px" }}>{label}</span>
+      <span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, lineHeight: "16px", color: quiet }}>
+        {name}
+      </span>
+      <span style={{ flexShrink: 0, fontSize: 15, lineHeight: "20px" }}>{value.toLocaleString("zh-CN")}</span>
     </div>
   );
 }
@@ -1167,7 +1198,7 @@ function MemoryPage() {
   const settings = useSettings();
   const [section, setSection] = useState<MemorySection | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const backend = settings.memoryBackend === "sqlite" ? "SQLite" : "内存";
+  const backend = settings.memoryBackend === "local" ? "本地" : "内存";
 
   useEffect(() => {
     rootRef.current?.parentElement?.scrollTo({ top: 0 });
@@ -1179,7 +1210,7 @@ function MemoryPage() {
         <SettingList
           onOpen={setSection}
           rows={[
-            { id: "store", title: "存放", detail: "进程内存储，或 SQLite 文件", value: backend },
+            { id: "store", title: "存放", detail: "进程内存储，或本地文件夹", value: backend },
             { id: "address", title: "地址", detail: "四类地址和每个进程自己的页表", value: "chat" },
             { id: "prompt", title: "系统提示", detail: "写入记忆的 system 行", value: promptValue(settings.systemPrompt) },
           ]}
@@ -1194,21 +1225,44 @@ function MemoryPage() {
 
 function StoreDetail({ onBack }: { onBack: () => void }) {
   const settings = useSettings();
+  const session = useKernelSession();
+
+  const applyMemory = (backend: "memory" | "local", path = "") => {
+    if (backend === "local" && !path.trim()) return;
+    session.actions.configureMemory(
+      backend === "local" ? { backend, path: path.trim() } : { backend },
+    );
+  };
 
   return (
     <div className="flex flex-col gap-3">
       <DetailBack onBack={onBack} page="记忆" title="存放" />
       <div className="grid grid-cols-2 gap-2">
-        <Choice label="内存" onClick={() => setMemoryBackend("memory")} selected={settings.memoryBackend === "memory"} />
-        <Choice label="SQLite" onClick={() => setMemoryBackend("sqlite")} selected={settings.memoryBackend === "sqlite"} />
+        <Choice
+          label="内存"
+          onClick={() => {
+            setMemoryBackend("memory");
+            applyMemory("memory");
+          }}
+          selected={settings.memoryBackend === "memory"}
+        />
+        <Choice
+          label="本地"
+          onClick={() => {
+            setMemoryBackend("local");
+            applyMemory("local", settings.localPath);
+          }}
+          selected={settings.memoryBackend === "local"}
+        />
       </div>
-      {settings.memoryBackend === "sqlite" ? (
-        <Field label="文件路径">
+      {settings.memoryBackend === "local" ? (
+        <Field hint="下次启动生效" label="文件夹路径">
           <TextInput
-            ariaLabel="文件路径"
-            onChange={setSqlitePath}
-            placeholder="例如 notes.sqlite"
-            value={settings.sqlitePath}
+            ariaLabel="文件夹路径"
+            onBlur={(path) => applyMemory("local", path)}
+            onChange={setLocalPath}
+            placeholder="例如 D:\linope-memory"
+            value={settings.localPath}
           />
         </Field>
       ) : null}
@@ -1248,10 +1302,9 @@ function PromptDetail({ onBack }: { onBack: () => void }) {
     <div className="flex flex-col gap-3">
       <DetailBack onBack={onBack} page="记忆" title="系统提示" />
       <Field hint="这段文字写入记忆的 system 行。" label="系统提示">
-        <textarea
-          aria-label="系统提示"
-          onChange={(event) => setSystemPrompt(event.target.value)}
-          style={{ ...inputStyle, minHeight: 96, resize: "vertical" }}
+        <GrowingTextarea
+          ariaLabel="系统提示"
+          onChange={setSystemPrompt}
           value={settings.systemPrompt}
         />
       </Field>
@@ -1413,15 +1466,61 @@ const rowStyle = {
   width: "auto",
 } as const;
 
+function GrowingTextarea({
+  ariaLabel,
+  onChange,
+  value,
+}: {
+  ariaLabel: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const area = ref.current;
+    if (!area) return;
+
+    const fit = () => {
+      area.style.height = "auto";
+      area.style.height = `${area.scrollHeight}px`;
+    };
+
+    fit();
+    let width = Math.round(area.getBoundingClientRect().width);
+    const observer = new ResizeObserver(() => {
+      const next = Math.round(area.getBoundingClientRect().width);
+      if (next === width) return;
+      width = next;
+      fit();
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [value]);
+
+  return (
+    <textarea
+      aria-label={ariaLabel}
+      onChange={(event) => onChange(event.target.value)}
+      ref={ref}
+      rows={1}
+      style={{ ...inputStyle, minHeight: 96, overflow: "hidden", resize: "none" }}
+      value={value}
+    />
+  );
+}
+
 function TextInput({
   ariaLabel,
   inputMode,
+  onBlur,
   onChange,
   placeholder,
   value,
 }: {
   ariaLabel: string;
   inputMode?: "text" | "numeric";
+  onBlur?: (value: string) => void;
   onChange: (value: string) => void;
   placeholder?: string;
   value: string;
@@ -1433,7 +1532,10 @@ function TextInput({
       autoComplete="off"
       className="placeholder:text-[#1c1c1e]"
       inputMode={inputMode}
-      onBlur={() => setFocused(false)}
+      onBlur={(event) => {
+        setFocused(false);
+        onBlur?.(event.currentTarget.value);
+      }}
       onChange={(event) => onChange(event.target.value)}
       onFocus={() => setFocused(true)}
       placeholder={focused ? "" : placeholder}

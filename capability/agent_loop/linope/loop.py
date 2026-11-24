@@ -21,11 +21,9 @@ from capability.model.model_runtime.blocks import (
     turn_from_payload,
 )
 from capability.prompt.prompt_load.prompt_load import system_prompt
-from capability.session.session import SessionError, SessionLog, parse_page, rows_of, scope_of
 from kernel.communication.page import CommandOffer
 
 _CALL_NAME = re.compile(r"[^A-Za-z0-9_-]")
-HUB_CAPABILITY = "tools.mcp_tool_manager"
 
 
 @dataclass(frozen=True)
@@ -58,19 +56,10 @@ class _Shared:
     lock: threading.RLock = field(default_factory=threading.RLock)
     pids: dict[str, int] = field(default_factory=dict)
     model_ready: bool = False
-    hub_ready: bool = False
-    replayed: bool = False
-    seeded: bool = False
-    seeding: bool = False
-    committed: list[dict[str, Any]] = field(default_factory=list)
     tools: tuple[ToolSpec, ...] = ()
     model: str = ""
     pid: int = 0
-    session: Any = None
-    session_root: Path = field(default_factory=Path.cwd)
-
-    def __post_init__(self) -> None:
-        self.seed_cv = threading.Condition(self.lock)
+    prompt: str = ""
 
 
 def load_catalog(path: Path | None = None) -> dict[str, Any]:
@@ -90,10 +79,6 @@ def declared_tools(names: list[str], catalog: dict[str, Any]) -> tuple[ToolSpec,
     taken: dict[str, str] = {}
     for capability in names:
         row = catalog.get(capability)
-        if capability == HUB_CAPABILITY:
-            if not isinstance(row, dict):
-                raise ValueError(f"{capability} has no schema")
-            continue
         schemas = row.get("schemas") if isinstance(row, dict) else None
         if not isinstance(schemas, list) or not schemas:
             raise ValueError(f"{capability} has no schema")
@@ -137,7 +122,6 @@ class Loop:
         *,
         catalog: dict[str, Any] | None = None,
         identity: str | None = None,
-        session_root: Path | None = None,
     ) -> None:
         model = str(settings.get("model") or "").strip()
         if not model:
@@ -150,25 +134,15 @@ class Loop:
         shared = _Shared()
         shared.model = model
         shared.tools = declared_tools(chosen, table)
-        shared.hub_ready = HUB_CAPABILITY not in chosen
-        shared.session_root = session_root or Path.cwd()
+        shared.prompt = system_prompt() if identity is None else identity.strip()
         self._shared = shared
         self._submit_fn = submit
         self.messages: list[dict[str, Any]] = []
-        prompt = system_prompt() if identity is None else identity.strip()
-        if prompt:
-            row = {"role": "system", "content": prompt}
-            self.messages.append(row)
-            shared.committed.append(dict(row))
         self.thread_id = "0"
-        self._seq = 1
         self._phase = "ask_model"
-        self._forks: list[dict[str, Any]] = []
+        self._pending_issue: list[ToolCallBlock] = []
         self._miss: CommandResult | None = None
-        self._shares_history = True
-        self._continue = False
-        self._base = 0
-        self._committed_turn = False
+        self._origin = 0
 
     @property
     def model(self) -> str:
@@ -210,50 +184,18 @@ class Loop:
     def _model_ready(self, value: bool) -> None:
         self._shared.model_ready = bool(value)
 
-    @property
-    def _hub_ready(self) -> bool:
-        return self._shared.hub_ready
-
-    @_hub_ready.setter
-    def _hub_ready(self, value: bool) -> None:
-        self._shared.hub_ready = bool(value)
-
-    @property
-    def _session(self) -> SessionLog | None:
-        return self._shared.session
-
-    @_session.setter
-    def _session(self, value: SessionLog | None) -> None:
-        self._shared.session = value
-
-    @property
-    def _session_root(self) -> Path:
-        return self._shared.session_root
-
-    @property
-    def _replayed(self) -> bool:
-        return self._shared.replayed
-
-    @_replayed.setter
-    def _replayed(self, value: bool) -> None:
-        self._shared.replayed = bool(value)
-
     def open_turn(self, thread_id: str) -> Loop:
-        """One more sentence. It starts from history that has already finished."""
+        """One more sentence. It reads the same memory when it starts."""
 
         turn = Loop.__new__(Loop)
         turn._shared = self._shared
         turn._submit_fn = self._submit_fn
         turn.messages = []
         turn.thread_id = str(thread_id)
-        turn._seq = 0
         turn._phase = "ask_model"
-        turn._forks = []
+        turn._pending_issue = []
         turn._miss = None
-        turn._shares_history = False
-        turn._continue = False
-        turn._base = 0
-        turn._committed_turn = False
+        turn._origin = 0
         return turn
 
     def bind(self, pid: int, thread_id: str = "") -> None:
@@ -261,65 +203,38 @@ class Loop:
 
         self.pid = int(pid)
         self.thread_id = thread_id or str(self.pid)
-        if self.thread_id == str(self.pid):
-            self._seq = 1
-        else:
-            suffix = self.thread_id.rsplit(".", 1)[-1]
-            self._seq = int(suffix) if suffix.isdigit() else 1
-
-    def ask(self, question: str) -> str:
-        """One user message. Later calls on this loop see the earlier messages."""
-
-        self.prepare(question)
-        while True:
-            step = self.step()
-            if step.get("forks") or step.get("await"):
-                raise RuntimeError("The kernel runs these tools")
-            line = str(step.get("line") or "")
-            if step.get("pc") == "wait_tool" and not line:
-                reply = self._miss or CommandResult()
-            else:
-                reply = self.submit(line)
-            if step.get("pc") == "ask_model" and reply.error:
-                raise RuntimeError(reply.error)
-            done = self.land(reply)
-            if done is not None:
-                return done
 
     def prepare(self, question: str) -> None:
-        """Remember the user sentence and get ready to ask the model."""
+        """Read the finished memory, then remember this sentence."""
 
-        self._ensure_seeded(question)
-        if self._shares_history and self._continue:
-            self._index()
-        else:
-            with self._shared.lock:
-                self.messages = [dict(item) for item in self._shared.committed]
-            if self._shares_history:
-                self._continue = True
-        self._base = len(self.messages)
-        self._committed_turn = False
+        prior = self._history()
+        self.messages = []
+        if self._shared.prompt:
+            self.messages.append({"role": "system", "content": self._shared.prompt})
+        self.messages.extend(prior)
+        self._origin = len(self.messages)
         self.messages.append({"role": "user", "content": question})
         self._phase = "ask_model"
-        self._forks = []
+        self._pending_issue = []
 
     def step(self) -> dict[str, Any]:
         """The next step of the current thread. This does not run the command."""
 
-        fresh = [item for item in self._forks if not item.get("issued")]
-        if self._phase == "wait_helpers" and fresh:
+        if self._phase == "wait_helpers" and self._pending_issue:
+            forks = [self._issue(call) for call in self._pending_issue]
+            self._pending_issue = []
             return {
                 "thread": self.thread_id,
                 "pc": "wait_helpers",
-                "registers": {"waiting": [item["id"] for item in self._forks]},
-                "forks": [_step_fork(item) for item in fresh],
+                "registers": {"waiting": [str(item["registers"].get("call_id") or "") for item in forks]},
+                "forks": [_step_fork(item) for item in forks],
             }
-        if self._phase == "wait_signal" or (self._phase == "wait_helpers" and self._forks):
+        if self._phase in {"wait_signal", "wait_helpers"}:
             return {
                 "thread": self.thread_id,
                 "pc": "wait_signal",
                 "await": True,
-                "registers": {"waiting": [item["id"] for item in self._forks]},
+                "registers": {"waiting": [call_id for call_id, _name in self._unanswered()]},
             }
         if self._phase == "run_tool":
             call = self._pending_call
@@ -348,76 +263,107 @@ class Loop:
                 "content": reply.error or reply.result,
             })
             self._phase = "ask_model"
-            self._index([(call.id, call.name)])
             return None
         if reply.error:
             raise RuntimeError(reply.error)
+        queued = _queued_signals(reply.result)
+        if queued is not None:
+            for item in queued:
+                self.land_signal([item])
+            return None
         turn = _parse_turn(reply.result)
         calls = _named_calls(turn)
         if not calls:
             text = turn.text()
             self.messages.append(_assistant_message(text, turn))
-            if self._forks:
+            if self._unanswered():
                 self._phase = "wait_signal"
-                self._index()
                 return None
             self._phase = "done"
-            self._index()
-            self._commit()
             return text
         self.messages.append(_assistant_message(_assistant_blocks(turn, calls), turn))
         if len(calls) == 1:
             self._pending_call = calls[0]
             self._phase = "run_tool"
-            self._index()
             return None
-        self._forks.extend(self._fork(call) for call in calls)
+        self._pending_issue = list(calls)
         self._phase = "wait_helpers"
-        self._index()
         return None
-
-    def note_issued(self, ids: Any) -> None:
-        """These helper threads have been handed to the kernel."""
-
-        wanted = {str(item) for item in ids}
-        for fork in self._forks:
-            if str(fork["id"]) in wanted:
-                fork["issued"] = True
 
     def land_signal(self, raw: Any) -> None:
         """One completion signal. The next step asks the model with this result."""
 
         rows = _signal_rows(raw)
         if not rows:
-            if self._forks:
+            if self._unanswered():
                 raise RuntimeError("The kernel returned a broken command result")
             self._phase = "ask_model"
             return
-        item = rows[0]
-        fork = self._fork_by_id(str(item.get("thread") or ""))
-        call = fork["call"]
+        self._land_row(rows[0])
+
+    def _land_row(self, item: dict[str, Any]) -> None:
+        """Write one finished tool call back into this turn."""
+
+        call_id = str(item.get("call_id") or "")
+        name = self._call_name(call_id)
+        if not name:
+            raise RuntimeError("The kernel returned a broken command result")
         content = str(item.get("error") or "") or _text(item.get("result"))
-        if self._pair_as_tool(str(call.id)):
+        if self._pair_as_tool(call_id):
             self.messages.append({
                 "role": "tool",
-                "name": call.name,
-                "tool_call_id": call.id,
+                "name": name,
+                "tool_call_id": call_id,
                 "content": content,
             })
         else:
             self.messages.append({
                 "role": "user",
-                "content": f"{call.name} finished:\n{content}",
+                "content": f"{name} finished:\n{content}",
+                "tool_call_id": call_id,
+                "name": name,
+                "output": content,
             })
-        self._forks = [other for other in self._forks if other is not fork]
         self._phase = "ask_model"
-        self._index([(str(call.id), str(call.name))])
 
-    def _fork_by_id(self, task_id: str) -> dict[str, Any]:
-        for fork in self._forks:
-            if str(fork["id"]) == task_id:
-                return fork
-        raise RuntimeError("The kernel returned a broken command result")
+    def _call_name(self, call_id: str) -> str:
+        """The tool name this turn already recorded for this call."""
+
+        if not call_id:
+            return ""
+        for message in self.messages:
+            content = message.get("content")
+            if message.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool-call"
+                    and str(block.get("id") or "") == call_id
+                ):
+                    return str(block.get("name") or "")
+        return ""
+
+    def _unanswered(self) -> list[tuple[str, str]]:
+        """Tool calls in this turn that do not yet have a tool result."""
+
+        answered = {
+            str(message.get("tool_call_id") or "")
+            for message in self.messages
+            if message.get("tool_call_id")
+        }
+        found: list[tuple[str, str]] = []
+        for message in self.messages:
+            content = message.get("content")
+            if message.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool-call":
+                    continue
+                call_id = str(block.get("id") or "")
+                if call_id and call_id not in answered:
+                    found.append((call_id, str(block.get("name") or "")))
+        return found
 
     def _pair_as_tool(self, call_id: str) -> bool:
         """A tool result can follow the assistant message that still holds this call."""
@@ -436,61 +382,46 @@ class Loop:
             )
         return False
 
-    def _commit(self) -> None:
-        """Fold this finished turn into the history the next turn starts from."""
+    def _history(self) -> list[dict[str, Any]]:
+        """Finished memory rows. Trailing user lines are turns that have not ended."""
 
-        if self._committed_turn:
-            return
-        with self._shared.lock:
-            self._shared.committed.extend(dict(item) for item in self.messages[self._base:])
-        self._committed_turn = True
-
-    def _ensure_seeded(self, question: str) -> None:
-        """Load saved history once. Another turn waits instead of loading it again."""
-
-        shared = self._shared
-        with shared.lock:
-            while shared.seeding:
-                shared.seed_cv.wait()
-            if shared.seeded:
-                return
-            shared.seeding = True
-        try:
-            self._seed(question)
-        except Exception:
-            with shared.lock:
-                shared.seeding = False
-                shared.seed_cv.notify_all()
-            raise
-        with shared.lock:
-            shared.seeded = True
-            shared.seeding = False
-            shared.seed_cv.notify_all()
-
-    def _seed(self, question: str) -> None:
-        saved = self.messages
-        with self._shared.lock:
-            base = [dict(item) for item in self._shared.committed]
-        self.messages = base
-        try:
-            self._resume(question)
-            with self._shared.lock:
-                self._shared.committed = [dict(item) for item in self.messages]
-        finally:
-            self.messages = saved
-
-    def _fork(self, call: ToolCallBlock) -> dict[str, Any]:
-        self._seq += 1
-        if self.thread_id and self.thread_id != str(self.pid):
-            task_id = f"{self.thread_id}.{self._seq}"
+        if self.pid <= 0:
+            return []
+        reply = self.submit(f"show {self.pid}")
+        if reply.error:
+            return []
+        page = parse_page(reply.result)
+        if page is None:
+            return []
+        rows = rows_of(page)
+        last = -1
+        for index, row in enumerate(rows):
+            if str(row.get("kind") or "") in {"model", "tool"}:
+                last = index
+        if last < 0:
+            kept = [row for row in rows if str(row.get("kind") or "") == "system"]
         else:
-            task_id = f"{self.pid}.{self._seq}"
+            kept = rows[: last + 1]
+        return _messages_from_memory(kept)
+
+    def memory_rows(self) -> list[dict[str, str]]:
+        """Lines this turn produced, apart from the question and the final answer."""
+
+        found: list[dict[str, str]] = []
+        for message in self.messages[self._origin + 1 : -1]:
+            row = _memory_row(message)
+            if row is not None:
+                found.append(row)
+        return found
+
+    def _issue(self, call: ToolCallBlock) -> dict[str, Any]:
+        """One helper the kernel will number and run. The call id travels in the registers."""
+
         line = self._tool_line(call)
         item: dict[str, Any] = {
-            "id": task_id,
+            "id": "",
             "line": line,
             "registers": {"tool": call.name, "call_id": call.id},
-            "call": call,
         }
         if self._miss is not None:
             item["result"] = self._miss.result
@@ -500,7 +431,6 @@ class Loop:
         return item
 
     def _model_line(self) -> str:
-        self._ensure_hub()
         with self._shared.lock:
             if not self._model_ready:
                 reply = self.submit(f"model use {self.model}")
@@ -531,34 +461,9 @@ class Loop:
                 if pid is None:
                     self._miss = CommandResult(result=reply.result or f"Could not start {spec.capability}")
                     return ""
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        arguments = _arguments(call.arguments)
         body: Any = {"name": spec.remote_name, "arguments": arguments} if spec.remote_name else arguments
         return CommandOffer("tool", spec.capability, pid=pid).pointer + _json_object(body)
-
-    def _ensure_hub(self) -> None:
-        """Ask MCPHub for its tools before the model sees them."""
-
-        with self._shared.lock:
-            if self._hub_ready:
-                return
-            self._load_hub()
-
-    def _load_hub(self) -> None:
-        reply = self.submit(CommandOffer("start", HUB_CAPABILITY).pointer)
-        if reply.error:
-            raise RuntimeError(_hub_failure(reply.error))
-        self._remember(_record(reply.result))
-        pid = self._pids.get(HUB_CAPABILITY)
-        if pid is None:
-            raise RuntimeError("MCPHub is not running")
-        reply = self.submit(
-            CommandOffer("tool", HUB_CAPABILITY, pid=pid).pointer
-            + _json_object({"name": "list"})
-        )
-        if reply.error:
-            raise RuntimeError(_hub_failure(reply.error))
-        self.tools = _merge_tools(self.tools, _hub_specs(reply.result))
-        self._hub_ready = True
 
     def _messages_for_model(self) -> list[dict[str, Any]]:
         """Drop tool calls that do not yet have a tool result."""
@@ -571,6 +476,9 @@ class Loop:
         visible: list[dict[str, Any]] = []
         for message in self.messages:
             content = message.get("content")
+            if message.get("role") == "user" and message.get("tool_call_id"):
+                visible.append({"role": "user", "content": content})
+                continue
             if message.get("role") != "assistant" or not isinstance(content, list):
                 visible.append(message)
                 continue
@@ -601,116 +509,6 @@ class Loop:
             name = str(row.get("capability") or "")
             if isinstance(pid, int) and pid > 0 and name:
                 self._pids[name] = pid
-
-    def _resume(self, question: str) -> None:
-        """Read the session once, then keep only the lines this process did not just say."""
-
-        if self.pid <= 0 or self._replayed:
-            if self._replayed:
-                self._index()
-            return
-        page = self._page()
-        self._replayed = True
-        if page is None:
-            return
-        self._open_session(page)
-        if self._session is None:
-            return
-        earlier = self._session.entries()
-        if earlier:
-            self.messages.extend(self._restore(page, earlier))
-        rows = rows_of(page)
-        fresh = self._session.note(rows)
-        skip = _question_real(fresh, rows, question)
-        extra = [
-            item
-            for item in fresh
-            if item.real != skip and _settled_row(rows, item.real)
-        ]
-        if extra:
-            self.messages.extend(self._session.messages(self._read, extra))
-
-    def _restore(self, page: dict[str, Any], earlier: list[Any]) -> list[dict[str, Any]]:
-        """Read the saved addresses. A list for some other memory is set aside."""
-
-        visible = {str(row.get("real") or "") for row in rows_of(page)}
-        if any(item.real not in visible for item in earlier):
-            try:
-                return self._session.messages(self._read, earlier)
-            except SessionError:
-                if self._session is not None:
-                    self._session.restart()
-                return []
-        return self._session.messages(self._read, earlier)
-
-    def _index(self, calls: list[tuple[str, str]] | None = None) -> None:
-        """Ask show for this process and append addresses that are new."""
-
-        with self._shared.lock:
-            self._index_rows(calls)
-
-    def _index_rows(self, calls: list[tuple[str, str]] | None = None) -> None:
-        if self.pid <= 0:
-            return
-        page = self._page()
-        if page is None:
-            return
-        self._open_session(page)
-        if self._session is None:
-            return
-        self._session.note(rows_of(page), calls or [])
-
-    def _open_session(self, page: dict[str, Any]) -> None:
-        if self._session is not None:
-            return
-        scope = scope_of(page)
-        if not scope:
-            return
-        self._session = SessionLog(self._session_root, scope, name=_memory_id(page) or scope)
-
-    def _page(self, real: str = "") -> dict[str, Any] | None:
-        selector = self._stored(real)
-        line = f"show {self.pid}" if not selector else f"show {self.pid} {selector}"
-        reply = self.submit(line)
-        if real and (reply.error or parse_page(reply.result) is None):
-            raise SessionError(f"This session line is gone: {real}")
-        if reply.error:
-            return None
-        page = parse_page(reply.result)
-        if real and (page is None or not _has_real(page, real)):
-            raise SessionError(f"This session line is gone: {real}")
-        return page
-
-    def _stored(self, real: str) -> str:
-        """A stored name, read through this session's scope.
-
-        ``message/1`` on the session list is the memory's own name. ``show``
-        with that bare name uses this process's page table instead. The scope
-        pointer, ``chat/message/1``, follows the stored row.
-        """
-
-        scope = "" if self._session is None else self._session.scope
-        if not real or not scope or real.startswith(f"{scope}/"):
-            return real
-        return f"{scope}/{real}"
-
-    def _read(self, real: str) -> dict[str, Any] | None:
-        page = self._page(real)
-        if page is None:
-            return None
-        for row in rows_of(page):
-            if str(row.get("real") or "") == real:
-                return row
-        return None
-
-
-def _memory_id(page: dict[str, Any]) -> str:
-    """The memory entity this page names. Empty on a page that has only a scope."""
-
-    facts = page.get("facts")
-    if not isinstance(facts, dict):
-        return ""
-    return str(facts.get("memory_id") or "")
 
 
 def _capability_root() -> Path:
@@ -748,50 +546,31 @@ def _text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _hub_failure(text: str) -> str:
-    message = str(text or "").strip()
-    if message.startswith("MCPHub is not running"):
-        return message
-    if not message:
-        return "MCPHub is not running"
-    return f"MCPHub is not running: {message}"
+def adopt_remote_tools(
+    existing: tuple[ToolSpec, ...],
+    capability: str,
+    rows: list[Any],
+) -> tuple[ToolSpec, ...]:
+    """Tools one capability is already serving. A shared call name fails."""
 
-
-def _record(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    try:
-        return json.loads(value) if value.strip() else {}
-    except json.JSONDecodeError:
-        return value
-
-
-def _hub_specs(result: Any) -> tuple[ToolSpec, ...]:
-    payload = _record(result)
-    if not isinstance(payload, dict) or payload.get("success") is not True:
-        message = str(payload.get("error") or "") if isinstance(payload, dict) else ""
-        raise RuntimeError(_hub_failure(message))
-    tools = payload.get("tools")
-    if not isinstance(tools, list) or not tools:
-        raise RuntimeError("MCPHub returned no tools")
     specs: list[ToolSpec] = []
-    taken: dict[str, str] = {}
-    for tool in tools:
-        if not isinstance(tool, dict):
-            raise RuntimeError("MCPHub returned no tools")
-        remote = str(tool.get("name") or "").strip()
+    seen: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f"{capability} returned no tool name")
+        remote = str(row.get("name") or "").strip()
         if not remote:
-            raise RuntimeError("MCPHub returned no tools")
+            raise ValueError(f"{capability} returned no tool name")
         name = _call_name(remote)
-        owner = taken.get(name)
-        if owner is not None:
-            raise ValueError(f"{remote} and {owner} share the call name {name}")
-        taken[name] = remote
-        parameters = tool.get("parameters")
+        previous = seen.get(name)
+        if previous is not None:
+            raise ValueError(f"{remote} and {previous} share the call name {name}")
+        seen[name] = remote
+        parameters = row.get("parameters")
         specs.append(ToolSpec(
-            capability=HUB_CAPABILITY,
+            capability=capability,
             name=name,
-            description=str(tool.get("description") or ""),
+            description=str(row.get("description") or ""),
             parameters=parameters if isinstance(parameters, dict) else {
                 "type": "object",
                 "properties": {},
@@ -799,13 +578,9 @@ def _hub_specs(result: Any) -> tuple[ToolSpec, ...]:
             aliases=(remote,) if remote != name else (),
             remote_name=remote,
         ))
-    return tuple(specs)
-
-
-def _merge_tools(existing: tuple[ToolSpec, ...], extra: tuple[ToolSpec, ...]) -> tuple[ToolSpec, ...]:
     taken = {tool.name: tool.capability for tool in existing}
     merged = list(existing)
-    for spec in extra:
+    for spec in specs:
         owner = taken.get(spec.name)
         if owner is not None:
             raise ValueError(f"{spec.remote_name or spec.name} and {owner} share the call name {spec.name}")
@@ -899,34 +674,183 @@ def _parse_turn(raw: Any) -> ModelTurn:
     return ModelTurn(blocks=(TextBlock(text=raw),))
 
 
-def _has_real(page: dict[str, Any], real: str) -> bool:
-    return any(str(row.get("real") or "") == real for row in rows_of(page))
+def parse_page(value: Any) -> dict[str, Any] | None:
+    """Validate a structured process page returned by the kernel."""
+
+    if isinstance(value, dict):
+        payload = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    else:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
-def _settled_row(rows: list[dict[str, Any]], real: str) -> bool:
-    """A trailing user line is still this turn, or another turn that has not finished."""
+def rows_of(page: dict[str, Any]) -> list[dict[str, Any]]:
+    """Memory rows on this page. A page with no memory has none."""
 
-    index = next((i for i, row in enumerate(rows) if str(row.get("real") or "") == real), -1)
-    if index < 0:
-        return False
-    if str(rows[index].get("kind") or "") != "user":
-        return True
-    return any(str(row.get("kind") or "") in {"model", "tool"} for row in rows[index + 1 :])
+    memory = page.get("memory")
+    if not isinstance(memory, dict):
+        return []
+    items = memory.get("items")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
 
 
-def _question_real(fresh: list[Any], rows: list[dict[str, Any]], question: str) -> str:
-    """The newest user row that is this sentence. It is already about to be said."""
+def _memory_row(message: dict[str, Any]) -> dict[str, str] | None:
+    """One memory line for a message this turn produced."""
 
-    bodies = {str(row.get("real") or ""): str(row.get("content") or "") for row in rows}
-    kinds = {str(row.get("real") or ""): str(row.get("kind") or "") for row in rows}
-    match = [
-        item
-        for item in fresh
-        if kinds.get(item.real) == "user" and bodies.get(item.real) == question
-    ]
-    if not match:
-        return ""
-    return max(match, key=lambda item: item.seq).real
+    role = str(message.get("role") or "")
+    if role == "tool" or (role == "user" and message.get("tool_call_id")):
+        payload = {
+            "type": "tool-result",
+            "request_id": str(message.get("tool_call_id") or ""),
+            "name": str(message.get("name") or ""),
+            "output": message.get("output", message.get("content")),
+        }
+        return {"kind": "tool", "content": json.dumps(payload, ensure_ascii=False)}
+    if role != "assistant":
+        return None
+    content = message.get("content")
+    reasoning = str(message.get("reasoning_content") or "")
+    if isinstance(content, list) or reasoning:
+        blocks: list[dict[str, Any]] = []
+        if reasoning:
+            blocks.append({"type": "reasoning", "text": reasoning})
+        if isinstance(content, list):
+            blocks.extend(block for block in content if isinstance(block, dict))
+        elif content:
+            blocks.append({"type": "text", "text": str(content)})
+        payload = {"type": "model_turn", "blocks": blocks, "finish_reason": "stop"}
+        return {"kind": "model", "content": json.dumps(payload, ensure_ascii=False)}
+    return {"kind": "model", "content": str(content or "")}
+
+
+def _messages_from_memory(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild model messages from memory rows."""
+
+    messages: list[dict[str, Any]] = []
+    for row in rows:
+        kind = str(row.get("kind") or "")
+        content = str(row.get("content") or "")
+        if kind == "system":
+            messages.append({"role": "system", "content": content})
+            continue
+        if kind == "user":
+            messages.append({"role": "user", "content": content})
+            continue
+        if kind == "model":
+            messages.append(_model_from_memory(content))
+            continue
+        if kind != "tool":
+            continue
+        restored = _tool_from_memory(content)
+        if restored is None:
+            messages.append({"role": "user", "content": content})
+            continue
+        call_id = str(restored.get("tool_call_id") or "")
+        if call_id and _holds_call(messages, call_id):
+            messages.append(restored)
+            continue
+        name = str(restored.get("name") or "")
+        output = restored.get("content")
+        messages.append({
+            "role": "user",
+            "content": f"{name} finished:\n{_text(output)}",
+            "tool_call_id": call_id,
+            "name": name,
+            "output": output,
+        })
+    return messages
+
+
+def _model_from_memory(content: str) -> dict[str, Any]:
+    payload: Any = None
+    if content.startswith("{"):
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            payload = None
+    turn = turn_from_payload(payload)
+    if turn is None:
+        return {"role": "assistant", "content": content}
+    calls = _named_calls(turn)
+    if calls:
+        return _assistant_message(_assistant_blocks(turn, calls), turn)
+    return _assistant_message(turn.text(), turn)
+
+
+def _tool_from_memory(content: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(content) if content.startswith("{") else None
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or payload.get("type") != "tool-result":
+        return None
+    message: dict[str, Any] = {
+        "role": "tool",
+        "content": payload.get("output"),
+        "tool_call_id": str(payload.get("request_id") or ""),
+    }
+    if payload.get("name"):
+        message["name"] = str(payload["name"])
+    return message
+
+
+def _holds_call(messages: list[dict[str, Any]], call_id: str) -> bool:
+    """Whether the latest assistant message still holds this tool call."""
+
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(block, dict)
+            and block.get("type") == "tool-call"
+            and str(block.get("id") or "") == call_id
+            for block in content
+        )
+    return False
+
+
+def _arguments(value: Any) -> dict[str, Any]:
+    """Tool arguments. A JSON object that arrived as text is still that object."""
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.strip() else {}
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _queued_signals(raw: Any) -> list[dict[str, Any]] | None:
+    """Signals the kernel returned instead of running the model. None for anything else."""
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else None
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, dict) or raw.get("type") != "signals":
+        return None
+    items = raw.get("items")
+    if not isinstance(items, list):
+        return None
+    return [item for item in items if isinstance(item, dict)]
 
 
 def _json_object(value: Any) -> str:

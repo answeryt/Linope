@@ -12,11 +12,14 @@ import queue
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
-from capability.agent_loop.linope.loop import CommandResult, Loop
+from capability.agent_loop.linope.loop import CommandResult, Loop, adopt_remote_tools
+from capability.tools.external_tools.mcp.mcp_tool_manager_plugin import discover_tools
 
 _WRITE = threading.Lock()
+_HUB_CAPABILITY = "tools.mcp_tool_manager"
+Discover = Callable[[], list[dict[str, Any]]]
 
 
 def main() -> None:
@@ -37,26 +40,61 @@ def main() -> None:
         _write({"event": "error", "error": "The startup message does not name this capability"})
         return
     pid = int(activation.get("pid") or 0)
+    settings = _settings(activation)
     try:
-        session = Loop(_settings(activation), _closed)
+        session = Loop(_without_hub(settings), _closed)
         session.bind(pid, str(activation.get("thread_id") or ""))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         _write({"event": "error", "error": str(exc)})
         return
     _write({"event": "ready", "pid": pid, "threads": True})
-    _Door(session).serve()
+    remote = _RemoteTools(_HUB_CAPABILITY) if _hub_enabled(settings) else None
+    _Door(session, remote).serve()
+
+
+class _RemoteTools:
+    """One list from MCPHub. Turns wait, and the tools are installed once."""
+
+    def __init__(self, capability: str, discover: Discover | None = None) -> None:
+        self.capability = capability
+        self._discover = discover or discover_tools
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+        self._error: BaseException | None = None
+        self._rows: list[dict[str, Any]] | None = None
+        self._installed = False
+        threading.Thread(target=self._fetch, name="linope-remote-tools", daemon=True).start()
+
+    def _fetch(self) -> None:
+        try:
+            self._rows = self._discover()
+        except Exception as exc:
+            self._error = exc
+        finally:
+            self._ready.set()
+
+    def install(self, session: Loop) -> None:
+        """Block until the list is in, then add those tools to the shared table."""
+
+        self._ready.wait()
+        with self._lock:
+            if self._installed:
+                return
+            if self._error is not None:
+                raise self._error
+            session.tools = adopt_remote_tools(session.tools, self.capability, self._rows or [])
+            self._installed = True
 
 
 class _Door:
-    """Read stdin on one thread and give each turn its own results."""
+    """Read stdin on one thread and give each turn the results marked with its thread."""
 
-    def __init__(self, session: Loop) -> None:
+    def __init__(self, session: Loop, remote: _RemoteTools | None = None) -> None:
         self.session = session
+        self.remote = remote
         self.inbox: queue.Queue[str | None] = queue.Queue()
         self.lock = threading.Lock()
         self.turns: dict[str, queue.Queue[CommandResult]] = {}
-        self.pending: dict[str, list[CommandResult]] = {}
-        self.running: set[str] = set()
 
     def serve(self) -> None:
         threading.Thread(target=self._read, name="linope-agent-stdin", daemon=True).start()
@@ -81,7 +119,7 @@ class _Door:
     def _join(self) -> None:
         while True:
             with self.lock:
-                if not self.running:
+                if not self.turns:
                     return
             time.sleep(0.01)
 
@@ -108,14 +146,15 @@ class _Door:
         if message.get("operation") != "load" or message.get("kind") != "message":
             _write({"event": "error", "error": "This process only accepts load message"})
             return
+        thread = str(message.get("thread") or "")
+        if not thread:
+            _write({"event": "error", "error": "This load has no thread"})
+            return
         body = message.get("body")
         question = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
-        thread = str(message.get("thread") or self.session.pid)
         turn = self._turn_for(thread)
         box = self._register(thread)
         turn.submit = _submit_for(box, thread)
-        with self.lock:
-            self.running.add(thread)
         threading.Thread(
             target=self._run,
             args=(turn, question, thread),
@@ -124,21 +163,16 @@ class _Door:
         ).start()
 
     def _turn_for(self, thread: str) -> Loop:
+        """The kernel names the turn. The leader id keeps the first loop."""
+
         leader = self.session.thread_id or str(self.session.pid)
-        with self.lock:
-            busy = leader in self.running or str(self.session.pid) in self.running
-        if thread in {leader, str(self.session.pid)} and not busy:
+        if thread == leader:
             return self.session
         return self.session.open_turn(thread)
 
     def _register(self, thread: str) -> queue.Queue[CommandResult]:
         box: queue.Queue[CommandResult] = queue.Queue()
         with self.lock:
-            early = list(self.pending.pop(thread, []))
-            if not self.turns:
-                early.extend(self.pending.pop("", []))
-            for item in early:
-                box.put(item)
             self.turns[thread] = box
         return box
 
@@ -149,22 +183,19 @@ class _Door:
         )
         thread = str(message.get("thread") or "")
         with self.lock:
-            if thread and thread in self.turns:
-                self.turns[thread].put(result)
-                return
-            if not thread and len(self.turns) == 1:
-                next(iter(self.turns.values())).put(result)
-                return
-            self.pending.setdefault(thread, []).append(result)
+            box = self.turns.get(thread)
+        if box is not None:
+            box.put(result)
 
     def _run(self, turn: Loop, question: str, thread: str) -> None:
         try:
+            if self.remote is not None:
+                self.remote.install(self.session)
             _run_turn(turn, question, thread)
         except Exception as exc:
             _write({"event": "error", "thread": thread, "error": str(exc)})
         finally:
             with self.lock:
-                self.running.discard(thread)
                 self.turns.pop(thread, None)
 
 
@@ -174,7 +205,6 @@ def _run_turn(session: Loop, question: str, thread: str) -> None:
         step = session.step()
         forks = step.get("forks")
         if forks:
-            session.note_issued(item.get("id") for item in forks)
             _write({
                 "event": "fork",
                 "thread": thread,
@@ -202,7 +232,12 @@ def _run_turn(session: Loop, question: str, thread: str) -> None:
         })
         done = session.land(_result_for(session))
         if done is not None:
-            _write({"event": "result", "thread": thread, "result": done})
+            _write({
+                "event": "result",
+                "thread": thread,
+                "result": done,
+                "rows": session.memory_rows(),
+            })
             return
 
 
@@ -260,6 +295,25 @@ def _settings(activation: dict[str, Any]) -> dict[str, Any]:
         return {}
     settings = context.get("settings")
     return settings if isinstance(settings, dict) else {}
+
+
+def _hub_enabled(settings: dict[str, Any]) -> bool:
+    names = settings.get("tools") or []
+    if not isinstance(names, list):
+        return False
+    return _HUB_CAPABILITY in [str(name) for name in names]
+
+
+def _without_hub(settings: dict[str, Any]) -> dict[str, Any]:
+    """The hub name enables MCPHub. It is not a tool the model can call."""
+
+    names = settings.get("tools") or []
+    if not isinstance(names, list):
+        return settings
+    kept = [name for name in names if str(name) != _HUB_CAPABILITY]
+    if len(kept) == len(names):
+        return settings
+    return {**settings, "tools": kept}
 
 
 def _write(payload: dict[str, Any]) -> None:

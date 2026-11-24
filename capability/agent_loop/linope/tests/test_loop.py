@@ -2,12 +2,30 @@
 
 import json
 from io import StringIO
-from pathlib import Path
 
 import pytest
 
 from capability.agent_loop.linope.loop import CommandResult, Loop
-from capability.session.session import SessionError, SessionLog
+
+
+def _drive(loop: Loop, question: str) -> str:
+    """Run one turn the way the door does, for a turn that does not fork."""
+
+    loop.prepare(question)
+    while True:
+        step = loop.step()
+        if step.get("forks") or step.get("await"):
+            raise RuntimeError("The kernel runs these tools")
+        line = str(step.get("line") or "")
+        if step.get("pc") == "wait_tool" and not line:
+            reply = loop._miss or CommandResult()
+        else:
+            reply = loop.submit(line)
+        if step.get("pc") == "ask_model" and reply.error:
+            raise RuntimeError(reply.error)
+        done = loop.land(reply)
+        if done is not None:
+            return done
 
 
 def _catalog() -> dict:
@@ -68,8 +86,9 @@ def test_a_tool_call_runs_and_the_next_reply_is_the_answer() -> None:
             return CommandResult(result="README.md\nsrc/")
         raise AssertionError(line)
 
-    answer = Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity="You are the linope agent.").ask(
-        "这个目录里有哪些文件？"
+    answer = _drive(
+        Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity="You are the linope agent."),
+        "这个目录里有哪些文件？",
     )
 
     assert answer == "目录里有 README.md 和一个 src 文件夹。"
@@ -77,6 +96,37 @@ def test_a_tool_call_runs_and_the_next_reply_is_the_answer() -> None:
     assert 'load tool 8 -- {"pattern": "*"}' in lines
     assert lines[-1].startswith("model run -- ")
     assert "--share" not in "\n".join(lines)
+
+
+def test_a_tool_call_keeps_arguments_that_arrive_as_text() -> None:
+    lines: list[str] = []
+
+    def submit(line: str) -> CommandResult:
+        lines.append(line)
+        if line.startswith("model use "):
+            return CommandResult(result={"configured": True})
+        if line == "process start tools.glob":
+            return CommandResult(result={"processes": [{"pid": 8, "capability": "tools.glob"}]})
+        if line == 'load tool 8 -- {"pattern": "*"}':
+            return CommandResult(result="README.md")
+        if line.startswith("model run -- "):
+            if line.count("model run -- ") and "README.md" not in line:
+                return CommandResult(result={
+                    "type": "model_turn",
+                    "blocks": [{
+                        "type": "tool-call",
+                        "id": "call-1",
+                        "name": "tools_glob",
+                        "arguments": "{\"pattern\": \"*\"}",
+                    }],
+                })
+            return CommandResult(result="目录里有 README.md。")
+        raise AssertionError(line)
+
+    answer = _drive(Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity=""), "有哪些文件？")
+
+    assert answer == "目录里有 README.md。"
+    assert 'load tool 8 -- {"pattern": "*"}' in lines
 
 
 def test_a_text_reply_does_not_start_a_tool() -> None:
@@ -93,8 +143,9 @@ def test_a_text_reply_does_not_start_a_tool() -> None:
             return CommandResult(result="目录里有 README.md。")
         raise AssertionError(line)
 
-    answer = Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity="You are the linope agent.").ask(
-        "这个目录里有哪些文件？"
+    answer = _drive(
+        Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity="You are the linope agent."),
+        "这个目录里有哪些文件？",
     )
 
     assert answer == "目录里有 README.md。"
@@ -122,27 +173,38 @@ def test_a_tool_error_is_given_back_to_the_model() -> None:
             return CommandResult(result="The file is blocked.")
         raise AssertionError(line)
 
-    answer = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="").ask("read note.txt")
+    answer = _drive(Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity=""), "read note.txt")
 
     assert answer == "The file is blocked."
     assert asked["n"] == 2
 
 
 def test_a_second_question_sees_the_first_turn() -> None:
+    saved: list[dict] = []
     bodies: list[dict] = []
 
     def submit(line: str) -> CommandResult:
         if line.startswith("model use "):
             return CommandResult(result={"configured": True})
+        if line.startswith("show "):
+            return CommandResult(result={"memory": {"items": saved}})
         if line.startswith("model run -- "):
             bodies.append(json.loads(line.split(" -- ", 1)[1]))
             return CommandResult(result="hello")
         raise AssertionError(line)
 
     loop = Loop(_settings(["tools.glob"]), submit, catalog=_catalog(), identity="")
-    assert loop.ask("first") == "hello"
-    assert loop.ask("second") == "hello"
-    messages = bodies[1]["messages"]
+    loop.bind(41, "41")
+    loop._model_ready = True
+    assert _drive(loop, "first") == "hello"
+    assert loop.memory_rows() == []
+    saved.extend([
+        {"kind": "user", "content": "first", "seq": 1, "real": "message/0"},
+        {"kind": "model", "content": "hello", "seq": 2, "real": "message/1"},
+    ])
+    assert _drive(loop, "second") == "hello"
+    messages = bodies[-1]["messages"]
+    assert messages[-3] == {"role": "user", "content": "first"}
     assert messages[-2] == {"role": "assistant", "content": "hello"}
     assert messages[-1] == {"role": "user", "content": "second"}
 
@@ -182,10 +244,10 @@ def test_two_tool_calls_open_two_threads() -> None:
         ],
     }, ensure_ascii=False))) is None
     forks = loop.step()
-    assert [item["id"] for item in forks["forks"]] == ["41.2", "41.3"]
+    assert [item["id"] for item in forks["forks"]] == ["", ""]
+    assert [item["registers"]["call_id"] for item in forks["forks"]] == ["call-1", "call-2"]
     assert "pc" not in forks["forks"][0]
-    loop.note_issued(item["id"] for item in forks["forks"])
-    loop.land_signal([{"thread": "41.3", "result": "sunny", "error": ""}])
+    loop.land_signal([{"call_id": "call-2", "result": "sunny", "error": ""}])
     assert loop.step()["pc"] == "ask_model"
 
 
@@ -225,10 +287,9 @@ def test_the_first_signal_asks_the_model_before_the_other_tool() -> None:
         ],
     }, ensure_ascii=False))) is None
     forks = loop.step()
-    assert [item["id"] for item in forks["forks"]] == ["41.2", "41.3"]
-    loop.note_issued(item["id"] for item in forks["forks"])
-    loop.land_signal([{"thread": "41.3", "result": "sunny", "error": ""}])
-    assert [item["id"] for item in loop._forks] == ["41.2"]
+    assert [item["registers"]["call_id"] for item in forks["forks"]] == ["call-1", "call-2"]
+    loop.land_signal([{"call_id": "call-2", "result": "sunny", "error": ""}])
+    assert [call_id for call_id, _name in loop._unanswered()] == ["call-1"]
     weather = loop.step()
     assert weather["pc"] == "ask_model"
     weather_messages = json.dumps(json.loads(weather["line"].split(" -- ", 1)[1])["messages"], ensure_ascii=False)
@@ -236,13 +297,60 @@ def test_the_first_signal_asks_the_model_before_the_other_tool() -> None:
     assert "call-1" not in weather_messages
     assert loop.land(CommandResult(result="先看到晴。")) is None
     assert loop.step().get("await") is True
-    loop.land_signal([{"thread": "41.2", "result": "note", "error": ""}])
+    loop.land_signal([{"call_id": "call-1", "result": "note", "error": ""}])
     reading = loop.step()
     assert reading["pc"] == "ask_model"
     reading_messages = json.loads(reading["line"].split(" -- ", 1)[1])["messages"]
     assert reading_messages[-1] == {"role": "user", "content": "tools.read finished:\nnote"}
     assert "call-1" not in json.dumps(reading_messages, ensure_ascii=False)
     assert loop.land(CommandResult(result="明天记得带伞。")) == "明天记得带伞。"
+
+
+def test_a_queued_signal_lands_before_the_model_is_asked_again() -> None:
+    catalog = _catalog()
+    catalog["tools.weather"] = {
+        "schemas": [{
+            "name": "weather",
+            "description": "Weather.",
+            "parameters": {"type": "object", "properties": {"day": {"type": "string"}}},
+        }],
+    }
+
+    def submit(line: str) -> CommandResult:
+        if line.startswith("show "):
+            return CommandResult(result="{}")
+        raise AssertionError(line)
+
+    loop = Loop(
+        {"model": "model.openai_chat_model", "tools": ["tools.read", "tools.weather"]},
+        submit,
+        catalog=catalog,
+        identity="",
+    )
+    loop.bind(41, "41")
+    loop._model_ready = True
+    loop._pids["tools.read"] = 8
+    loop._pids["tools.weather"] = 9
+    loop.prepare("今天天气怎么样，帮我分析 Linope。")
+    assert loop.land(CommandResult(result=json.dumps({
+        "type": "model_turn",
+        "blocks": [
+            {"type": "tool-call", "id": "call-1", "name": "tools.read", "arguments": {"file_path": "note.txt"}},
+            {"type": "tool-call", "id": "call-2", "name": "tools.weather", "arguments": {"day": "today"}},
+        ],
+    }, ensure_ascii=False))) is None
+    loop.step()
+    loop.land_signal([{"call_id": "call-2", "result": "sunny", "error": ""}])
+    assert loop.step()["pc"] == "ask_model"
+    assert loop.land(CommandResult(result={
+        "type": "signals",
+        "items": [{"call_id": "call-1", "result": "note", "error": ""}],
+    })) is None
+    messages = json.loads(loop.step()["line"].split(" -- ", 1)[1])["messages"]
+    assert {"role": "tool", "name": "tools.weather", "tool_call_id": "call-2", "content": "sunny"} in messages
+    assert {"role": "tool", "name": "tools.read", "tool_call_id": "call-1", "content": "note"} in messages
+    assert not any("finished:" in str(item.get("content") or "") for item in messages)
+    assert loop.land(CommandResult(result="目录里有这些。")) == "目录里有这些。"
 
 
 def test_the_next_model_line_keeps_the_reasoning() -> None:
@@ -270,9 +378,8 @@ def test_the_next_model_line_keeps_the_reasoning() -> None:
             {"type": "tool-call", "id": "call-2", "name": "tools.glob", "arguments": {"pattern": "*.json"}},
         ],
     })) is None
-    forks = loop.step()
-    loop.note_issued(item["id"] for item in forks["forks"])
-    loop.land_signal([{"thread": forks["forks"][0]["id"], "result": "tools.read", "error": ""}])
+    loop.step()
+    loop.land_signal([{"call_id": "call-1", "result": "tools.read", "error": ""}])
     messages = json.loads(loop.step()["line"].split(" -- ", 1)[1])["messages"]
     assistant = next(item for item in messages if item["role"] == "assistant")
     assert assistant["reasoning_content"] == "read the file first"
@@ -307,15 +414,16 @@ def test_the_stdio_door_returns_the_model_text(monkeypatch) -> None:
                 },
             },
         }),
-        json.dumps({"operation": "load", "kind": "message", "body": "hi"}),
-        json.dumps({"event": "command_result", "result": "", "error": ""}),
+        json.dumps({"operation": "load", "kind": "message", "thread": "4", "body": "hi"}),
+        json.dumps({"event": "command_result", "thread": "4", "result": "", "error": ""}),
         json.dumps({
             "event": "command_result",
+            "thread": "4",
             "result": {"facts": {"pid": 4}, "links": []},
             "error": "",
         }),
-        json.dumps({"event": "command_result", "result": "hello", "error": ""}),
-        json.dumps({"event": "command_result", "result": "", "error": ""}),
+        json.dumps({"event": "command_result", "thread": "4", "result": "hello", "error": ""}),
+        json.dumps({"event": "command_result", "thread": "4", "result": "", "error": ""}),
     ]) + "\n")
     outbound = StringIO()
     monkeypatch.setattr(door.sys, "stdin", inbound)
@@ -333,14 +441,15 @@ def test_the_stdio_door_returns_the_model_text(monkeypatch) -> None:
     assert lines[0]["threads"] is True
     assert lines[-1]["event"] == "result"
     assert lines[-1]["result"] == "hello"
+    assert lines[-1]["rows"] == []
     assert lines[-1]["thread"] == "4"
     assert any(item.get("event") == "command" and item.get("line") == "show 4" for item in lines)
 
 
-def test_two_turns_keep_their_own_messages_until_each_finishes() -> None:
+def test_an_open_turn_does_not_see_another_open_turn() -> None:
     def submit(line: str) -> CommandResult:
         if line.startswith("show ") or line.startswith("model use "):
-            return CommandResult(result="{}")
+            return CommandResult(result={})
         raise AssertionError(line)
 
     loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="")
@@ -354,17 +463,6 @@ def test_two_turns_keep_their_own_messages_until_each_finishes() -> None:
     assert "read" not in json.dumps(other.messages, ensure_ascii=False)
     assert other.land(CommandResult(result="hi")) == "hi"
     assert "hello" not in json.dumps(loop.messages, ensure_ascii=False)
-    assert loop.land(CommandResult(result="note")) is None
-    assert loop.land(CommandResult(result="The note.")) == "The note."
-    third = loop.open_turn("41.t2")
-    third.prepare("next")
-    assert [item["content"] for item in third.messages[:2]] == ["hello", "hi"]
-    tail = third.messages[2:-1]
-    assert [item["role"] for item in tail] == ["user", "assistant", "tool", "assistant"]
-    assert tail[2]["content"] == "note"
-    assert tail[2]["tool_call_id"] == "call-1"
-    assert tail[0]["content"] == "read"
-    assert tail[-1]["content"] == "The note."
 
 
 def test_two_tools_that_share_a_call_name_fail() -> None:
@@ -386,18 +484,55 @@ def test_a_configured_tool_without_a_schema_fails() -> None:
         )
 
 
+def _hub_rows() -> list[dict]:
+    return [{
+        "name": "time-get_current_time",
+        "description": "Current time",
+        "parameters": {
+            "type": "object",
+            "properties": {"timezone": {"type": "string"}},
+        },
+    }, {
+        "name": "fetch-fetch",
+        "description": "Fetch a page",
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    }]
+
+
+def test_the_hub_name_is_not_handed_to_the_loop() -> None:
+    from capability.agent_loop.linope.__main__ import _without_hub
+
+    settings = _without_hub(_settings(["tools.read", "tools.mcp_tool_manager"]))
+    loop = Loop(settings, lambda _line: CommandResult(), catalog=_catalog(), identity="")
+    assert [tool.capability for tool in loop.tools] == ["tools.read"]
+
+
 def test_mcp_tools_fail_when_the_hub_is_down() -> None:
-    loop = Loop(
-        _settings(["tools.mcp_tool_manager"]),
-        lambda _line: CommandResult(),
-        catalog={"tools.mcp_tool_manager": {}},
-        identity="",
-    )
+    from capability.agent_loop.linope.__main__ import _RemoteTools
+
+    calls = {"n": 0}
+
+    def discover() -> list[dict]:
+        calls["n"] += 1
+        raise RuntimeError("MCPHub is not running at http://127.0.0.1:3000/mcp")
+
+    loop = Loop(_settings([]), lambda _line: CommandResult(), catalog={}, identity="")
+    remote = _RemoteTools("tools.mcp_tool_manager", discover)
     with pytest.raises(RuntimeError, match="MCPHub is not running"):
-        loop.ask("现在几点？")
+        remote.install(loop)
+    with pytest.raises(RuntimeError, match="MCPHub is not running"):
+        remote.install(loop)
+    assert calls["n"] == 1
+    assert loop.tools == ()
 
 
 def test_a_hub_tool_is_called_with_its_name() -> None:
+    from capability.agent_loop.linope.__main__ import _RemoteTools
+
     lines: list[str] = []
     asked = {"n": 0}
 
@@ -405,26 +540,6 @@ def test_a_hub_tool_is_called_with_its_name() -> None:
         lines.append(line)
         if line == "process start tools.mcp_tool_manager":
             return CommandResult(result={"processes": [{"pid": 12, "capability": "tools.mcp_tool_manager"}]})
-        if line == 'load tool 12 -- {"name": "list"}':
-            return CommandResult(result=json.dumps({
-                "success": True,
-                "tools": [{
-                    "name": "time-get_current_time",
-                    "description": "Current time",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"timezone": {"type": "string"}},
-                    },
-                }, {
-                    "name": "fetch-fetch",
-                    "description": "Fetch a page",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"url": {"type": "string"}},
-                        "required": ["url"],
-                    },
-                }],
-            }))
         if line == "model use model.openai_chat_model":
             return CommandResult(result={"configured": True})
         if line.startswith("model run -- "):
@@ -438,189 +553,104 @@ def test_a_hub_tool_is_called_with_its_name() -> None:
             return CommandResult(result="2026-11-20T00:00:00Z")
         raise AssertionError(line)
 
-    answer = Loop(
-        _settings(["tools.mcp_tool_manager"]),
-        submit,
-        catalog={"tools.mcp_tool_manager": {}},
-        identity="",
-    ).ask("现在几点？")
+    loop = Loop(_settings([]), submit, catalog={}, identity="")
+    remote = _RemoteTools("tools.mcp_tool_manager", _hub_rows)
+    remote.install(loop)
+    remote.install(loop)
+    answer = _drive(loop, "现在几点？")
 
     assert answer == "现在是 UTC 零点。"
+    assert lines[0] == "model use model.openai_chat_model"
+    body = json.loads(lines[1].split(" -- ", 1)[1])
+    assert [tool["name"] for tool in body["tools"]] == ["time-get_current_time", "fetch-fetch"]
+    assert '"name": "list"' not in "\n".join(lines)
     assert lines.count("process start tools.mcp_tool_manager") == 1
+    assert lines.index("process start tools.mcp_tool_manager") > 1
 
 
-def _row(seq: int, real: str, kind: str, content: str) -> dict:
-    return {"seq": seq, "real": real, "kind": kind, "content": content, "address": real}
-
-
-def _memory_page(items: list[dict]) -> str:
-    return json.dumps({
-        "facts": {"pid": 4},
-        "links": [{"rel": "memory", "resource": "chat"}],
-        "memory": {"system": "", "items": items},
-    }, ensure_ascii=False)
-
-
-def test_show_appends_new_addresses_and_a_new_process_reads_them(tmp_path: Path) -> None:
-    user = _row(1, "message/0", "user", "read note")
-    tool = _row(2, "artifact/0", "tool", "note")
-    answer = _row(3, "message/1", "model", "The file is note.")
-    pages = [
-        _memory_page([user]),
-        _memory_page([user]),
-        _memory_page([user, tool]),
-        _memory_page([user, tool]),
-    ]
-    shown = {"n": 0}
+def test_a_turn_returns_the_tool_rows_it_produced() -> None:
+    asked = {"n": 0}
 
     def submit(line: str) -> CommandResult:
-        if line.startswith("show "):
-            page = pages[shown["n"]]
-            shown["n"] += 1
-            return CommandResult(result=page)
+        if line.startswith("show ") or line.startswith("model use "):
+            return CommandResult(result={})
         if line.startswith("model run -- "):
-            if shown["n"] < 3:
+            asked["n"] += 1
+            if asked["n"] == 1:
                 return CommandResult(result=_turn("tools.read", {"file_path": "note.txt"}))
             return CommandResult(result="The file is note.")
         if line.startswith("load tool "):
             return CommandResult(result="note")
         raise AssertionError(line)
 
-    first = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="", session_root=tmp_path)
-    first.bind(4, "4.1")
-    first._model_ready = True
-    first._pids["tools.read"] = 8
-    assert first.ask("read note") == "The file is note."
-
-    text = (tmp_path / ".linope" / "sessions" / "chat.jsonl").read_text(encoding="utf-8")
-    assert "read note" not in text
-    assert "The file is note." not in text
-    assert '"content"' not in text
-    saved = [json.loads(line) for line in text.splitlines()]
-    assert saved[0]["scope"] == "chat"
-    assert "pid" not in saved[0]
-    assert saved[1] == {"seq": 1, "real": "message/0", "kind": "user"}
-    assert saved[2] == {
-        "seq": 2,
-        "real": "artifact/0",
-        "kind": "tool",
-        "tool_call_id": "call-1",
+    loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="")
+    loop.bind(4, "4")
+    loop._model_ready = True
+    loop._pids["tools.read"] = 8
+    assert _drive(loop, "read note") == "The file is note."
+    rows = loop.memory_rows()
+    assert [row["kind"] for row in rows] == ["model", "tool"]
+    model = json.loads(rows[0]["content"])
+    assert model["blocks"][-1]["id"] == "call-1"
+    assert model["blocks"][-1]["name"] == "tools.read"
+    assert json.loads(rows[1]["content"]) == {
+        "type": "tool-result",
+        "request_id": "call-1",
         "name": "tools.read",
+        "output": "note",
     }
 
+
+def test_a_new_turn_reads_tool_rows_and_drops_the_unfinished_question() -> None:
+    model_row = json.dumps({
+        "type": "model_turn",
+        "blocks": [{
+            "type": "tool-call",
+            "id": "call-1",
+            "name": "tools.read",
+            "arguments": {"file_path": "note.txt"},
+        }],
+        "finish_reason": "stop",
+    }, ensure_ascii=False)
+    tool_row = json.dumps({
+        "type": "tool-result",
+        "request_id": "call-1",
+        "name": "tools.read",
+        "output": "note",
+    }, ensure_ascii=False)
+    saved = [
+        {"kind": "user", "content": "read note", "seq": 1, "real": "message/0"},
+        {"kind": "model", "content": model_row, "seq": 2, "real": "message/1"},
+        {"kind": "tool", "content": tool_row, "seq": 3, "real": "artifact/0"},
+        {"kind": "model", "content": "The file is note.", "seq": 4, "real": "message/2"},
+        {"kind": "user", "content": "again", "seq": 5, "real": "message/3"},
+    ]
     bodies: list[dict] = []
 
-    def resume(line: str) -> CommandResult:
-        if line == "show 5 chat/message/0":
-            return CommandResult(result=_memory_page([user]))
-        if line == "show 5 chat/artifact/0":
-            return CommandResult(result=_memory_page([tool]))
-        if line == "show 5 chat/message/1":
-            return CommandResult(result=_memory_page([answer]))
-        if line == "show 5":
-            return CommandResult(result=_memory_page([
-                user,
-                tool,
-                answer,
-                _row(4, "message/2", "user", "again"),
-            ]))
+    def submit(line: str) -> CommandResult:
+        if line.startswith("show "):
+            return CommandResult(result={"memory": {"items": saved}})
         if line.startswith("model run -- "):
             bodies.append(json.loads(line.split(" -- ", 1)[1]))
             return CommandResult(result="ok")
         raise AssertionError(line)
 
-    second = Loop(_settings(["tools.read"]), resume, catalog=_catalog(), identity="", session_root=tmp_path)
-    second.bind(5, "5.1")
-    second._model_ready = True
-    assert second.ask("again") == "ok"
+    loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="")
+    loop.bind(5, "5")
+    loop._model_ready = True
+    assert _drive(loop, "again") == "ok"
     assert bodies[0]["messages"] == [
         {"role": "user", "content": "read note"},
+        {
+            "role": "assistant",
+            "content": [{
+                "type": "tool-call",
+                "id": "call-1",
+                "name": "tools.read",
+                "arguments": {"file_path": "note.txt"},
+            }],
+        },
         {"role": "tool", "content": "note", "tool_call_id": "call-1", "name": "tools.read"},
         {"role": "assistant", "content": "The file is note."},
         {"role": "user", "content": "again"},
     ]
-
-
-def test_two_memories_keep_separate_session_files(tmp_path: Path) -> None:
-    def page(memory_id: str, question: str) -> str:
-        return json.dumps({
-            "facts": {"pid": 4, "memory_id": memory_id},
-            "links": [{"rel": "memory", "resource": "chat"}],
-            "memory": {"system": "", "items": [_row(1, "message/0", "user", question)]},
-        }, ensure_ascii=False)
-
-    def ask(memory_id: str, question: str) -> None:
-        def submit(line: str) -> CommandResult:
-            if line.startswith("show "):
-                return CommandResult(result=page(memory_id, question))
-            if line.startswith("model run -- "):
-                return CommandResult(result="ok")
-            raise AssertionError(line)
-
-        loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="", session_root=tmp_path)
-        loop.bind(4, "4")
-        loop._model_ready = True
-        assert loop.ask(question) == "ok"
-
-    ask("memory-a", "one")
-    ask("memory-b", "two")
-    first = tmp_path / ".linope" / "sessions" / "memory-a.jsonl"
-    second = tmp_path / ".linope" / "sessions" / "memory-b.jsonl"
-    assert first.is_file()
-    assert second.is_file()
-    assert "message/0" in first.read_text(encoding="utf-8")
-    assert json.loads(first.read_text(encoding="utf-8").splitlines()[0])["scope"] == "chat"
-    assert (tmp_path / ".linope" / "sessions" / "chat.jsonl").exists() is False
-
-
-def test_a_missing_indexed_line_fails_before_the_model_is_asked(tmp_path: Path) -> None:
-    SessionLog(tmp_path, "chat", clock=lambda: "2026-11-09T00:00:00Z", ids=lambda: "s1").note(
-        [{"seq": 1, "real": "message/0", "kind": "user"}]
-    )
-    lines: list[str] = []
-
-    def submit(line: str) -> CommandResult:
-        lines.append(line)
-        if line == "show 6":
-            return CommandResult(result=_memory_page([_row(1, "message/0", "user", "hi")]))
-        if line.startswith("show 6 "):
-            return CommandResult(result="{}")
-        raise AssertionError(line)
-
-    loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="", session_root=tmp_path)
-    loop.bind(6, "6.1")
-    loop._model_ready = True
-    with pytest.raises(SessionError, match="message/0"):
-        loop.ask("next")
-    assert lines == ["show 6", "show 6 chat/message/0"]
-
-
-def test_a_foreign_index_is_set_aside_and_the_question_is_asked(tmp_path: Path) -> None:
-    SessionLog(tmp_path, "chat", clock=lambda: "2026-11-09T00:00:00Z", ids=lambda: "s1").note([
-        {"seq": 1, "real": "message/0", "kind": "user"},
-        {"seq": 2, "real": "message/1", "kind": "model"},
-    ])
-    bodies: list[dict] = []
-
-    def submit(line: str) -> CommandResult:
-        if line == "show 8":
-            return CommandResult(result=_memory_page([_row(1, "message/0", "user", "你好")]))
-        if line == "show 8 chat/message/0":
-            return CommandResult(result=_memory_page([_row(1, "message/0", "user", "你好")]))
-        if line == "show 8 chat/message/1":
-            return CommandResult(result="{}")
-        if line.startswith("model run -- "):
-            bodies.append(json.loads(line.split(" -- ", 1)[1]))
-            return CommandResult(result="ok")
-        raise AssertionError(line)
-
-    loop = Loop(_settings(["tools.read"]), submit, catalog=_catalog(), identity="", session_root=tmp_path)
-    loop.bind(8, "8.1")
-    loop._model_ready = True
-    assert loop.ask("你好") == "ok"
-    assert bodies[0]["messages"] == [{"role": "user", "content": "你好"}]
-    saved = [
-        json.loads(line)
-        for line in (tmp_path / ".linope" / "sessions" / "chat.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    assert [item.get("real") for item in saved[1:]] == ["message/0"]

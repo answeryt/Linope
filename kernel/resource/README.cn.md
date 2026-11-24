@@ -12,7 +12,7 @@
 
 [`memory/`](memory/README.cn.md) 是一份逻辑记忆。资源实体只保存 scope 句柄。行在 `MemoryStore`，页表在 `MemoryRuntime`。
 
-一行的真名是 `message/0`、`task/0`、`artifact/0` 或 `system`。默认后端是进程内存储。`linope memory backend` 可以选择 `sqlite` 并给出路径。模型默认只收到 system 提示词和当前用户消息，再用地址读取旧行。
+一行的真名是 `message/0`、`task/0`、`artifact/0` 或 `system`。默认后端是进程内存储。`linope memory backend` 可以选择 `local` 并给出文件夹。模型默认只收到 system 提示词和当前用户消息，再用地址读取旧行。
 
 持有该实体的每个进程共用这些真名。一个进程自己的 `message/0` 可以指向另一个真名。谁可以读或写，在 [`kernel/scheduler`](../scheduler/README.cn.md)。
 

@@ -547,7 +547,7 @@ def _answer_command(
             result = on_command(line)
         except Exception as exc:
             error = str(exc) or type(exc).__name__
-    process.reply_command(result, error)
+    process.reply_command(result, error, str(reply.get("thread") or ""))
 
 
 def _write_command_result(

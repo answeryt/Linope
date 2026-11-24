@@ -19,7 +19,7 @@ is [`kernel/load_balancing`](../load_balancing/README.md).
 
 The shared notebook is one memory entity. [`kernel/resource`](../resource/README.md) makes that entity when this launch names `memory` in `shared` and the claims use the same scope. The rows and their stored names live in [`kernel/resource/memory`](../resource/memory/README.md). This directory keeps a private address list for each process that holds the entity.
 
-`MemoryRuntime` stores those lists in a per-process page table, keyed by process id and resource id, then by class. The page table can be saved with the memory backend. Releasing the runtime cache leaves committed rows in place. `remember` asks the memory module to append one row. The stored name comes back as `message/0`, then `message/1`, from the entity's own counter. `_map_real` appends that stored name onto every current holder whose `space` includes the class:
+`MemoryRuntime` stores those lists in a per-process page table, keyed by process id and resource id, then by class. The page table is kept for this run and cleared when the store opens again. Releasing the runtime cache leaves committed rows in place. `remember` asks the memory module to append one row. The stored name comes back as `message/0`, then `message/1`, from the entity's own counter. `_map_real` appends that stored name onto every current holder whose `space` includes the class:
 
 ```python
 for pid, grant in holders:

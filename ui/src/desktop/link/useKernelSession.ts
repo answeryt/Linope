@@ -26,8 +26,12 @@ type Action =
   | { type: "error"; text: string; conversationId?: string }
   | { type: "unavailable"; text: string };
 
-const conversationPhase = new Map<string, { requestId: string; stage: "sending" | "live" }>();
+const submittedQueue = new Map<string, { fingerprint: string; requestIds: string[] }>();
 let conversationSeq = 0;
+
+function queueFingerprint(queue: string[]): string {
+  return queue.join("\0");
+}
 
 function reduceSession(state: UiState, action: Action): UiState {
   switch (action.type) {
@@ -172,40 +176,38 @@ export function useKernelSession() {
 
   useEffect(() => {
     if (state.connection === "closed") {
-      conversationPhase.clear();
+      submittedQueue.clear();
       return;
     }
-    const active = new Set(state.activeTurns.values());
-    for (const [id, phase] of conversationPhase) {
-      const conversation = state.conversations.find((item) => item.id === id);
-      if (!conversation) {
-        conversationPhase.delete(id);
-        continue;
-      }
-      const live = Boolean(conversation.pid) && active.has(conversation.pid);
-      if (phase.stage === "sending" && live) {
-        conversationPhase.set(id, { requestId: phase.requestId, stage: "live" });
-      }
-      if (phase.stage === "live" && !live) conversationPhase.delete(id);
-      if (
-        phase.stage === "sending" &&
-        state.actionStates.get(phase.requestId)?.status === "failed"
-      ) {
-        conversationPhase.delete(id);
-      }
+    const liveIds = new Set(state.conversations.map((item) => item.id));
+    for (const id of submittedQueue.keys()) {
+      if (!liveIds.has(id)) submittedQueue.delete(id);
     }
     if (!api) return;
     for (const conversation of state.conversations) {
-      const text = conversation.queue[0];
-      if (!conversation.pid || !text) continue;
-      if (conversationPhase.has(conversation.id)) continue;
-      if (active.has(conversation.pid)) continue;
-      const requestId = api.process.send({ pid: Number(conversation.pid), text });
-      conversationPhase.set(conversation.id, { requestId, stage: "sending" });
-      dispatch({ type: "dequeue", conversationId: conversation.id });
-      dispatch({ type: "bind-request", conversationId: conversation.id, requestId });
+      const fingerprint = queueFingerprint(conversation.queue);
+      const submitted = submittedQueue.get(conversation.id);
+      if (!conversation.pid || conversation.queue.length === 0) {
+        submittedQueue.delete(conversation.id);
+        continue;
+      }
+      const failed =
+        submitted?.requestIds.some(
+          (requestId) => state.actionStates.get(requestId)?.status === "failed",
+        ) ?? false;
+      if (submitted?.fingerprint === fingerprint && !failed) continue;
+      const requestIds = conversation.queue.map((text) =>
+        api.process.send({ pid: Number(conversation.pid), text }),
+      );
+      submittedQueue.set(conversation.id, { fingerprint, requestIds });
+      for (const requestId of requestIds) {
+        dispatch({ type: "bind-request", conversationId: conversation.id, requestId });
+      }
+      for (let count = 0; count < requestIds.length; count += 1) {
+        dispatch({ type: "dequeue", conversationId: conversation.id });
+      }
     }
-  }, [api, state.actionStates, state.activeTurns, state.connection, state.conversations, state.requestConversation]);
+  }, [api, state.actionStates, state.connection, state.conversations]);
 
   const stop = useCallback(() => {
     api?.stop();
@@ -281,6 +283,20 @@ export function useKernelSession() {
     [api],
   );
 
+  const configureMemory = useCallback(
+    (input: Parameters<LinopeKernelApi["memory"]["configure"]>[0]) => {
+      if (!api) {
+        dispatch({
+          type: "unavailable",
+          text: "当前运行环境没有 Electron 后端连接能力。",
+        });
+        return false;
+      }
+      return api.memory.configure(input);
+    },
+    [api],
+  );
+
   const loadModelCatalog = useCallback(() => {
     if (!api) {
       dispatch({
@@ -294,6 +310,7 @@ export function useKernelSession() {
 
   return {
     actions: {
+      configureMemory,
       configureModel,
       createProcess,
       loadModelCatalog,

@@ -2,9 +2,9 @@
 
 English | [中文](README.cn.md)
 
- One user message is one turn. Inside the turn the loop asks the model, and if the model asks for a tool it runs that tool and asks again. A reply with no tool call ends the turn.
+One user message is one turn. Inside the turn the loop asks the model, and if the model asks for a tool it runs that tool and asks again. A reply with no tool call, and no tool still running, ends the turn.
 
-The loop does not call a provider, read a file, or run a shell. It writes the command lines the kernel already accepts. The kernel starts the peer, runs the line, and writes the text back.
+The loop does not call a provider, read a file, or run a shell. It does not import the kernel scheduler. It writes a command line and reads the reply. The kernel starts the peer, runs the line, and writes the text back. Several tools run together; the loop does not run them one by one.
 
 | Step | Command line |
 |---|---|
@@ -19,22 +19,17 @@ sees a function name the chat API accepts. A dot in the capability name
 becomes an underscore, so `tools.read` is sent as `tools_read`. The loop still
 starts tools by capability name. The parameters are the schemas already stored
 in the capability table. A configured tool with no schema fails when this
-process starts. `tools.mcp_tool_manager` is listed from MCPHub on the first
-question, and its call body is the tool name plus the arguments. A question
-fails when MCPHub is not running.
+process starts. `tools.mcp_tool_manager` names MCPHub. After `ready`, the
+process asks MCPHub for the tools it is serving and installs them before
+`prepare`. The loop then starts that capability like any other tool, and the
+call body is the remote tool name plus the arguments. When MCPHub is down,
+the turn fails and the process stays ready.
 
-Tool calls run one at a time, in the order the model gave them. The command door accepts one line and returns one result. A command error comes back as the tool result, and the loop asks the model again.
+Several tools run together. The kernel numbers each tool thread and keeps the call id in its registers. Each finished tool comes back as one signal, and the loop writes the next `model run` without waiting for the rest. Finished results that are still queued come back before that model run starts. A command error is that tool's result.
 
-The loop keeps its own messages and sends them in each `model run`; the model
-does not own a memory or a pid.
+The turn in progress holds its own messages. When the turn ends, the tool calls and tool results go to the kernel and are written into this process's memory, ahead of the final answer. The next turn starts with one `show` and reads the rows that have already finished. A user row with no model or tool row after it is not history yet. The model has no pid and no memory of its own.
 
-One process can hold several turns. Each turn has its own messages, phase, and
-program counter. The process shares the tool processes, whether the model card
-is installed, and the history that has already finished. A new turn starts from
-that finished history and appends its own question and answer only when it
-ends, so a tool call is not split from its result. The `ready` line carries
-`threads: true`. Helper threads hang under that turn's id. The leader turn
-still uses `pid.N`.
+One process can hold several turns. Each turn has its own messages, phase, and program counter. The process shares the tool processes and whether the model card is installed. The `ready` line carries `threads: true`.
 
 | File | Role |
 |---|---|

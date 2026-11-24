@@ -45,6 +45,8 @@ def compile_action(
         return _compile_environment_load(request.action, payload)
     if request.action == "model.configure":
         return _compile_model_configure(request.action, payload)
+    if request.action == "memory.configure":
+        return _compile_memory_configure(request.action, payload)
     if request.action == "command.execute":
         return _compile_raw_command(request.action, payload)
     raise ProtocolError("unsupported_action", f"Unsupported action: {request.action}")
@@ -152,6 +154,20 @@ def _compile_model_configure(action: str, payload: Mapping[str, Any]) -> Compile
     if not commands:
         raise ProtocolError("invalid_payload", "model.configure needs cores or capability")
     return CompiledAction(action=action, commands=tuple(commands), completion="command")
+
+
+def _compile_memory_configure(action: str, payload: Mapping[str, Any]) -> CompiledAction:
+    """Compile the memory backend choice. A local folder needs a path."""
+
+    backend = required_text(payload, "backend")
+    if backend not in {"memory", "local"}:
+        raise ProtocolError("invalid_payload", "backend must be memory or local")
+    if backend == "memory":
+        command = _command(("memory", "backend", "memory"))
+    else:
+        path = required_text(payload, "path")
+        command = _command(("memory", "backend", "local", "--path", path))
+    return CompiledAction(action=action, commands=(command,), completion="command")
 
 
 def _compile_raw_command(action: str, payload: Mapping[str, Any]) -> CompiledAction:

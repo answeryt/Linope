@@ -78,6 +78,9 @@ interface LinopeKernelApi {
       changes?: Array<{ topic: string; value: string }>;
     }): string;
   };
+  memory: {
+    configure(input: { backend: "memory" | "local"; path?: string }): string;
+  };
   stop(): void;
   onEvent(callback: (event: unknown) => void): () => void;
 }

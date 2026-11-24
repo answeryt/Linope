@@ -19,7 +19,7 @@
 
 共享的笔记本是同一个记忆实体。这次启动在 `shared` 里点名 `memory`，并且声明用的是同一个 scope 时，[`kernel/resource`](../resource/README.cn.md) 给出这一个实体。行和真名存在 [`kernel/resource/memory`](../resource/memory/README.cn.md)。本目录为每个还持有该实体的进程保留一张自己的地址表。
 
-`MemoryRuntime` 把这些表放在每个进程的页表里，先按进程 id 和资源 id，再按类。页表可以随记忆后端保存。运行时缓存被释放时，已提交的行仍在。`remember` 让记忆模块追加一行。真名由实体自己的计数器给出，先是 `message/0`，再是 `message/1`。`_map_real` 把这个真名追加到每一个当前持有者的表上，条件是它的 `space` 包含这个类：
+`MemoryRuntime` 把这些表放在每个进程的页表里，先按进程 id 和资源 id，再按类。页表只在本次运行内保存，存储再次打开时清空。运行时缓存被释放时，已提交的行仍在。`remember` 让记忆模块追加一行。真名由实体自己的计数器给出，先是 `message/0`，再是 `message/1`。`_map_real` 把这个真名追加到每一个当前持有者的表上，条件是它的 `space` 包含这个类：
 
 ```python
 for pid, grant in holders:

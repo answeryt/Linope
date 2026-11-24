@@ -11,4 +11,6 @@
 
 `load` 只接受 `kind: tool`。名字为空或 `list` 时，返回 MCPHub 正在提供的工具。其他名字则调用那个工具。能力名仍是 `tools.mcp_tool_manager`。
 
+`discover_tools()` 返回同一份名单。代理进程在 `ready` 之后、第一轮之前调用它一次。循环不会发送 `list`。
+
 第一批服务器是 `time` 和 `fetch`。它们登记在网关里，不在本目录。网关没开时，`load` 会说明 `MCPHub is not running`。

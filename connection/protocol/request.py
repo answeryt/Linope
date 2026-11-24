@@ -33,6 +33,7 @@ SUPPORTED_ACTIONS = frozenset(
         "environment.load",
         "model.catalog",
         "model.configure",
+        "memory.configure",
         "command.execute",
     }
 )

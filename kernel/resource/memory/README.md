@@ -12,7 +12,7 @@ The logical address space of one memory resource. The rows live in a `MemoryStor
 {"scope": "chat", "backend": ""}
 ```
 
-`scope` is the identity of this memory, such as `chat`. The rows, sequence, and page table live in a `MemoryStore`. The default backend is the in-process `memory` backend. `linope memory backend` selects `sqlite` and a path.
+`scope` is the identity of this memory, such as `chat`. The rows and sequence live in a `MemoryStore`. The default backend is the in-process `memory` backend. `linope memory backend` selects `local` and a folder. A page table is kept for this run and cleared when the store opens again.
 
 `items` holds the rows. The key is the stored name: `message/0`, `task/0`, `artifact/0`, or `system`. `next` is the next number for `message`, `task`, and `artifact`. `seq` is one counter for the whole dictionary, so a later row has a higher `seq`.
 
@@ -45,7 +45,7 @@ After one user line and one prompt file, the dictionary looks like this:
 }
 ```
 
-These stored names belong to the memory. Every process that holds it shares them. A process's own address, also written `message/0`, can point at a different stored name. That list is the process page table kept by `MemoryRuntime`. The model receives the system prompt and the current user message. It reads an older row with an address such as `message/0`.
+These stored names belong to the memory. Every process that holds it shares them. A process's own address, also written `message/0`, can point at a different stored name. That list is the process page table kept by `MemoryRuntime` for this run. It is cleared when the store opens again. The model receives the system prompt and the current user message. It reads an older row with an address such as `message/0`.
 
 ## Writing a row
 

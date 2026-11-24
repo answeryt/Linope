@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from kernel.command.convention import UsageError
-from kernel.resource.memory.backends import configured_backend, open_store, write_backend_config
+from kernel.resource.memory.backends import configured_backend, write_backend_config
 
 
-USAGE = "usage: linope memory backend [memory | sqlite --path <file>]"
+USAGE = "usage: linope memory backend [memory | local --path <folder>]"
 
 
 def run(argv: list[str]) -> int:
@@ -22,16 +22,13 @@ def _backend(argv: list[str]) -> int:
         name, path = configured_backend()
         return {"backend": name, "path": path}
     name = argv[0]
-    if name not in {"memory", "sqlite"}:
+    if name not in {"memory", "local"}:
         raise UsageError(USAGE)
     path = ""
-    if name == "sqlite":
+    if name == "local":
         if argv[1:2] != ["--path"] or len(argv) != 3 or not argv[2].strip():
             raise UsageError(USAGE)
         path = str(Path(argv[2]))
+        Path(path).mkdir(parents=True, exist_ok=True)
     write_backend_config(name, path)
-    store = open_store(name, path)
-    close = getattr(store, "close", None)
-    if close is not None:
-        close()
     return {"backend": name, "path": path}
