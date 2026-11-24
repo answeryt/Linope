@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any, Optional
@@ -49,30 +50,39 @@ def load(kind, body, call_params=None):
 def dispatch(name: str, arguments: dict[str, Any], **kwargs: Any) -> str:
     if name != "read_image":
         return _error(f"unknown tool: {name}")
-    return read_image(str(arguments.get("file_path") or ""), **kwargs)
+    return read_image(
+        str(arguments.get("file_path") or ""),
+        data=arguments.get("data"),
+        **kwargs,
+    )
 
 
-def read_image(file_path: str, workspace: Optional[str] = None) -> str:
+def read_image(
+    file_path: str,
+    workspace: Optional[str] = None,
+    data: Any = None,
+) -> str:
     path = _resolve(file_path, workspace)
     if not path.is_file():
         return _error(f"file not found: {path}")
     if path.suffix.lower() not in IMAGE_SUFFIXES:
         return _error(f"unsupported image type: {path.suffix}")
-    return json.dumps(
-        {
-            "success": True,
-            "path": str(path),
-            "mediaType": {
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".webp": "image/webp",
-                ".gif": "image/gif",
-            }.get(path.suffix.lower(), "application/octet-stream"),
-            "bytes": path.stat().st_size,
-        },
-        ensure_ascii=False,
-    )
+    media_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    payload: dict[str, Any] = {
+        "success": True,
+        "path": str(path),
+        "mediaType": media_type,
+        "bytes": path.stat().st_size,
+    }
+    if data is True:
+        payload["data"] = base64.b64encode(path.read_bytes()).decode("ascii")
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _resolve(file_path: str, workspace: Optional[str]) -> Path:

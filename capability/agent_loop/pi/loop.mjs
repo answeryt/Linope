@@ -42,6 +42,14 @@ const model = {
 
 const defaultTools = ["read", "bash", "edit", "write"];
 
+export function fixedSystem(page) {
+  const items = page?.memory?.items;
+  if (!Array.isArray(items)) return undefined;
+  const row = items.find((item) => item && item.kind === "system" && item.state === "!");
+  if (!row) return undefined;
+  return String(row.content ?? "");
+}
+
 export async function openPiSession({
   cwd = process.cwd(),
   agentDir,
@@ -49,6 +57,7 @@ export async function openPiSession({
   onProgress,
   openAuthorization,
   waitForRedirect,
+  preamble,
 }) {
   const note = (text) => {
     if (typeof onProgress === "function" && text) onProgress(String(text));
@@ -61,7 +70,7 @@ export async function openPiSession({
     agentDir: directory,
     settingsManager: settings,
     extensionFactories: piExtensions(openAuthorization || openBrowser),
-    appendSystemPrompt: [PREAMBLE],
+    appendSystemPrompt: [preamble === undefined ? PREAMBLE : preamble],
   });
   await loader.reload();
   const sessionManager = SessionManager.inMemory(cwd);

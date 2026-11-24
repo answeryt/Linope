@@ -44,8 +44,15 @@ function Dialog({ children }: { children: ReactNode }) {
   const [pressedId, setPressedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
-  const { conversations, newConversation, send: sendMessage, sendToConversation, state, turns: messages } =
-    useKernelSession();
+  const {
+    callCapability,
+    conversations,
+    newConversation,
+    send: sendMessage,
+    sendToConversation,
+    state,
+    turns: messages,
+  } = useKernelSession();
   const settings = useSettings();
   const [shown, setShown] = useState(false);
   const [singleLine, setSingleLine] = useState(true);
@@ -271,6 +278,7 @@ function Dialog({ children }: { children: ReactNode }) {
   const loopTasks = loopProcess ? state.tasks.filter((task) => task.pid === loopProcess.id) : [];
   const loopMessages = hostedMessages(state, loopCapability, selectedConversation?.pid);
   const windowLines = currentWindowLines(state, selectedConversation);
+  const contextLines = currentWindowLines(state, selectedConversation ?? conversations.at(-1) ?? null);
 
   const deliverToLoop = (value: string, capability: string, appId: string) => {
     if (toolAppId !== appId || !toolVisible) {
@@ -470,8 +478,11 @@ function Dialog({ children }: { children: ReactNode }) {
       {toolAppId ? (
         <ToolBodySlot
           appId={toolAppId}
+          call={callCapability}
           capability={loopCapability}
           conversations={conversationTabs}
+          cwd={state.cwd}
+          lines={contextLines}
           frame={toolFrame.frame}
           fullscreen={toolFrame.fullscreen}
           messages={loopMessages}

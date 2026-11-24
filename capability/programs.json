@@ -710,6 +710,56 @@
     "secret_names": [],
     "settings": {}
   },
+  "tools.list_dir": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/file_tools/list_dir_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/file_tools/list_dir_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.list_dir"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "read-only",
+          "scope": "host"
+        },
+        "identity": {
+          "root": "host"
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "List the files and directories directly inside one directory. Returns names and whether each entry is a file or a directory. Does not walk into subdirectories.",
+        "name": "list_dir",
+        "parameters": {
+          "properties": {
+            "path": {
+              "description": "Directory to list. Defaults to the session workspace; a relative path resolves against it.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
   "tools.mcp_tool_manager": {
     "argv": [
       "python",
@@ -1274,6 +1324,82 @@
           },
           "required": [
             "sessionId"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "secret_names": [],
+    "settings": {}
+  },
+  "tools.terminal_desktop": {
+    "argv": [
+      "python",
+      "-m",
+      "capability.program",
+      "capability/tools/agent_tools/terminal_tools/terminal_desktop_plugin.py"
+    ],
+    "changes": [],
+    "entrypoint": "load",
+    "module_paths": [
+      "capability/tools/agent_tools/terminal_tools/terminal_desktop_plugin.py"
+    ],
+    "resources": [
+      {
+        "call_params": {},
+        "identity": {
+          "id": "tools.terminal_desktop"
+        },
+        "kind": "tool"
+      },
+      {
+        "call_params": {
+          "mode": "workspace-write",
+          "scope": "host"
+        },
+        "identity": {
+          "root": "host"
+        },
+        "kind": "sandbox"
+      }
+    ],
+    "schemas": [
+      {
+        "description": "Open, write, read, interrupt, and close persistent PowerShell sessions owned by this process. Full-screen programs are not supported.",
+        "name": "terminal_desktop",
+        "parameters": {
+          "properties": {
+            "action": {
+              "description": "What to do with the desktop terminal sessions.",
+              "enum": [
+                "open",
+                "send",
+                "read",
+                "list",
+                "close",
+                "signal"
+              ],
+              "type": "string"
+            },
+            "cwd": {
+              "description": "Working directory for a new session.",
+              "type": "string"
+            },
+            "name": {
+              "description": "Display name for a new session.",
+              "type": "string"
+            },
+            "sessionId": {
+              "description": "Session id returned by open or list.",
+              "type": "string"
+            },
+            "text": {
+              "description": "One line to send. Used by send.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
           ],
           "type": "object"
         }

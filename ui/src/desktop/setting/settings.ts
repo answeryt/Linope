@@ -136,6 +136,7 @@ type SettingsState = {
   memoryBackend: MemoryBackend;
   localPath: string;
   systemPrompt: string;
+  promptOverrides: Record<string, string>;
   wallpaperId: string;
   uploads: UploadMeta[];
 };
@@ -247,6 +248,7 @@ function defaults(): SettingsState {
     memoryBackend: "memory",
     localPath: "",
     systemPrompt: "",
+    promptOverrides: {},
     wallpaperId: DEFAULT_WALLPAPER_ID,
     uploads: [],
   };
@@ -321,6 +323,19 @@ function mergeDraft(id: CardId, value: unknown): CardDraft {
   };
 }
 
+const promptLoopIds = ["loop:linope", "loop:pi"] as const;
+
+function promptOverrides(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const row = value as Record<string, unknown>;
+  const next: Record<string, string> = {};
+  for (const id of promptLoopIds) {
+    const text = row[id];
+    if (typeof text === "string") next[id] = text;
+  }
+  return next;
+}
+
 function textParameters(value: unknown, fallback: Record<string, string>): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { ...fallback };
   return Object.fromEntries(
@@ -359,6 +374,7 @@ function parse(value: unknown): SettingsState {
     memoryBackend: row.memoryBackend === "local" ? "local" : "memory",
     localPath: typeof row.localPath === "string" ? row.localPath : "",
     systemPrompt: typeof row.systemPrompt === "string" ? row.systemPrompt : "",
+    promptOverrides: promptOverrides(row.promptOverrides),
     wallpaperId: typeof row.wallpaperId === "string" && row.wallpaperId ? row.wallpaperId : DEFAULT_WALLPAPER_ID,
     uploads,
   };
@@ -402,6 +418,8 @@ function subscribe(listener: () => void) {
 function getState() {
   return state;
 }
+
+export { getState };
 
 const imageCache = new Map<string, string>();
 let imageRevision = 0;
@@ -573,6 +591,20 @@ function setSystemPrompt(systemPrompt: string) {
   commit({ ...state, systemPrompt });
 }
 
+function setPromptOverride(loopId: string, text: string | null) {
+  if (!promptLoopIds.includes(loopId as (typeof promptLoopIds)[number])) return;
+  const current = state.promptOverrides;
+  if (text === null) {
+    if (!(loopId in current)) return;
+    const next = { ...current };
+    delete next[loopId];
+    commit({ ...state, promptOverrides: next });
+    return;
+  }
+  if (current[loopId] === text) return;
+  commit({ ...state, promptOverrides: { ...current, [loopId]: text } });
+}
+
 function setWallpaper(wallpaperId: string) {
   if (wallpaperId === state.wallpaperId) return;
   commit({ ...state, wallpaperId });
@@ -608,6 +640,7 @@ export {
   setDynamicCard,
   setMemoryBackend,
   setLocalPath,
+  setPromptOverride,
   setSystemPrompt,
   setWallpaper,
   updateDraft,

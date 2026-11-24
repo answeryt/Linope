@@ -35,6 +35,7 @@ SUPPORTED_ACTIONS = frozenset(
         "model.configure",
         "memory.configure",
         "command.execute",
+        "capability.call",
     }
 )
 

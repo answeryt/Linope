@@ -13,6 +13,8 @@ import {
   type UiConversation,
   type UiState,
 } from "./state";
+import { loopIdForCapability } from "@/desktop/setting/loaded-loops";
+import { getState as settingsState, useSettings } from "@/desktop/setting/settings";
 import { parseKernelEvent, type KernelEvent } from "./protocol";
 
 type Action =
@@ -27,7 +29,22 @@ type Action =
   | { type: "unavailable"; text: string };
 
 const submittedQueue = new Map<string, { fingerprint: string; requestIds: string[] }>();
+const fixedPrompt = new Map<string, { capability: string; text: string; requestId: string }>();
 let conversationSeq = 0;
+
+export function forgetFixedPrompts(capability: string) {
+  for (const [pid, row] of fixedPrompt) {
+    if (row.capability === capability) fixedPrompt.delete(pid);
+  }
+}
+
+function fixedOverride(capability: string): string | undefined {
+  const loopId = loopIdForCapability(capability);
+  if (!loopId) return undefined;
+  const overrides = settingsState().promptOverrides;
+  if (!(loopId in overrides)) return undefined;
+  return overrides[loopId];
+}
 
 function queueFingerprint(queue: string[]): string {
   return queue.join("\0");
@@ -57,6 +74,7 @@ function reduceSession(state: UiState, action: Action): UiState {
 }
 
 export function useKernelSession() {
+  const settings = useSettings();
   const [state, dispatch] = useReducer(reduceSession, undefined, initialUiState);
   const api = typeof window === "undefined" ? undefined : window.linopeKernel;
 
@@ -184,7 +202,43 @@ export function useKernelSession() {
       if (!liveIds.has(id)) submittedQueue.delete(id);
     }
     if (!api) return;
+    if (api.prompts) {
+    for (const process of state.processes) {
+      if (process.activity === "away") continue;
+      const override = fixedOverride(process.capability);
+      if (override === undefined) continue;
+      const pending = fixedPrompt.get(process.id);
+      if (pending?.text === override) continue;
+      fixedPrompt.set(process.id, { capability: process.capability, text: override, requestId: "staging" });
+      const pid = Number(process.id);
+      const capability = process.capability;
+      void api.prompts.stage({ capability, text: override }).then(
+        (staged) => {
+          const requestId = api.process.send({ pid, text: `${staged.path} !` });
+          fixedPrompt.set(String(pid), {
+            capability,
+            text: override,
+            requestId: String(requestId || "failed"),
+          });
+        },
+        () => {
+          fixedPrompt.set(String(pid), { capability, text: override, requestId: "failed" });
+        },
+      );
+    }
+    }
     for (const conversation of state.conversations) {
+      if (!conversation.pid || conversation.queue.length === 0) {
+        if (!conversation.pid) submittedQueue.delete(conversation.id);
+        continue;
+      }
+      const override = fixedOverride(conversation.capability);
+      const pending = fixedPrompt.get(conversation.pid);
+      if (override !== undefined && pending?.text === override) {
+        if (pending.requestId === "staging") continue;
+        const status = state.actionStates.get(pending.requestId)?.status;
+        if (pending.requestId !== "failed" && status !== "completed" && status !== "failed") continue;
+      }
       const fingerprint = queueFingerprint(conversation.queue);
       const submitted = submittedQueue.get(conversation.id);
       if (!conversation.pid || conversation.queue.length === 0) {
@@ -207,7 +261,7 @@ export function useKernelSession() {
         dispatch({ type: "dequeue", conversationId: conversation.id });
       }
     }
-  }, [api, state.actionStates, state.connection, state.conversations]);
+  }, [api, settings.promptOverrides, state.actionStates, state.connection, state.conversations, state.processes]);
 
   const stop = useCallback(() => {
     api?.stop();
@@ -297,6 +351,44 @@ export function useKernelSession() {
     [api],
   );
 
+  const callCapability = useCallback(
+    (input: Parameters<LinopeKernelApi["capability"]["call"]>[0]) => {
+      if (!api) {
+        return Promise.reject(new Error("当前没有连上内核，不能直接操作。"));
+      }
+      if (state.connection === "closed" || state.connection === "unavailable") {
+        return Promise.reject(new Error("后端会话已关闭，请重新启动桌面应用。"));
+      }
+      const requestId = api.capability.call(input);
+      return new Promise<unknown>((resolve, reject) => {
+        const stop = api.onEvent((rawEvent) => {
+          let event: KernelEvent;
+          try {
+            event = parseKernelEvent(rawEvent);
+          } catch {
+            return;
+          }
+          if (event.request_id !== requestId) return;
+          if (event.kind === "action.completed") {
+            stop();
+            resolve(event.data.result);
+            return;
+          }
+          if (event.kind === "action.failed") {
+            stop();
+            const error = event.data.error;
+            const message =
+              error && typeof error === "object" && "message" in error
+                ? String((error as { message?: unknown }).message || "没有完成")
+                : "没有完成";
+            reject(new Error(message));
+          }
+        });
+      });
+    },
+    [api, state.connection],
+  );
+
   const loadModelCatalog = useCallback(() => {
     if (!api) {
       dispatch({
@@ -322,6 +414,7 @@ export function useKernelSession() {
     connection: state.connection,
     conversations: state.conversations,
     modelCatalog: state.modelCatalog,
+    callCapability,
     newConversation,
     send,
     sendToConversation,

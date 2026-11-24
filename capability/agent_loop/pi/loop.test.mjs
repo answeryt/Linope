@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { isolatedAgentDir, openPiSession, parseModelTurn, runWithPiTools } from "./loop.mjs";
+import { fixedSystem, isolatedAgentDir, openPiSession, parseModelTurn, runWithPiTools } from "./loop.mjs";
 
 test("a read call uses Pi's path argument and does not start tools.read", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "linope-pi-"));
@@ -202,6 +202,22 @@ test("an OAuth callback completes without opening a browser", async () => {
     await session.close();
     await gate.close();
   }
+});
+
+test("a permanent system row replaces the bundled opening", () => {
+  assert.equal(fixedSystem({}), undefined);
+  assert.equal(
+    fixedSystem({ memory: { items: [{ kind: "system", content: "kept", state: "" }] } }),
+    undefined,
+  );
+  assert.equal(
+    fixedSystem({ memory: { items: [{ kind: "system", content: "自定义开场白\n", state: "!" }] } }),
+    "自定义开场白\n",
+  );
+  assert.equal(
+    fixedSystem({ memory: { items: [{ kind: "system", content: "", state: "!" }] } }),
+    "",
+  );
 });
 
 test("the process source does not call a provider or open kernel memory", () => {

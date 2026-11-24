@@ -12,6 +12,13 @@ from typing import Any
 from connection.protocol.request import ActionRequest, ProtocolError, parse_request
 from connection.semantic.action_compiler import compile_action
 from connection.semantic.action_types import EnvironmentDefaults
+from connection.semantic.capability_call import (
+    CapabilityCall,
+    load_command,
+    prepare_capability_call,
+    start_command,
+    started_pid,
+)
 from connection.semantic.model_catalog import discover_model_cards
 from connection.transport.event_stream import EventStream
 from connection.transport.kernel_session import KernelSession, KernelWireError
@@ -37,6 +44,9 @@ class _Pending:
     environment_update: EnvironmentDefaults | None = None
     phase: str = "command"
     result: Any = None
+    call: CapabilityCall | None = None
+    call_phase: str = ""
+    call_retried: bool = False
 
 
 @dataclass
@@ -48,6 +58,7 @@ class ConnectionGateway:
     _events: EventStream = field(init=False)
     _environment: EnvironmentDefaults = field(default_factory=EnvironmentDefaults)
     _pending: dict[str, _Pending] = field(default_factory=dict)
+    _held: dict[str, tuple[int, str]] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _reader: threading.Thread | None = field(default=None)
     _closed: bool = False
@@ -88,6 +99,9 @@ class ConnectionGateway:
             return
 
         self._events.accepted(request.request_id, request.action)
+        if request.action == "capability.call":
+            self._begin_capability_call(request)
+            return
         if request.action == "model.catalog":
             self._events.completed(
                 request.request_id,
@@ -155,6 +169,8 @@ class ConnectionGateway:
 
         if kind == "command.failed":
             code, message = _failure(data)
+            if self._retry_capability_call(owner):
+                return
             self._fail(owner, code, message)
             return
 
@@ -177,11 +193,100 @@ class ConnectionGateway:
             return
 
         if kind == "command.completed":
+            if pending.call is not None:
+                self._advance_capability_call(owner, data.get("value"))
+                return
             self._advance(owner, data.get("value"))
             return
 
         if kind == "turn.completed" and pending.phase == "turn":
             self._finish(owner, data.get("result", data.get("value")))
+
+    def _begin_capability_call(self, request: ActionRequest) -> None:
+        """Start a capability, or reuse one the desktop asked to hold."""
+
+        try:
+            spec = prepare_capability_call(request.payload)
+        except ProtocolError as exc:
+            self._events.failed(
+                request.request_id,
+                request.action,
+                exc.code,
+                str(exc),
+                exc.details,
+            )
+            return
+        with self._lock:
+            cached = self._held.get(spec.capability) if spec.hold else None
+            if cached is not None and cached[1] != spec.cwd:
+                self._held.pop(spec.capability, None)
+                cached = None
+            pid = cached[0] if cached is not None else None
+            pending = _Pending(
+                request=request,
+                commands=(),
+                completion="command",
+                call=spec,
+                call_phase="load" if pid is not None else "start",
+            )
+            self._pending[request.request_id] = pending
+        self._ensure_reader()
+        command = load_command(spec, pid) if pid is not None else start_command(spec)
+        try:
+            self._session.send(command, request.request_id)
+        except (OSError, RuntimeError, EOFError) as exc:
+            self._fail(request.request_id, type(exc).__name__, str(exc))
+
+    def _advance_capability_call(self, request_id: str, value: Any) -> None:
+        """Turn a finished start into a load, or finish the load."""
+
+        with self._lock:
+            pending = self._pending.get(request_id)
+            if pending is None or pending.call is None:
+                return
+            spec = pending.call
+            phase = pending.call_phase
+        if phase != "start":
+            self._finish(request_id, value)
+            return
+        pid = started_pid(value)
+        if pid is None:
+            self._fail(request_id, "process_start_failed", "process start did not return a pid")
+            return
+        with self._lock:
+            current = self._pending.get(request_id)
+            if current is None:
+                return
+            current.call_phase = "load"
+            if spec.hold:
+                self._held[spec.capability] = (pid, spec.cwd)
+        try:
+            self._session.send(load_command(spec, pid), request_id)
+        except (OSError, RuntimeError, EOFError) as exc:
+            self._fail(request_id, type(exc).__name__, str(exc))
+
+    def _retry_capability_call(self, request_id: str) -> bool:
+        """A held process can disappear. Start it once more, then give up."""
+
+        with self._lock:
+            pending = self._pending.get(request_id)
+            if (
+                pending is None
+                or pending.call is None
+                or not pending.call.hold
+                or pending.call_phase != "load"
+                or pending.call_retried
+            ):
+                return False
+            spec = pending.call
+            pending.call_retried = True
+            pending.call_phase = "start"
+            self._held.pop(spec.capability, None)
+        try:
+            self._session.send(start_command(spec), request_id)
+        except (OSError, RuntimeError, EOFError) as exc:
+            self._fail(request_id, type(exc).__name__, str(exc))
+        return True
 
     def _advance(self, request_id: str, value: Any) -> None:
         with self._lock:

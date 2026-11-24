@@ -35,6 +35,7 @@ class MemoryStore(Protocol):
         name: str,
         text: str,
         place: int | None,
+        replace: bool,
         when: str,
     ) -> MemoryRow: ...
 
@@ -106,18 +107,21 @@ class InMemoryStore:
         name: str,
         text: str,
         place: int | None,
+        replace: bool,
         when: str,
     ) -> MemoryRow:
         with self._lock:
-            sections = list(self._prompts.get(resource_id) or [])
-            sections = _place_section(sections, name, text, place)
+            previous = self._rows.get(resource_id, {}).get("system")
+            sections = [] if replace else list(self._prompts.get(resource_id) or [])
+            sections = _place_section(sections, name, text, None if replace else place)
             joined = "\n\n".join(item["content"] for item in sections)
             seq = int(self._seq.get(resource_id) or 0) + 1
             self._seq[resource_id] = seq
             self._scopes[resource_id] = scope
             self._prompts[resource_id] = sections
             self._system[resource_id] = joined
-            row = _row_from("system", "system", "system", joined, when, seq, "")
+            marked = "!" if replace or (previous is not None and previous.state == "!") else ""
+            row = _row_from("system", "system", "system", joined, when, seq, marked)
             self._rows.setdefault(resource_id, {})["system"] = row
             order = self._order.setdefault(resource_id, {}).setdefault("system", [])
             if "system" not in order:
@@ -216,6 +220,8 @@ class InMemoryStore:
                 body["system_seq"] = system_row.seq
                 body["system_time"] = system_row.time
                 body["system_tokens"] = system_row.tokens
+                if system_row.state:
+                    body["system_state"] = system_row.state
             return body
 
     def page_snapshot(self, resource_id: str) -> dict[str, dict[str, list[str]]]:
@@ -266,6 +272,7 @@ class LocalStore:
         name: str,
         text: str,
         place: int | None,
+        replace: bool,
         when: str,
     ) -> MemoryRow:
         with self._lock:
@@ -276,6 +283,7 @@ class LocalStore:
                 name=name,
                 text=text,
                 place=place,
+                replace=replace,
                 when=when,
             )
             folder = self._folder(resource_id)
@@ -359,7 +367,7 @@ class LocalStore:
                 content=system,
                 time=str(raw.get("system_time") or ""),
                 seq=system_seq,
-                state="",
+                state=str(raw.get("system_state") or ""),
                 tokens=int(raw.get("system_tokens") or estimate_tokens(system)),
                 version=system_seq,
             )

@@ -99,10 +99,13 @@ function ToolLensSlot({ frame, open }: { frame: ToolFrame; open: boolean }) {
 
 function ToolBodySlot({
   appId,
+  call,
   capability,
   conversations,
+  cwd,
   frame,
   fullscreen,
+  lines,
   messages = [],
   onClose,
   onCreateConversation,
@@ -116,7 +119,16 @@ function ToolBodySlot({
   tasks = [],
 }: {
   appId: string;
+  call?: (input: {
+    capability: string;
+    kind: "tool" | "sandbox";
+    body: Record<string, unknown>;
+    hold?: boolean;
+    cwd?: string;
+  }) => Promise<unknown>;
   capability?: string;
+  cwd?: string;
+  lines?: string[];
   conversations?: Array<{
     id: string;
     pid: string;
@@ -174,8 +186,11 @@ function ToolBodySlot({
             {bodyReady ? (
               Desktop ? (
                 <Desktop
+                  call={call}
                   capability={capability}
                   conversations={conversations}
+                  cwd={cwd}
+                  lines={lines}
                   messages={messages}
                   onCreateConversation={onCreateConversation}
                   onSelectConversation={onSelectConversation}

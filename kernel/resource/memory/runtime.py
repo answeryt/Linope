@@ -75,6 +75,7 @@ class MemoryRuntime:
         name: str,
         text: str,
         place: int | None = None,
+        replace: bool = False,
     ) -> None:
         with self._locks.get(resource_id):
             row = self.store.write_system(
@@ -83,6 +84,7 @@ class MemoryRuntime:
                 name=name,
                 text=text,
                 place=place,
+                replace=replace,
                 when=_now(),
             )
             self._cache_put(resource_id, row, pinned=True)

@@ -57,6 +57,16 @@ contextBridge.exposeInMainWorld("linopeKernel", {
       return sendAction("memory.configure", input);
     },
   },
+  capability: {
+    call(input) {
+      return sendAction("capability.call", input);
+    },
+  },
+  prompts: {
+    stage(input) {
+      return ipcRenderer.invoke("prompt:stage", input);
+    },
+  },
   desktop: {
     presented() {
       ipcRenderer.send("ui:presented");

@@ -45,6 +45,15 @@ declare module "virtual:capability-desktops" {
     selectedId?: string;
     onSelectConversation?: (id: string) => void;
     onCreateConversation?: () => void;
+    cwd?: string;
+    lines?: string[];
+    call?: (input: {
+      capability: string;
+      kind: "tool" | "sandbox";
+      body: Record<string, unknown>;
+      hold?: boolean;
+      cwd?: string;
+    }) => Promise<unknown>;
   };
 
   export const desktops: Record<string, ComponentType<CapabilityDesktopProps>>;
@@ -86,6 +95,18 @@ interface LinopeKernelApi {
   };
   memory: {
     configure(input: { backend: "memory" | "local"; path?: string }): string;
+  };
+  prompts: {
+    stage(input: { capability: string; text: string | null }): Promise<{ path: string }>;
+  };
+  capability: {
+    call(input: {
+      capability: string;
+      kind: "tool" | "sandbox";
+      body: Record<string, unknown>;
+      hold?: boolean;
+      cwd?: string;
+    }): string;
   };
   desktop: {
     presented(): void;
