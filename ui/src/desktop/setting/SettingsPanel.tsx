@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
@@ -17,13 +17,14 @@ import {
   setDynamicCard,
   setLocalPath,
   setMemoryBackend,
-  setSystemPrompt,
   setWallpaper,
   updateDraft,
   useImageRevision,
   useSettings,
   wallpaperById,
 } from "@/desktop/setting/settings";
+import { useInstalledApps } from "@/desktop/apps/installed";
+import { addressScopes, installedLoopLabel, installedLoops, loadedPromptText } from "@/desktop/setting/loaded-loops";
 import { useKernelSession } from "@/desktop/link/useKernelSession";
 import { occupiedTokens, type ModelPlugin, type UiProcess, type UiTask } from "@/desktop/link/state";
 import { activityTaskStore } from "@/desktop/activity/task-store";
@@ -801,11 +802,12 @@ type ContextSection = "registers" | "window";
 
 function ContextPage({ lines, processes, tasks }: { lines: string[]; processes: UiProcess[]; tasks: UiTask[] }) {
   const settings = useSettings();
+  const installed = useInstalledApps();
   const [section, setSection] = useState<ContextSection | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const model = settings.drafts[settings.card].model.trim();
   const limit = contextLimit(model);
-  const occupied = occupiedTokens(settings.systemPrompt, lines);
+  const occupied = occupiedTokens(loadedPromptText(installed.map((app) => app.id)), lines);
 
   useEffect(() => {
     rootRef.current?.parentElement?.scrollTo({ top: 0 });
@@ -1150,8 +1152,8 @@ function WindowDetail({
   model: string;
   onBack: () => void;
 }) {
-  const settings = useSettings();
-  const occupied = occupiedTokens(settings.systemPrompt, lines);
+  const installed = useInstalledApps();
+  const occupied = occupiedTokens(loadedPromptText(installed.map((app) => app.id)), lines);
   const outputReserve = Math.max(1, Math.floor(limit / 8));
   const safetyMargin = Math.max(1, Math.floor(limit / 50));
 
@@ -1185,17 +1187,19 @@ function CeilingRow({ label, name, value }: { label: string; name: string; value
   );
 }
 
-const memoryAddresses = [
-  ["system", "提示词"],
-  ["message/0", "用户和模型的话"],
-  ["task/0", "其他"],
-  ["artifact/0", "工具结果"],
+const realNames = [
+  ["system", "提示文件拼成的一行"],
+  ["message/0", "user 和 model"],
+  ["task/0", "other"],
+  ["artifact/0", "tool"],
 ] as const;
 
 type MemorySection = "store" | "address" | "prompt";
 
 function MemoryPage() {
   const settings = useSettings();
+  const installed = useInstalledApps();
+  const installedIds = installed.map((app) => app.id);
   const [section, setSection] = useState<MemorySection | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const backend = settings.memoryBackend === "local" ? "本地" : "内存";
@@ -1211,8 +1215,8 @@ function MemoryPage() {
           onOpen={setSection}
           rows={[
             { id: "store", title: "存放", detail: "进程内存储，或本地文件夹", value: backend },
-            { id: "address", title: "地址", detail: "四类地址和每个进程自己的页表", value: "chat" },
-            { id: "prompt", title: "系统提示", detail: "写入记忆的 system 行", value: promptValue(settings.systemPrompt) },
+            { id: "address", title: "地址", detail: "真名、页表和带 scope 的读法", value: addressScopes(installedIds).join("、") },
+            { id: "prompt", title: "系统提示", detail: "已下载循环加载的提示词", value: installedLoopLabel(installedIds) },
           ]}
         />
       ) : null}
@@ -1271,51 +1275,89 @@ function StoreDetail({ onBack }: { onBack: () => void }) {
 }
 
 function AddressDetail({ onBack }: { onBack: () => void }) {
+  const installed = useInstalledApps();
+  const scopes = addressScopes(installed.map((app) => app.id));
+
   return (
     <div className="flex flex-col gap-3">
       <DetailBack onBack={onBack} page="记忆" title="地址" />
       <div className="flex items-baseline justify-between gap-3">
         <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>scope</span>
-        <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>chat</span>
+        <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{scopes.join("、")}</span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        {memoryAddresses.map(([address, meaning]) => (
-          <div key={address} style={{ ...rowStyle, width: "auto" }}>
-            <div style={{ fontSize: 15, lineHeight: "20px" }}>{address}</div>
-            <div style={{ fontSize: 12, lineHeight: "16px", color: quiet }}>{meaning}</div>
-          </div>
+      <AddressBlock title="真名">
+        <div className="grid grid-cols-2 gap-2">
+          {realNames.map(([address, meaning]) => (
+            <div key={address} style={{ ...rowStyle, width: "auto" }}>
+              <div style={{ fontSize: 15, lineHeight: "20px" }}>{address}</div>
+              <div style={{ fontSize: 12, lineHeight: "16px", color: quiet }}>{meaning}</div>
+            </div>
+          ))}
+        </div>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>同一份记忆里的进程共用这些真名。</p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message、task、artifact 按类从 0 编号。system 没有编号。</p>
+      </AddressBlock>
+      <AddressBlock title="本进程页表">
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message/0 是这个进程页表的第 0 格，可以指向另一条真名。</p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>后启动的进程，自己的第 0 格不必和前人相同。</p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>页表只在这次运行里有效，重启清空。真名还在存储里。</p>
+      </AddressBlock>
+      <AddressBlock title="带 scope 的读法">
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>message/0 走自己的页表。</p>
+        {scopes.map((scope) => (
+          <p key={scope} style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
+            {scope}/message/0 按这份记忆里的真名顺序读。
+          </p>
         ))}
-      </div>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>真名大家共用。</p>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>每个进程自己的 message/0 可以指到不同行。</p>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>
-        后启动的进程要用 chat/message/0 这种带 scope 的地址读旧行。
-      </p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>也可以写范围，例如 message/0-10。</p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>起点超出末尾，就是没有这个地址。</p>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>scope 相同但没有共享记忆时，仍是两本，资源编号不同。</p>
+      </AddressBlock>
     </div>
+  );
+}
+
+function AddressBlock({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{title}</span>
+      {children}
+    </section>
   );
 }
 
 function PromptDetail({ onBack }: { onBack: () => void }) {
-  const settings = useSettings();
+  const installed = useInstalledApps();
+  const loops = installedLoops(installed.map((app) => app.id));
 
   return (
     <div className="flex flex-col gap-3">
       <DetailBack onBack={onBack} page="记忆" title="系统提示" />
-      <Field hint="这段文字写入记忆的 system 行。" label="系统提示">
-        <GrowingTextarea
-          ariaLabel="系统提示"
-          onChange={setSystemPrompt}
-          value={settings.systemPrompt}
-        />
-      </Field>
+      {loops.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>还没有下载的循环</p>
+      ) : (
+        loops.map((loop) => (
+          <div className="flex flex-col gap-1.5" key={loop.id}>
+            <span style={{ fontSize: 13, lineHeight: "18px", color: quiet }}>{loop.name}</span>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>{loop.note}</p>
+            <pre
+              aria-label={`${loop.name} 系统提示`}
+              style={{
+                ...inputStyle,
+                minHeight: 96,
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                fontFamily: "inherit",
+              }}
+            >
+              {loop.text}
+            </pre>
+          </div>
+        ))
+      )}
     </div>
   );
-}
-
-function promptValue(text: string) {
-  const line = text.trim().split("\n")[0] ?? "";
-  if (!line) return "未写";
-  return line;
 }
 
 function DesktopPage() {
@@ -1465,50 +1507,6 @@ const rowStyle = {
   ...inputStyle,
   width: "auto",
 } as const;
-
-function GrowingTextarea({
-  ariaLabel,
-  onChange,
-  value,
-}: {
-  ariaLabel: string;
-  onChange: (value: string) => void;
-  value: string;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useLayoutEffect(() => {
-    const area = ref.current;
-    if (!area) return;
-
-    const fit = () => {
-      area.style.height = "auto";
-      area.style.height = `${area.scrollHeight}px`;
-    };
-
-    fit();
-    let width = Math.round(area.getBoundingClientRect().width);
-    const observer = new ResizeObserver(() => {
-      const next = Math.round(area.getBoundingClientRect().width);
-      if (next === width) return;
-      width = next;
-      fit();
-    });
-    observer.observe(area);
-    return () => observer.disconnect();
-  }, [value]);
-
-  return (
-    <textarea
-      aria-label={ariaLabel}
-      onChange={(event) => onChange(event.target.value)}
-      ref={ref}
-      rows={1}
-      style={{ ...inputStyle, minHeight: 96, overflow: "hidden", resize: "none" }}
-      value={value}
-    />
-  );
-}
 
 function TextInput({
   ariaLabel,
