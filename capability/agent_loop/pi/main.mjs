@@ -10,6 +10,8 @@ import { ensureLoop } from "./ensure.mjs";
 
 let openPiSession;
 let parseModelTurn;
+let fixedSystem;
+let preamble;
 
 const lines = [];
 const waiters = [];
@@ -122,6 +124,7 @@ function waitForRedirect(signal) {
 function session() {
   sessionPromise ??= openPiSession({
     cwd: process.cwd(),
+    preamble,
     onProgress: (text) => notice({ kind: "agent.progress", text: String(text) }),
     waitForRedirect,
     askModel: async (messages, tools) => {
@@ -136,8 +139,29 @@ function session() {
   return sessionPromise;
 }
 
+async function readFixedSystem() {
+  if (!selfPid || typeof fixedSystem !== "function") return undefined;
+  let page;
+  try {
+    page = await submit(`show ${selfPid}`);
+  } catch {
+    return undefined;
+  }
+  const text = fixedSystem(page);
+  return text === undefined ? undefined : text;
+}
+
 async function answer(question) {
   await refresh();
+  const fixed = await readFixedSystem();
+  if (fixed !== undefined && preamble !== fixed) {
+    if (sessionPromise) {
+      const open = await sessionPromise;
+      await open.close();
+      sessionPromise = null;
+    }
+    preamble = fixed;
+  }
   const pasted = callbackText(JSON.stringify({ body: question }));
   if (redirectWaiter && pasted) {
     const waiter = redirectWaiter;
@@ -187,6 +211,7 @@ async function main() {
     const loop = await import(pathToFileURL(loopPath).href);
     openPiSession = loop.openPiSession;
     parseModelTurn = loop.parseModelTurn;
+    fixedSystem = loop.fixedSystem;
   } catch (error) {
     write({ event: "error", error: String(error.message || error) });
     process.exitCode = 1;

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -123,6 +124,113 @@ def test_gateway_keeps_concurrent_actions_on_their_own_request_ids(tmp_path: Pat
             continue
         command = event["data"].get("command")
         assert command in {None, "create one.txt"}
+
+
+def test_gateway_calls_list_dir_and_returns_the_plugin_result(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[2]
+    (tmp_path / "notes.txt").write_text("alpha\n", encoding="utf-8")
+    requests = [
+        {
+            "version": 1,
+            "request_id": "listed",
+            "action": "capability.call",
+            "payload": {
+                "capability": "tools.list_dir",
+                "kind": "tool",
+                "hold": False,
+                "cwd": str(tmp_path),
+                "body": {"path": str(tmp_path)},
+            },
+        },
+        {
+            "version": 1,
+            "request_id": "stop",
+            "action": "command.execute",
+            "payload": {"command": "exit"},
+        },
+    ]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    # Keep the session open until the two-step call finishes. Closing stdin
+    # or sending exit early drops the process before the load is sent.
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "connection.gateway"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=root,
+        env=env,
+    )
+    assert gateway.stdin is not None
+    assert gateway.stdout is not None
+    gateway.stdin.write(json.dumps(requests[0]) + "\n")
+    gateway.stdin.flush()
+    events = []
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        line = gateway.stdout.readline()
+        if not line:
+            break
+        events.append(json.loads(line))
+        if any(event["kind"] in {"action.completed", "action.failed"} and event.get("request_id") == "listed" for event in events):
+            break
+    gateway.stdin.write(json.dumps(requests[1]) + "\n")
+    gateway.stdin.close()
+    stderr = gateway.stderr.read() if gateway.stderr is not None else ""
+    assert gateway.wait(timeout=20) == 0, stderr
+    finished = next(event for event in events if event["kind"] == "action.completed" and event["request_id"] == "listed")
+    result = finished["data"]["result"]
+    payload = json.loads(result) if isinstance(result, str) else result
+    names = [item["name"] for item in payload["entries"]]
+    assert "notes.txt" in names
+
+
+def test_gateway_runs_a_short_python_program() -> None:
+    root = Path(__file__).resolve().parents[2]
+    request = {
+        "version": 1,
+        "request_id": "ran",
+        "action": "capability.call",
+        "payload": {
+            "capability": "tools.run_code",
+            "kind": "tool",
+            "hold": False,
+            "body": {"code": "return 1 + 1", "description": "return 1 + 1"},
+        },
+    }
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "connection.gateway"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=root,
+        env=env,
+    )
+    assert gateway.stdin is not None and gateway.stdout is not None
+    gateway.stdin.write(json.dumps(request) + "\n")
+    gateway.stdin.flush()
+    events = []
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        line = gateway.stdout.readline()
+        if not line:
+            break
+        events.append(json.loads(line))
+        if any(event.get("request_id") == "ran" and event["kind"] in {"action.completed", "action.failed"} for event in events):
+            break
+    gateway.stdin.write(json.dumps({"version": 1, "request_id": "stop", "action": "command.execute", "payload": {"command": "exit"}}) + "\n")
+    gateway.stdin.close()
+    stderr = gateway.stderr.read() if gateway.stderr is not None else ""
+    assert gateway.wait(timeout=20) == 0, stderr
+    finished = next(event for event in events if event["kind"] == "action.completed" and event["request_id"] == "ran")
+    result = finished["data"]["result"]
+    payload = json.loads(result) if isinstance(result, str) else result
+    assert payload["success"] is True
+    assert payload["result"] == 2
 
 
 def test_gateway_emits_one_action_failure_for_a_kernel_command_failure() -> None:

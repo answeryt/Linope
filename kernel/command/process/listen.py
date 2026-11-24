@@ -376,7 +376,7 @@ def _remember_prompt(process: Any, body: Any) -> bool:
     loaded = _prompt_load(body)
     if loaded is None:
         return False
-    path, place = loaded
+    path, place, replace = loaded
     grants = getattr(process.activation, "grants", ()) or ()
     if memory_grant(grants) is None:
         raise RuntimeError("This process has no memory")
@@ -385,7 +385,8 @@ def _remember_prompt(process: Any, body: Any) -> bool:
         grants,
         path.read_text(encoding="utf-8"),
         name=str(path),
-        place=place,
+        place=None if replace else place,
+        replace=replace,
     )
     return True
 
@@ -481,13 +482,18 @@ def _sender(service: Any, receiver: Any) -> Any:
     raise UsageError("Handing off a task requires exactly one other living process besides the peer")
 
 
-def _prompt_load(body: Any) -> tuple[Path, int | None] | None:
-    """A prompt file, optionally placed by a leading positive integer."""
+def _prompt_load(body: Any) -> tuple[Path, int | None, bool] | None:
+    """A prompt file, optionally placed, or marked with a trailing ``!``."""
     if not isinstance(body, str):
         return None
     raw = body.strip()
     if not raw or "\n" in raw or "\r" in raw:
         return None
+    replace = raw.endswith(" !")
+    if replace:
+        raw = raw[:-2].strip()
+        if not raw:
+            return None
     place: int | None = None
     path_text = raw
     head, sep, tail = raw.partition(" ")
@@ -499,7 +505,7 @@ def _prompt_load(body: Any) -> tuple[Path, int | None] | None:
         path = Path.cwd() / path
     if path.suffix.lower() not in _PROMPT_SUFFIXES or not path.is_file():
         return None
-    return path, place
+    return path, place, replace
 
 
 class _Handed(Exception):

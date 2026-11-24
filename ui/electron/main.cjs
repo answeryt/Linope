@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 const { KernelSession } = require("./kernel-session.cjs");
 const { SecureEnvironmentFile } = require("./secure-environment.cjs");
@@ -17,6 +18,7 @@ const semanticActions = new Set([
   "model.catalog",
   "model.configure",
   "memory.configure",
+  "capability.call",
 ]);
 
 function createWindow() {
@@ -124,6 +126,39 @@ ipcMain.on("connection:stop", (event) => {
   if (event.sender === mainWindow?.webContents) {
     kernelSession?.stop();
   }
+});
+
+const promptCapabilities = new Set(["agent_loop", "agent_loop_pi"]);
+
+function promptFile(capability) {
+  if (!promptCapabilities.has(capability)) {
+    throw new Error("unknown prompt");
+  }
+  return path.join(repoRoot, ".linope", "prompts", `${capability}.md`);
+}
+
+function assertPromptWindow(event) {
+  if (event.sender !== mainWindow?.webContents) {
+    throw new Error("unknown window");
+  }
+}
+
+ipcMain.handle("prompt:stage", (event, request) => {
+  assertPromptWindow(event);
+  if (!request || typeof request.capability !== "string") {
+    throw new Error("prompt needs a capability");
+  }
+  const file = promptFile(request.capability);
+  if (request.text === null) {
+    fs.rmSync(file, { force: true });
+    return { path: "" };
+  }
+  if (typeof request.text !== "string") {
+    throw new Error("prompt needs text");
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, request.text, "utf8");
+  return { path: file };
 });
 
 app.whenReady().then(createWindow);
