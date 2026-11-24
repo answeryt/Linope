@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import { AnimatePresence, motion, type MotionValue } from "motion/react";
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
 import { MessageMarkdown } from "@/desktop/dialog/MessageMarkdown";
+import { useDeferredBody } from "@/desktop/dialog/defer-body";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
 import { lensShadow } from "@/desktop/dialog/ChatPanel";
 import { ModelFlow } from "@/desktop/setting/ModelFlow";
@@ -160,6 +161,7 @@ function SettingsBodySlot({
   processes: UiProcess[];
   tasks: UiTask[];
 }) {
+  const bodyReady = useDeferredBody(open);
   return (
     <AnimatePresence>
       {open ? (
@@ -175,7 +177,7 @@ function SettingsBodySlot({
             onWheel={(event) => event.stopPropagation()}
             style={{ color: ink, opacity: frame.textOpacity }}
           >
-            <SettingsNav lines={lines} processes={processes} tasks={tasks} />
+            {bodyReady ? <SettingsNav lines={lines} processes={processes} tasks={tasks} /> : null}
           </motion.div>
           <ResizeEdges onResizeStart={onResizeStart} />
           <WindowControls

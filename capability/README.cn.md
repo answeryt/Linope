@@ -50,6 +50,7 @@
 |---|---|
 | [`model/`](model/README.cn.md) | 可启动的提供者插件，名字是 `model.<提供者目录>`。卡片、SDK 调用、消息块，以及加载一张点名卡片的运行时都在这里。回合在 [`kernel/scheduler`](../kernel/scheduler/README.cn.md)。 |
 | [`tools/`](tools/README.cn.md) | 可启动的代理工具和外部宿主，名字是 `tools.<文件名>`：文件、shell、终端、代码、网页搜索、向用户提问，以及 MCP。`load` 接受种类 `tool`。 |
-| [`sandbox/`](sandbox/README.cn.md) | 文件写入模式 `read-only`、`workspace-write`、`danger-full-access`，以及平台包装器。可启动的入口是 `sandbox.sandbox`。这里其余的 `*_plugin.py` 是 [`kernel/environment`](../kernel/environment/README.cn.md) 按路径加载的后端。Docker 工作区是另一份契约。 |
+| [`sandbox/`](sandbox/README.cn.md) | 文件写入模式 `read-only`、`workspace-write`、`danger-full-access`，以及平台包装器。可启动的入口是 `sandbox.sandbox`。这里其余的 `*_plugin.py` 是 [`kernel/environment`](../kernel/environment/README.cn.md) 按路径加载的后端。Docker 工作区是 [`workspace/`](workspace/README.cn.md) 里的另一份契约。 |
+| [`workspace/`](workspace/README.cn.md) | Docker 容器工作区：按内容哈希的镜像、长期容器，以及可选的 `/workspace` 绑定挂载。不登记到 `confine`。 |
 | [`context/`](context/README.cn.md) | 语义、摘要和滑动窗口压缩。每个包的入口文件叫 `capability_profile.py`，因此 `*_plugin.py` 的遍历不会登记它。`load` 在该文件夹里选出签名与正文相符的那一个函数。 |
 | [`prompt/`](prompt/README.cn.md) | 系统提示词 Markdown。本目录没有 `load`。想使用这些文本的宿主自己读文件。 |
