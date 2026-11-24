@@ -52,3 +52,22 @@ def test_parent_delivers_notice_to_the_active_exchange() -> None:
     )
     assert reply is None
     assert seen == [{"kind": "model.delta", "text": "hi", "pid": 7, "turn_id": "1.1"}]
+
+
+def test_a_command_reply_keeps_the_asking_thread() -> None:
+    from kernel.process.process_manager.capability_process import _answer_command
+
+    seen: dict[str, object] = {}
+
+    class _Process:
+        def reply_command(self, result: object = None, error: str = "", thread: str = "") -> None:
+            seen["result"] = result
+            seen["error"] = error
+            seen["thread"] = thread
+
+    _answer_command(
+        _Process(),
+        {"event": "command", "line": "show 7", "thread": "7.t1"},
+        lambda line: "page",
+    )
+    assert seen == {"result": "page", "error": "", "thread": "7.t1"}

@@ -607,6 +607,98 @@ def test_the_earlier_helper_is_signalled_alone() -> None:
     assert [item["thread"] for item in turn.pending_signals] == ["41.4"]
 
 
+def test_a_finished_helper_signal_carries_its_call_id() -> None:
+    said: list[str] = []
+    agent = _Script(41, "agent_loop", [])
+    agent.reply_command = lambda result="", error="", thread="": said.append(result)
+    drive = KernelRuntime(CollectingEventSink()).drive
+    from kernel.scheduler.model_scheduler.drive import Turn
+
+    turn = Turn(
+        key="41",
+        process=agent,
+        message={},
+        kind="message",
+        body="",
+        keep=True,
+        line="load message 41 -- hello",
+    )
+    turn.phase = "listen"
+    drive.turns[turn.key] = turn
+    drive._on_fork(turn, {
+        "event": "fork",
+        "thread": "41",
+        "threads": [{
+            "id": "",
+            "line": "",
+            "registers": {"tool": "read", "call_id": "call-1", "result": "note", "error": ""},
+        }],
+    })
+    signal = json.loads(said[0])[0]
+    assert signal["call_id"] == "call-1"
+    assert signal["result"] == "note"
+    assert str(signal["thread"]).startswith("41.")
+
+
+def test_a_finished_turn_writes_rows_before_the_answer(monkeypatch) -> None:
+    written: list[tuple[str, str]] = []
+
+    def remember(process: object, kind: str, content: str) -> None:
+        del process
+        written.append((kind, content))
+
+    monkeypatch.setattr("kernel.command.process.listen._remember", remember)
+    agent = _Script(41, "agent_loop", [])
+    drive = KernelRuntime(CollectingEventSink()).drive
+    from kernel.scheduler.model_scheduler.drive import Turn
+
+    turn = Turn(
+        key="41",
+        process=agent,
+        message={},
+        kind="message",
+        body="hello",
+        keep=True,
+        line="load message 41 -- hello",
+    )
+    drive.turns[turn.key] = turn
+    drive._finish(turn, result="answer", rows=[{"kind": "tool", "content": "note"}])
+    assert written == [("tool", "note"), ("model", "answer")]
+
+
+def test_a_model_line_returns_queued_signals_before_the_model_starts() -> None:
+    said: list[object] = []
+    agent = _Script(41, "agent_loop", [])
+    agent.reply_command = lambda result="", error="", thread="": said.append(result)
+    drive = KernelRuntime(CollectingEventSink()).drive
+    from kernel.scheduler.model_scheduler.drive import Turn
+
+    turn = Turn(
+        key="41",
+        process=agent,
+        message={},
+        kind="message",
+        body="",
+        keep=True,
+        line="load message 41 -- hello",
+    )
+    turn.phase = "listen"
+    turn.pending_signals = [{"thread": "41.2", "result": "sunny", "error": ""}]
+    drive.turns[turn.key] = turn
+    started: list[str] = []
+    drive._start_model = lambda current: started.append(current.pending)
+    drive._on_command(turn, 'model run -- {"messages": []}')
+    assert started == []
+    assert turn.pending_signals == []
+    assert turn.phase == "listen"
+    assert said == [{
+        "type": "signals",
+        "items": [{"thread": "41.2", "result": "sunny", "error": ""}],
+    }]
+    drive._on_command(turn, "model run -- next")
+    assert started == ["model run -- next"]
+
+
 def test_a_helper_that_finishes_during_the_model_call_waits() -> None:
     payloads: list[str] = []
     agent = _Script(

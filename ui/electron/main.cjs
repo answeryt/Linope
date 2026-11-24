@@ -16,6 +16,7 @@ const semanticActions = new Set([
   "environment.load",
   "model.catalog",
   "model.configure",
+  "memory.configure",
 ]);
 
 function createWindow() {

@@ -277,6 +277,7 @@ def _load(
             _note(process, "sleeping")
     result = _result(reply)
     if keep:
+        _keep_rows(process, reply.get("rows") if isinstance(reply, dict) else None)
         _keep_output(process, kind, body, result)
     return result
 
@@ -354,6 +355,7 @@ def _task_on(service: Any, receiver: Any, task: str) -> Any:
         on_command=_command_runner(service),
     )
     result = _result(reply)
+    _keep_rows(receiver, reply.get("rows") if isinstance(reply, dict) else None)
     _remember(receiver, "model", _output_text(result))
     return result
 
@@ -386,6 +388,20 @@ def _remember_prompt(process: Any, body: Any) -> bool:
         place=place,
     )
     return True
+
+
+def _keep_rows(process: Any, rows: Any) -> None:
+    """Append the lines a turn produced. The body is stored as given."""
+
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "")
+        if not kind:
+            continue
+        _remember(process, kind, str(row.get("content") or ""))
 
 
 def _keep_output(process: Any, kind: str, body: Any, result: Any) -> None:

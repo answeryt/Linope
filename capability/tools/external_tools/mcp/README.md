@@ -11,4 +11,6 @@ One tool process in front of a local [MCPHub](https://github.com/samanhappy/mcph
 
 `load` accepts `kind: tool`. An empty name or `list` returns the tools MCPHub is serving. Any other name calls that tool. The capability name stays `tools.mcp_tool_manager`.
 
+`discover_tools()` returns that same list. The agent process calls it once after `ready`, before the first turn. The loop does not send `list`.
+
 The first servers are `time` and `fetch`. They are registered in the hub, not in this directory. If the hub is not running, `load` says `MCPHub is not running`.

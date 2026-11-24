@@ -5,8 +5,10 @@ export type UiTurn = {
   role: "assistant" | "error" | "system" | "user";
   reasoning?: string;
   rawText?: string;
+  requestId?: string;
   stream?: boolean;
   text: string;
+  turnId?: string;
 };
 
 export type UiProcess = {
@@ -70,6 +72,7 @@ export type UiState = {
   status: "ready" | "running";
   turns: UiTurn[];
   activeTurns: Map<string, string>;
+  turnRequests: Map<string, string>;
 };
 
 let nextTurnId = 0;
@@ -96,6 +99,7 @@ export function initialUiState(cwd = ""): UiState {
     chatRequest: "",
     status: "ready",
     turns: [],
+    turnRequests: new Map(),
   };
 }
 
@@ -179,7 +183,55 @@ export function dequeueConversation(state: UiState, conversationId: string): UiS
 export function bindRequest(state: UiState, requestId: string, conversationId: string): UiState {
   const requestConversation = new Map(state.requestConversation);
   requestConversation.set(requestId, conversationId);
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) return { ...state, requestConversation };
+  const keys = [conversation.pid, `conversation:${conversation.id}`, `capability:${conversation.capability}`].filter(
+    (key) => key,
+  );
+  for (const key of keys) {
+    const list = state.hosted[key];
+    if (!list) continue;
+    const index = list.findIndex((item) => item.role === "user" && !item.requestId);
+    if (index < 0) continue;
+    return {
+      ...state,
+      hosted: {
+        ...state.hosted,
+        [key]: list.map((item, itemIndex) => (itemIndex === index ? { ...item, requestId } : item)),
+      },
+      requestConversation,
+    };
+  }
   return { ...state, requestConversation };
+}
+
+export function currentWindowLines(state: UiState, conversation: { id: string; pid: string } | null): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  const take = (items: UiTurn[] | undefined) => {
+    for (const item of items ?? []) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      if (item.role !== "user" && item.role !== "assistant") continue;
+      lines.push(item.text);
+    }
+  };
+  if (!conversation) {
+    take(state.turns);
+    return lines;
+  }
+  take(state.hosted[`conversation:${conversation.id}`]);
+  if (conversation.pid) take(state.hosted[conversation.pid]);
+  return lines;
+}
+
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.max(1, Math.floor((text.length + 3) / 4));
+}
+
+export function occupiedTokens(systemPrompt: string, lines: string[]): number {
+  return lines.reduce((sum, line) => sum + estimateTokens(line), estimateTokens(systemPrompt));
 }
 
 export function hostedMessages(state: UiState, capability?: string, pid?: string): UiTurn[] {
@@ -254,6 +306,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       Object.entries(state.hosted).map(([key, items]) => [key, items.map((item) => ({ ...item }))]),
     ),
     turns: [...state.turns],
+    turnRequests: new Map(state.turnRequests),
   };
 
   switch (event.kind) {
@@ -271,6 +324,7 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
       next.conversations = [];
       next.requestConversation = new Map();
       next.activeTurns = new Map();
+      next.turnRequests = new Map();
       next.chatRequest = "";
       next.status = "ready";
       return next;
@@ -332,24 +386,36 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
     case "turn.started":
       if (event.turn_id) {
         next.activeTurns.set(event.turn_id, event.pid !== undefined ? String(event.pid) : "");
+        if (event.request_id) next.turnRequests.set(event.turn_id, event.request_id);
       }
       if (event.pid === undefined) next.status = "running";
       return next;
     case "model.delta":
-      appendStreamTo(routeText(next, event), textOf(event.data.text));
+      appendStreamTo(
+        routeText(next, event),
+        textOf(event.data.text),
+        event.turn_id ?? "",
+        requestIdOf(next, event),
+      );
       return next;
     case "model.reasoning.delta":
-      appendReasoningTo(routeText(next, event), textOf(event.data.text));
+      appendReasoningTo(
+        routeText(next, event),
+        textOf(event.data.text),
+        event.turn_id ?? "",
+        requestIdOf(next, event),
+      );
       return next;
     case "turn.completed":
       if (event.turn_id) next.activeTurns.delete(event.turn_id);
-      completeList(routeText(next, event), event);
+      completeList(routeText(next, event), event, undefined, requestIdOf(next, event));
+      if (event.turn_id) next.turnRequests.delete(event.turn_id);
       finishChat(next, event.request_id);
       finishConversation(next, event.pid);
       return next;
     case "command.completed":
       if (textOf(event.data.command).startsWith("model run -- ")) {
-        completeList(routeText(next, event), event, event.data.value);
+        completeList(routeText(next, event), event, event.data.value, requestIdOf(next, event));
       } else {
         showCommandValue(next, event, routeText(next, event));
       }
@@ -403,10 +469,16 @@ export function reduceKernelEvent(state: UiState, event: KernelEvent): UiState {
   }
 }
 
-function completeList(list: UiTurn[], event: KernelEvent, completedResult?: unknown): void {
+function completeList(
+  list: UiTurn[],
+  event: KernelEvent,
+  completedResult: unknown | undefined,
+  requestId: string,
+): void {
+  const turnId = event.turn_id ?? "";
   const error = event.data.error;
   if (error) {
-    appendErrorTo(list, errorText(error));
+    appendErrorTo(list, errorText(error), turnId ? placeIndex(list, turnId, requestId) : list.length);
     return;
   }
 
@@ -415,68 +487,125 @@ function completeList(list: UiTurn[], event: KernelEvent, completedResult?: unkn
   );
   if (!content.text && !content.reasoning) return;
 
-  const last = list.at(-1);
-  if (last?.role === "assistant" && last.stream) {
-    list[list.length - 1] = {
-      ...last,
-      reasoning: content.reasoning || last.reasoning,
+  const index = streamingIndex(list, turnId);
+  if (index >= 0) {
+    const current = list[index];
+    list[index] = {
+      ...current,
+      reasoning: content.reasoning || current.reasoning,
       stream: false,
-      text: content.text || last.text,
+      text: content.text || current.text,
+      ...(turnId ? { turnId } : {}),
     };
-  } else {
+    return;
+  }
+  const bubble: UiTurn = {
+    id: createTurnId("assistant"),
+    reasoning: content.reasoning || undefined,
+    role: "assistant",
+    text: content.text,
+    ...(turnId ? { turnId } : {}),
+  };
+  if (!turnId) {
+    list.push(bubble);
+    return;
+  }
+  list.splice(placeIndex(list, turnId, requestId), 0, bubble);
+}
+
+function appendStreamTo(list: UiTurn[], text: string, turnId: string, requestId: string): void {
+  if (!text) return;
+  const index = streamingIndex(list, turnId);
+  if (index >= 0) {
+    const current = list[index];
+    const rawText = `${current.rawText ?? current.text}${text}`;
+    list[index] = {
+      ...current,
+      rawText,
+      text: stripHiddenReasoning(rawText),
+      ...(turnId ? { turnId } : {}),
+    };
+    return;
+  }
+  if (!turnId) {
+    const last = list.at(-1);
+    const rawText = `${last?.role === "assistant" ? last.rawText ?? last.text : ""}${text}`;
     list.push({
       id: createTurnId("assistant"),
-      role: "assistant",
-      reasoning: content.reasoning || undefined,
-      text: content.text,
-    });
-  }
-}
-
-function appendStreamTo(list: UiTurn[], text: string): void {
-  if (!text) return;
-  const last = list.at(-1);
-  const rawText = `${last?.role === "assistant" ? last.rawText ?? last.text : ""}${text}`;
-  const visibleText = stripHiddenReasoning(rawText);
-  if (last?.role === "assistant" && last.stream) {
-    list[list.length - 1] = {
-      ...last,
       rawText,
-      text: visibleText,
-    };
+      role: "assistant",
+      stream: true,
+      text: stripHiddenReasoning(rawText),
+    });
     return;
   }
-  list.push({
+  const rawText = text;
+  list.splice(placeIndex(list, turnId, requestId), 0, {
     id: createTurnId("assistant"),
-    role: "assistant",
     rawText,
+    role: "assistant",
     stream: true,
-    text: visibleText,
+    text: stripHiddenReasoning(rawText),
+    turnId,
   });
 }
 
-function appendReasoningTo(list: UiTurn[], text: string): void {
+function appendReasoningTo(list: UiTurn[], text: string, turnId: string, requestId: string): void {
   if (!text) return;
-  const last = list.at(-1);
-  if (last?.role === "assistant" && last.stream) {
-    list[list.length - 1] = {
-      ...last,
-      reasoning: `${last.reasoning ?? ""}${text}`,
+  const index = streamingIndex(list, turnId);
+  if (index >= 0) {
+    const current = list[index];
+    list[index] = {
+      ...current,
+      reasoning: `${current.reasoning ?? ""}${text}`,
+      ...(turnId ? { turnId } : {}),
     };
     return;
   }
-  list.push({
+  const bubble: UiTurn = {
     id: createTurnId("assistant"),
-    role: "assistant",
     reasoning: text,
+    role: "assistant",
     stream: true,
     text: "",
-  });
+    ...(turnId ? { turnId } : {}),
+  };
+  if (!turnId) {
+    list.push(bubble);
+    return;
+  }
+  list.splice(placeIndex(list, turnId, requestId), 0, bubble);
 }
 
-function appendErrorTo(list: UiTurn[], text: string): void {
+function streamingIndex(list: UiTurn[], turnId: string): number {
+  if (turnId) {
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      const item = list[index];
+      if (item?.role === "assistant" && item.stream && item.turnId === turnId) return index;
+    }
+    return -1;
+  }
+  const last = list.at(-1);
+  return last?.role === "assistant" && last.stream ? list.length - 1 : -1;
+}
+
+function placeIndex(list: UiTurn[], turnId: string, requestId: string): number {
+  if (!turnId || !requestId) return list.length;
+  const anchor = list.findIndex((item) => item.role === "user" && item.requestId === requestId);
+  if (anchor < 0) return list.length;
+  let index = anchor + 1;
+  while (index < list.length && list[index]?.turnId === turnId) index += 1;
+  return index;
+}
+
+function requestIdOf(state: UiState, event: KernelEvent): string {
+  const recorded = event.turn_id ? state.turnRequests.get(event.turn_id) : "";
+  return recorded || event.request_id || "";
+}
+
+function appendErrorTo(list: UiTurn[], text: string, at = list.length): void {
   if (text) {
-    list.push({ id: createTurnId("error"), role: "error", text });
+    list.splice(at, 0, { id: createTurnId("error"), role: "error", text });
   }
 }
 
@@ -495,6 +624,9 @@ function finishChat(state: UiState, requestId: string | undefined): void {
 function finishConversation(state: UiState, pid: number | undefined): void {
   if (pid === undefined) return;
   const id = String(pid);
+  for (const activePid of state.activeTurns.values()) {
+    if (activePid === id) return;
+  }
   for (const conversation of state.conversations) {
     if (conversation.pid === id && conversation.queue.length === 0) {
       conversation.awaiting = false;

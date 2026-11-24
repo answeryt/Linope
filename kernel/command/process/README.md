@@ -54,7 +54,7 @@ Without `--once` the command stays until the process exits or the window stops.
 | `show <pid> [address]` | Returns the process page. When the process has memory, the page includes the memory contents for that address. |
 | `trace <pid>` | Returns that process's activity rows. |
 
-`load message` to a process with memory always runs a page turn. The window does not need to be able to launch another process for that. `process start` is offered on the page only when it can. `load message` to the process itself records activity `self` while the call runs, then `sleeping` when it returns. What a person said, model output, tool output, and a handed-back task result are written into that process's memory when it has one. Those bodies are not written to the process ledger. A tool load sends its body unchanged.
+`load message` to a process with memory always runs a page turn. The window does not need to be able to launch another process for that. `process start` is offered on the page only when it can. `load message` to the process itself records activity `self` while the call runs, then `sleeping` when it returns. What a person said, model output, tool output, and a handed-back task result are written into that process's memory when it has one. When a turn ends, the rows it brought back are written in order, and then the final answer. Those bodies are not written to the process ledger. A tool load sends its body unchanged.
 
 After the window closes, `show` reads the saved ledger. The dialogue body was kept in the memory entity, not in the ledger file.
 

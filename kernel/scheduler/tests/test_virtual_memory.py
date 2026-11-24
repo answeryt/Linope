@@ -17,7 +17,7 @@ from kernel.process.process_manager.reaper import ProcessReaper
 from kernel.process.reconcile import ProcessReconciler
 from kernel.process.resource_record import ProcessResourceBook, RecordStatus
 from kernel.resource.lease import ResourceLeaseManager
-from kernel.resource.memory.backends import SqliteStore, configured_backend
+from kernel.resource.memory.backends import LocalStore, configured_backend, open_store, write_backend_config
 from kernel.resource.memory.fit import fit_named_read, register_fitter, sliding_window_fit
 from kernel.resource.memory.records import MemoryRow
 from kernel.resource.memory.runtime import MemoryRuntime
@@ -47,25 +47,44 @@ def test_a_read_stops_when_the_budget_is_spent() -> None:
     assert "message/0" in advised[0].content
 
 
-def test_sqlite_keeps_rows_after_a_new_runtime(tmp_path: Path) -> None:
-    path = tmp_path / "memory.sqlite"
-    first = MemoryRuntime(SqliteStore(path))
+def test_local_keeps_rows_and_drops_pages_after_a_new_runtime(tmp_path: Path) -> None:
+    path = tmp_path / "memory"
+    first = MemoryRuntime(LocalStore(path))
     assert first.append(
         resource_id="shared",
         scope="chat",
-        holders=[("1", ("message",))],
+        holders=[("1", ("message", "system"))],
         writer_pid="1",
         kind="user",
         content="remembered",
         row_state="asked",
     ) == "chat/message/0"
-    second = MemoryRuntime(SqliteStore(path))
+    first.write_system(
+        resource_id="shared",
+        scope="chat",
+        holders=[("1", ("message", "system"))],
+        writer_pid="1",
+        name="role",
+        text="You are a helper.",
+    )
+    seen = first.contents(
+        resource_id="shared",
+        scope="chat",
+        pid="1",
+        classes=("message",),
+        selector=[(None, "message", 0, 0)],
+        foreign={},
+    )
+    assert seen[0]["content"] == "remembered"
+    second = MemoryRuntime(LocalStore(path))
     assert second.store.row("shared", "message/0").content == "remembered"
+    assert second.store.seq("shared") == 2
+    assert second.store.system_text("shared") == "You are a helper."
     with pytest.raises(PermissionError):
         second.contents(
             resource_id="shared",
             scope="chat",
-            pid="2",
+            pid="1",
             classes=("message",),
             selector=[(None, "message", 0, 0)],
             foreign={},
@@ -73,13 +92,20 @@ def test_sqlite_keeps_rows_after_a_new_runtime(tmp_path: Path) -> None:
     restored = second.contents(
         resource_id="shared",
         scope="chat",
-        pid="2",
+        pid="1",
         classes=("message",),
         selector=[("chat", "message", 0, 0)],
         foreign={"chat": ("shared", "chat")},
     )
     assert restored[0]["content"] == "remembered"
     assert restored[0]["address"] == "chat/message/0"
+
+
+def test_local_pages_round_trip_in_one_runtime(tmp_path: Path) -> None:
+    store = LocalStore(tmp_path / "memory")
+    store.save_page("1", "shared", {"message": ["message/0"]})
+    assert store.load_page("1", "shared") == {"message": ["message/0"]}
+    assert (tmp_path / "memory").joinpath("shared", "pages.json").is_file()
 
 
 def test_concurrent_appends_do_not_lose_a_row() -> None:
@@ -172,8 +198,20 @@ def test_host_limits_are_not_memory_pages() -> None:
 
 def test_the_memory_command_records_the_chosen_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "memory"
     assert memory_command(["backend"])["backend"] == "memory"
-    assert memory_command(["backend", "sqlite", "--path", str(tmp_path / "memory.sqlite")])["backend"] == "sqlite"
-    assert configured_backend(tmp_path)[0] == "sqlite"
+    assert memory_command(["backend", "local", "--path", str(folder)]) == {
+        "backend": "local",
+        "path": str(folder),
+    }
+    assert folder.is_dir()
+    assert configured_backend(tmp_path) == ("local", str(folder))
     assert memory_command(["backend", "memory"])["backend"] == "memory"
     assert configured_backend(tmp_path) == ("memory", "")
+
+
+def test_an_old_sqlite_config_reads_as_memory(tmp_path: Path) -> None:
+    write_backend_config("sqlite", str(tmp_path / "notes.sqlite"), tmp_path)
+    assert configured_backend(tmp_path) == ("memory", "")
+    with pytest.raises(ValueError, match="local backend requires a path"):
+        open_store("local", "", tmp_path)

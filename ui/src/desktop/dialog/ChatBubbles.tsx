@@ -1,10 +1,16 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type WheelEvent } from "react";
 import { motion, type MotionStyle } from "motion/react";
 import { DotIndicator } from "flickering-dots/react";
 import type { UiTurn } from "@/desktop/link/state";
 import { MessageMarkdown } from "@/desktop/dialog/MessageMarkdown";
 
 const BUBBLE_SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0.15 };
+
+const STICK_GAP = 4;
+
+function fromBottom(node: HTMLElement): number {
+  return node.scrollHeight - node.scrollTop - node.clientHeight;
+}
 
 const bubbleColumn =
   "flex min-h-full flex-col items-end justify-end gap-2.5 px-5 pb-[22px] pt-11";
@@ -50,15 +56,56 @@ function ChatBubbles({
   style?: MotionStyle;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const adjustingRef = useRef(false);
+  const heightRef = useRef(0);
+  const topRef = useRef(0);
+  const openedRef = useRef<string | undefined>(undefined);
+  const countRef = useRef(0);
   const [expandedReasoning, setExpandedReasoning] = useState<Set<string>>(new Set());
 
   useLayoutEffect(() => {
     const node = listRef.current;
-    if (!node) {
+    const opened = messages[0]?.id;
+    if (opened !== openedRef.current) {
+      openedRef.current = opened;
+      stickRef.current = true;
+    }
+    const latest = messages.at(-1);
+    if (messages.length > countRef.current && latest?.role === "user") {
+      stickRef.current = true;
+    }
+    countRef.current = messages.length;
+    if (node && stickRef.current) {
+      adjustingRef.current = true;
+      node.scrollTop = node.scrollHeight;
+      adjustingRef.current = false;
+    }
+    if (node) {
+      heightRef.current = node.scrollHeight;
+      topRef.current = node.scrollTop;
+    }
+  }, [messages]);
+
+  const onWheel = (event: WheelEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (event.deltaY < 0) stickRef.current = false;
+  };
+
+  const onScroll = () => {
+    const node = listRef.current;
+    if (!node || adjustingRef.current) return;
+    const movedUp = node.scrollTop < topRef.current - 0.5;
+    topRef.current = node.scrollTop;
+    const grew = node.scrollHeight !== heightRef.current;
+    heightRef.current = node.scrollHeight;
+    if (movedUp) {
+      stickRef.current = false;
       return;
     }
-    node.scrollTop = node.scrollHeight;
-  }, [messages]);
+    if (grew && stickRef.current) return;
+    stickRef.current = fromBottom(node) <= STICK_GAP;
+  };
 
   const toggleReasoning = (id: string) => {
     setExpandedReasoning((current) => {
@@ -77,7 +124,8 @@ function ChatBubbles({
     <motion.div
       aria-label="对话"
       className={className}
-      onWheel={(event) => event.stopPropagation()}
+      onScroll={onScroll}
+      onWheel={onWheel}
       ref={listRef}
       role="log"
       style={{

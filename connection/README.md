@@ -13,6 +13,7 @@ Supported actions:
 - `process.create`: compile to `process start ...`.
 - `environment.load`: remember an environment file reference.
 - `model.configure`: compile model core/card commands.
+- `memory.configure`: compile `memory backend memory` or `memory backend local --path <folder>`.
 - `command.execute`: legacy command compatibility for the TUI.
 
 Run it from the repository root with:

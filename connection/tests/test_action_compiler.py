@@ -86,6 +86,28 @@ def test_model_configuration_compiles_in_order() -> None:
     ]
 
 
+def test_memory_configuration_compiles_to_backend_command() -> None:
+    compiled = compile_action(
+        request("memory.configure", {"backend": "local", "path": "D:/linope-memory"})
+    )
+
+    assert shlex.split(compiled.commands[0]) == [
+        "memory",
+        "backend",
+        "local",
+        "--path",
+        "D:/linope-memory",
+    ]
+    assert compiled.completion == "command"
+    memory = compile_action(request("memory.configure", {"backend": "memory"}))
+    assert shlex.split(memory.commands[0]) == ["memory", "backend", "memory"]
+
+
+def test_memory_configuration_requires_a_local_path() -> None:
+    with pytest.raises(ProtocolError, match="path must be a non-empty string"):
+        compile_action(request("memory.configure", {"backend": "local"}))
+
+
 def test_invalid_environment_keys_are_rejected() -> None:
     with pytest.raises(ProtocolError, match="envKeys requires"):
         compile_action(

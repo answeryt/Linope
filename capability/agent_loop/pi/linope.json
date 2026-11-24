@@ -17,8 +17,7 @@
       "tools.glob",
       "tools.grep",
       "tools.pwsh",
-      "tools.ddgs",
-      "tools.ask_user"
+      "tools.ddgs"
     ]
   },
   "changes": ["model"],

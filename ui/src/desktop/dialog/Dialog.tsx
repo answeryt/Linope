@@ -18,7 +18,7 @@ import { AppsBodySlot, AppsIsland, AppsLensSlot } from "@/desktop/apps/AppsPanel
 import { ToolBodySlot, ToolIsland, ToolLensSlot } from "@/desktop/apps/HostedAppWindow";
 import { EdgeSidebar } from "@/desktop/apps/EdgeSidebar";
 import { useKernelSession } from "@/desktop/link/useKernelSession";
-import { hostedMessages } from "@/desktop/link/state";
+import { currentWindowLines, hostedMessages } from "@/desktop/link/state";
 import { loopAppId, routeDraft } from "@/desktop/link/route";
 import { useSettings } from "@/desktop/setting/settings";
 import { loops } from "virtual:capability-desktops";
@@ -270,6 +270,7 @@ function Dialog({ children }: { children: ReactNode }) {
     : null;
   const loopTasks = loopProcess ? state.tasks.filter((task) => task.pid === loopProcess.id) : [];
   const loopMessages = hostedMessages(state, loopCapability, selectedConversation?.pid);
+  const windowLines = currentWindowLines(state, selectedConversation);
 
   const deliverToLoop = (value: string, capability: string, appId: string) => {
     if (toolAppId !== appId || !toolVisible) {
@@ -444,6 +445,7 @@ function Dialog({ children }: { children: ReactNode }) {
         onClose={() => settingsFrame.close(() => setSettingsOpen(false))}
         onFullscreen={settingsFrame.toggleFullscreen}
         onMinimize={settingsFrame.toggleMinimize}
+        lines={windowLines}
         onResizeStart={settingsFrame.startResize}
         open={settingsVisible}
         processes={state.processes}

@@ -328,7 +328,11 @@ class Drive:
             task.move("done")
         self._parents.pop(task_id, None)
         turn.helpers = [item for item in turn.helpers if item != task_id]
-        turn.pending_signals.append({"thread": task_id, "result": result, "error": error})
+        signal = {"thread": task_id, "result": result, "error": error}
+        call_id = "" if task is None else str(task.registers.get("call_id") or "")
+        if call_id:
+            signal["call_id"] = call_id
+        turn.pending_signals.append(signal)
         self._deliver_signal(turn)
 
     def _await_signal(self, turn: Turn) -> None:
@@ -363,6 +367,11 @@ class Drive:
     def _on_command(self, turn: Turn, line: str) -> None:
         turn.accepting_signal = False
         if is_model_line(self.runtime, line):
+            if turn.pending_signals:
+                items = list(turn.pending_signals)
+                turn.pending_signals = []
+                self._say(turn, {"type": "signals", "items": items}, "")
+                return
             turn.pending = line
             if turn.task is not None:
                 turn.task.move("ask_model", command=line)
@@ -505,11 +514,12 @@ class Drive:
         if event in {"closed", "error"}:
             self._finish(turn, error=str(reply.get("error") or "This process is gone"))
             return
-        self._finish(turn, result=reply.get("result"))
+        self._finish(turn, result=reply.get("result"), rows=reply.get("rows"))
 
-    def _finish(self, turn: Turn, result: Any = None, error: str = "") -> None:
+    def _finish(self, turn: Turn, result: Any = None, error: str = "", rows: Any = None) -> None:
         from kernel.command.process.listen import (
             _keep_output,
+            _keep_rows,
             _note,
             _output_text,
             _pid_of,
@@ -553,6 +563,7 @@ class Drive:
             )
         else:
             if turn.keep:
+                _keep_rows(turn.process, rows)
                 _keep_output(turn.process, turn.kind, turn.body, result)
             if turn.sender is not None:
                 _remember(turn.sender, "other", _output_text(result))

@@ -12,7 +12,7 @@ A process sees the handle, the kind, and the call parameters. The entity id stay
 
 [`memory/`](memory/README.md) is one logical memory. The resource entity keeps only a scope handle. Rows live in a `MemoryStore`, and page tables live in `MemoryRuntime`.
 
-A stored name is `message/0`, `task/0`, `artifact/0`, or `system`. The default backend is in-process. `linope memory backend` can select `sqlite` and a path. A model receives the system prompt and the current user message, then reads older rows by address.
+A stored name is `message/0`, `task/0`, `artifact/0`, or `system`. The default backend is in-process. `linope memory backend` can select `local` and a folder. A model receives the system prompt and the current user message, then reads older rows by address.
 
 Every process that holds the entity shares those stored names. A process's own `message/0` can point at a different stored name. Who may read or write is [`kernel/scheduler`](../scheduler/README.md).
 

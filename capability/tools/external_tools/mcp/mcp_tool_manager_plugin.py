@@ -52,6 +52,32 @@ def capability_profile(capability_id, changes):
     )
 
 
+def discover_tools() -> list[dict[str, Any]]:
+    """The tools MCPHub is serving. Same list as ``load`` with name ``list``."""
+
+    payload = _listed(load("tool", {"name": "list"}))
+    tools = payload.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise RuntimeError("MCPHub returned no tools")
+    rows: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise RuntimeError("MCPHub returned no tools")
+        name = str(tool.get("name") or "").strip()
+        if not name:
+            raise RuntimeError("MCPHub returned no tools")
+        parameters = tool.get("parameters")
+        rows.append({
+            "name": name,
+            "description": str(tool.get("description") or ""),
+            "parameters": parameters if isinstance(parameters, dict) else {
+                "type": "object",
+                "properties": {},
+            },
+        })
+    return rows
+
+
 def hub_url() -> str:
     """The Streamable HTTP endpoint written beside this plugin."""
 
@@ -119,6 +145,18 @@ async def _schemas(session: ClientSession) -> list[dict[str, Any]]:
         cursor = getattr(page, "nextCursor", None)
         if not cursor:
             return found
+
+
+def _listed(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else None
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("MCPHub returned no tools") from exc
+    if not isinstance(raw, dict) or raw.get("success") is not True:
+        message = str(raw.get("error") or "").strip() if isinstance(raw, dict) else ""
+        raise RuntimeError(message or "MCPHub returned no tools")
+    return raw
 
 
 def _tool_call(kind, body) -> tuple[str, dict[str, Any]]:

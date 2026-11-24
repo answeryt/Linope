@@ -56,7 +56,7 @@ def usage() -> tuple[str, ...]:
         "linope model run -- <message or JSON request>",
         "linope service start <pid> [<pid> ...]",
         "linope service load <service id> -- <body>",
-        "linope memory backend [memory | sqlite --path <file>]",
+        "linope memory backend [memory | local --path <folder>]",
         "linope resource serve",
         "linope log [pid]",
         "linope terminal",

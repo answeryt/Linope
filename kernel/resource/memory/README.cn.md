@@ -12,7 +12,7 @@
 {"scope": "chat", "backend": ""}
 ```
 
-`scope` 是这份记忆的身份，例如 `chat`。正文、序号和页表在 `MemoryStore`。默认后端是进程内的 `memory`。用户可以用 `linope memory backend` 改成 `sqlite`，并自己给出文件路径。
+`scope` 是这份记忆的身份，例如 `chat`。正文和序号在 `MemoryStore`。默认后端是进程内的 `memory`。用户可以用 `linope memory backend` 改成 `local`，并自己给出文件夹。页表只在本次运行内保存，存储再次打开时清空。
 
 `items` 放行。键就是真名：`message/0`、`task/0`、`artifact/0`，或 `system`。`next` 是 `message`、`task`、`artifact` 各自的下一个编号。`seq` 是整本字典的一个计数器，后写下的行 `seq` 更大。
 
@@ -45,7 +45,7 @@
 }
 ```
 
-这些真名属于这份记忆。持有它的每个进程共用这些真名。进程自己的地址也写成 `message/0`，它可以指向另一个真名。那张表是这个进程的页表，由 `MemoryRuntime` 保存，并可以随存储后端恢复。模型默认只看到 system 提示词和当前用户消息。它用 `message/0` 这样的地址读取旧行。
+这些真名属于这份记忆。持有它的每个进程共用这些真名。进程自己的地址也写成 `message/0`，它可以指向另一个真名。那张表是这个进程的页表，由 `MemoryRuntime` 保存。页表只在本次运行内保存，重启后清空。模型默认只看到 system 提示词和当前用户消息。它用 `message/0` 这样的地址读取旧行。
 
 ## 写下一行
 
