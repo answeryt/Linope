@@ -40,6 +40,10 @@
 
 工具的这份声明由 [`kernel/process/profiles.py`](../kernel/process/profiles.py) 里的 `tool_with_workspace` 和 `tool_only` 生成。哪些名字算只读、命令或写入，以及 `--change permission=` 和 `--change capabilities=` 如何选择模型能看见的工具，在 [`kernel/process`](../kernel/process/README.cn.md)。
 
+## 应用市场
+
+出现在应用市场的应用，目录里要同时有 `desktop.tsx` 和 `introduction.md`。`desktop.tsx` 导出 `appId`，形如 `file:文件`。`introduction.md` 以空行分段：第一段是一句话摘要，其余段是说明。扫描读这两份文件的文本。缺少介绍、没有摘要或没有说明时，界面构建失败，该应用不会进入市场。
+
 ## 目录
 
 | 目录 | 职责 |

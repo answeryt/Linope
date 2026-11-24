@@ -40,6 +40,10 @@ A later request calls `load(kind, body, call_params=None)`. `kind` is the resour
 
 `tool_with_workspace` and `tool_only` in [`kernel/process/profiles.py`](../kernel/process/profiles.py) build that declaration for a tool. Which names count as read, command, or write, and how `--change permission=` and `--change capabilities=` choose the tools a model sees, is [`kernel/process`](../kernel/process/README.md).
 
+## App store
+
+An app that appears in the store keeps both `desktop.tsx` and `introduction.md` in its directory. `desktop.tsx` exports `appId`, such as `file:文件`. `introduction.md` is split on blank lines: the first paragraph is the one-line summary, and the remaining paragraphs are the description. The scan reads the text of both files. A missing introduction, a missing summary, or a missing description fails the UI build, and that app does not enter the store.
+
 ## Directories
 
 | Directory | Role |

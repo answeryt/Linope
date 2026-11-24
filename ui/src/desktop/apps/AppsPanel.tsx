@@ -235,9 +235,7 @@ const sidebarApps = [
   ...APPS.filter((app) => app.id === "other"),
 ];
 
-const featuredApps = APPS.filter((app) =>
-  (["file", "code", "sandbox", "context", "loop"] as AppId[]).includes(app.id),
-);
+const featuredApps = APPS.filter((app) => app.featured);
 
 function placeOf(screen: Screen): Place {
   return screen.kind === "feature" ? screen.back : screen;
@@ -620,6 +618,29 @@ function FamilyPage({ id, onBack, onOpen }: { id: AppId; onBack: () => void; onO
   );
 }
 
+function Description({ text }: { text: string }) {
+  const paragraphs = text
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+  return (
+    <div style={{ maxWidth: 560 }}>
+      {paragraphs.map((paragraph, index) => (
+        <p
+          key={index}
+          style={{
+            margin: index === paragraphs.length - 1 ? 0 : "0 0 12px",
+            fontSize: 15,
+            lineHeight: "24px",
+          }}
+        >
+          {paragraph}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function FeaturePage({ featureId, onBack }: { featureId: string; onBack: () => void }) {
   const feature = features.find((item) => item.id === featureId);
   if (!feature) return null;
@@ -634,7 +655,7 @@ function FeaturePage({ featureId, onBack }: { featureId: string; onBack: () => v
         </div>
       </div>
       <h2 style={{ margin: "18px 0 8px", fontSize: 17, fontWeight: 700, lineHeight: "22px" }}>说明</h2>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: "22px" }}>{feature.detail}</p>
+      <Description text={feature.detail} />
     </div>
   );
 }

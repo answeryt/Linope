@@ -1,3 +1,5 @@
+import { introductions } from "virtual:capability-desktops";
+
 type AppId = "file" | "code" | "terminal" | "other" | "sandbox" | "context" | "loop" | "mcp";
 
 type AppFeature = {
@@ -9,90 +11,64 @@ type AppEntry = {
   id: AppId;
   name: string;
   summary: string;
+  featured: boolean;
   features: AppFeature[];
 };
 
-const APPS: AppEntry[] = [
-  {
-    id: "file",
-    name: "文件",
-    summary: "文件读写、编辑和目录访问。",
-    features: [
-      {
-        name: "文件",
-        detail: "read、write、edit、str_replace_editor、glob、grep、read_image，以及合并的 file_ops。",
-      },
-    ],
-  },
-  {
-    id: "code",
-    name: "代码",
-    summary: "运行代码并处理代码相关任务。",
-    features: [{ name: "运行代码", detail: "run_code 运行一个调用其他工具的 Python 程序，不是 shell 命令。" }],
-  },
-  {
-    id: "terminal",
-    name: "终端",
-    summary: "持久终端会话。",
-    features: [{ name: "终端", detail: "持久终端会话。宿主注入回调后，才能读、聚焦或关闭桌面窗格。" }],
-  },
-  {
-    id: "other",
-    name: "其它",
-    summary: "搜索、提问和外部工具宿主。",
-    features: [
-      {
-        name: "网页搜索",
-        detail: "ddgs、brave_free、exa、tavily、firecrawl、parallel、searxng。每个提供者一个插件。",
-      },
-    ],
-  },
-  {
-    id: "sandbox",
-    name: "沙箱",
-    summary: "同一份文件访问策略，用在文件工具和外部进程上。",
-    features: [
-      { name: "沙盒工具", detail: "在隔离环境中运行代码、访问文件并测试想法。" },
-    ],
-  },
-  {
-    id: "context",
-    name: "上下文",
-    summary: "压缩这次窗口，并算出从哪一条裁起。",
-    features: [
-      {
-        name: "上下文压缩工具",
-        detail: "智能压缩当前窗口，减少上下文占用并保留关键信息。",
-      },
-    ],
-  },
-  {
-    id: "loop",
-    name: "循环",
-    summary: "一轮里问模型，要工具就执行，再问一次。",
-    features: [
-      {
-        name: "linope",
-        detail: "回复里没有工具调用、也没有还在跑的工具时，这一轮结束。模型和工具都走内核命令。",
-      },
-      {
-        name: "pi",
-        detail: "换上 Pi 的循环。问模型仍写 model use 和 model run，工具仍用 process start 和 load tool。",
-      },
-    ],
-  },
-  {
-    id: "mcp",
-    name: "MCP",
-    summary: "连接外部工具服务器并调用其提供的工具。",
-    features: [
-      {
-        name: "MCPHub",
-        detail: "连接本机 MCPHub，列出并调用它正在提供的工具。",
-      },
-    ],
-  },
+type Shelf = {
+  id: AppId;
+  name: string;
+  summary?: string;
+  featured?: boolean;
+};
+
+const SHELVES: Shelf[] = [
+  { id: "file", name: "文件", featured: true },
+  { id: "code", name: "代码", featured: true },
+  { id: "terminal", name: "终端" },
+  { id: "other", name: "其它" },
+  { id: "sandbox", name: "沙箱", featured: true },
+  { id: "context", name: "上下文", featured: true },
+  { id: "loop", name: "循环", summary: "按步骤完成一项任务，直到给出结果。", featured: true },
+  { id: "mcp", name: "MCP" },
 ];
+
+function splitAppId(appId: string) {
+  const index = appId.indexOf(":");
+  if (index <= 0 || index === appId.length - 1) {
+    throw new Error(`appId 应为「分类:名称」：${appId}`);
+  }
+  return { categoryId: appId.slice(0, index), name: appId.slice(index + 1) };
+}
+
+const featuresByCategory = new Map<string, Array<AppFeature & { summary: string }>>();
+for (const [appId, introduction] of Object.entries(introductions)) {
+  const { categoryId, name } = splitAppId(appId);
+  const rows = featuresByCategory.get(categoryId) ?? [];
+  rows.push({ name, detail: introduction.detail, summary: introduction.summary });
+  featuresByCategory.set(categoryId, rows);
+}
+
+for (const categoryId of featuresByCategory.keys()) {
+  if (!SHELVES.some((shelf) => shelf.id === categoryId)) {
+    throw new Error(`应用分类不在货架上：${categoryId}`);
+  }
+}
+
+const APPS: AppEntry[] = SHELVES.flatMap((shelf) => {
+  const rows = featuresByCategory.get(shelf.id) ?? [];
+  if (rows.length === 0) return [];
+  const summary = shelf.summary ?? (rows.length === 1 ? rows[0].summary : "");
+  return [
+    {
+      id: shelf.id,
+      name: shelf.name,
+      summary,
+      featured: Boolean(shelf.featured),
+      features: rows.map(({ name, detail }) => ({ name, detail })),
+    },
+  ];
+});
 
 export type { AppEntry, AppFeature, AppId };
 export { APPS };

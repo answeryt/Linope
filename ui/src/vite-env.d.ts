@@ -2,6 +2,11 @@
 
 declare module "*.css";
 
+declare module "*?raw" {
+  const content: string;
+  export default content;
+}
+
 declare module "*.jpg" {
   const src: string;
   export default src;
@@ -44,6 +49,7 @@ declare module "virtual:capability-desktops" {
 
   export const desktops: Record<string, ComponentType<CapabilityDesktopProps>>;
   export const loops: Record<string, string>;
+  export const introductions: Record<string, { summary: string; detail: string }>;
 }
 
 interface LinopeKernelApi {
