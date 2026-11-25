@@ -35,6 +35,22 @@ class ContextLimitsTest(unittest.TestCase):
             self.limits.resolve_default_context_length("claude-opus-5"),
             1_000_000,
         )
+        self.assertEqual(
+            self.limits.resolve_default_context_length("deepseek-flash"),
+            1_048_576,
+        )
+        self.assertEqual(
+            self.limits.resolve_default_context_length("deepseek-v4-pro"),
+            1_048_576,
+        )
+        self.assertEqual(
+            self.limits.resolve_default_context_length("deepseek-v4-flash"),
+            1_048_576,
+        )
+        self.assertEqual(
+            self.limits.resolve_default_context_length("deepseek-legacy"),
+            128_000,
+        )
 
     def test_unknown_model_uses_fallback(self) -> None:
         self.assertEqual(
