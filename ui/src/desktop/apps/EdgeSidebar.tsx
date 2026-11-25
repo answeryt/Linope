@@ -8,7 +8,6 @@ import codeIcon from "@/desktop/apps/icons/代码.svg";
 import contextIcon from "@/desktop/apps/icons/上下文.png";
 import fileIcon from "@/desktop/apps/icons/文件.svg";
 import loopLogo from "@/desktop/apps/icons/2f4014a4d031fae593e3b39842950b7d.jpg";
-import piLogo from "@/desktop/apps/icons/02b3d27d8a40705a9070869e18568a21.png";
 import sandboxLogo from "@/desktop/apps/icons/5ea23a3a592737f004949841de4d3bee.jpg";
 import searchIcon from "@/desktop/apps/icons/搜索.svg";
 import terminalIcon from "@/desktop/apps/icons/终端.svg";
@@ -32,7 +31,6 @@ const featureIcons: Record<string, string> = {
   网页搜索: searchIcon,
   运行代码: codeIcon,
   linope: loopLogo,
-  pi: piLogo,
   沙盒工具: sandboxLogo,
   上下文压缩工具: contextIcon,
   MCPHub: mcpHubIcon,
@@ -77,6 +75,10 @@ function EdgeSidebar({ onOpenApp, onOpenStore }: EdgeSidebarProps) {
     setExpanded(false);
     onOpenApp(id);
   };
+  const visibleApps = installedApps.flatMap((installed) => {
+    const feature = features.find((item) => item.id === installed.id);
+    return feature ? [{ feature, installed }] : [];
+  });
 
   return (
     <motion.aside
@@ -113,7 +115,7 @@ function EdgeSidebar({ onOpenApp, onOpenStore }: EdgeSidebarProps) {
               <div className="min-w-0 flex-1">
                 <div style={{ fontSize: 15, fontWeight: 700, lineHeight: "20px" }}>常用应用</div>
                 <div style={{ color: "rgba(28,28,30,0.58)", fontSize: 12, lineHeight: "17px" }}>
-                  {installedApps.length} 个已下载
+                  {visibleApps.length} 个已下载
                 </div>
               </div>
               <button
@@ -126,7 +128,7 @@ function EdgeSidebar({ onOpenApp, onOpenStore }: EdgeSidebarProps) {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" style={{ scrollbarWidth: "thin" }}>
-              {installedApps.length === 0 ? (
+              {visibleApps.length === 0 ? (
                 <div
                   className="mx-1 mt-2 rounded-2xl bg-white/35 px-3 py-4 text-center"
                   style={{ color: "rgba(28,28,30,0.62)", fontSize: 13, lineHeight: "19px" }}
@@ -134,9 +136,7 @@ function EdgeSidebar({ onOpenApp, onOpenStore }: EdgeSidebarProps) {
                   还没有下载的应用
                 </div>
               ) : (
-                installedApps.map((installed) => {
-                  const feature = features.find((item) => item.id === installed.id);
-                  if (!feature) return null;
+                visibleApps.map(({ feature, installed }) => {
                   return (
                     <button
                       aria-label={`打开 ${feature.name}`}
