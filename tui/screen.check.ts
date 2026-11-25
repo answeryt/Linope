@@ -11,6 +11,7 @@ import {
   retainScroll,
   scrollbarThumb,
   scrollToTrack,
+  stripAnsi,
   wrapText,
   type Turn
 } from './screen.ts'
@@ -232,5 +233,45 @@ live.text = `${'中'.repeat(80)}结束`
 const later = renderScreen({ ...state, columns: 40, rows: 48, turns: [live] })
 assert.equal(later.includes('结束'), true)
 assert.notEqual(later, early)
+
+const historyOf = (text: string, role: Turn['role']) => {
+  const view = { ...state, columns: 80, rows: 24, turns: [{ role, text }] }
+  const screen = renderScreen(view)
+  const layout = historyLayout(view)
+
+  return screen.split('\n').slice(layout.historyTop, layout.historyTop + layout.historyRows).join('\n')
+}
+
+const firstHeading = historyOf('# 甲标题', 'assistant')
+assert.equal(stripAnsi(firstHeading).includes('# 甲标题'), false)
+assert.equal(stripAnsi(firstHeading).includes('甲标题'), true)
+assert.equal(firstHeading.includes('\x1b[1m'), true)
+assert.equal(firstHeading.includes('\x1b[4m'), true)
+
+const secondHeading = historyOf('## 乙标题', 'assistant')
+assert.equal(stripAnsi(secondHeading).includes('##'), false)
+assert.equal(stripAnsi(secondHeading).includes('乙标题'), true)
+assert.equal(secondHeading.includes('\x1b[1m'), true)
+assert.equal(secondHeading.includes('\x1b[4m'), false)
+
+const ruleView = { ...state, columns: 40, rows: 24, turns: [{ role: 'assistant' as const, text: '***' }] }
+const ruleScreen = renderScreen(ruleView)
+const ruleLayout = historyLayout(ruleView)
+const ruleHistory = ruleScreen.split('\n').slice(ruleLayout.historyTop, ruleLayout.historyTop + ruleLayout.historyRows).join('\n')
+assert.equal(stripAnsi(ruleHistory).includes('***'), false)
+assert.equal(stripAnsi(ruleHistory).includes('─'.repeat(Math.min(ruleLayout.contentWidth - 2, 80))), true)
+
+const emphasis = historyOf('**先花 5 分钟确认资格**：打开', 'assistant')
+assert.equal(stripAnsi(emphasis).includes('**'), false)
+assert.equal(stripAnsi(emphasis).includes('先花 5 分钟确认资格'), true)
+assert.equal(emphasis.includes('\x1b[1m'), true)
+
+const typed = historyOf('**保持** # 原样', 'user')
+assert.equal(stripAnsi(typed).includes('**保持**'), true)
+assert.equal(stripAnsi(typed).includes('# 原样'), true)
+
+const wrappedBold = wrapText(`\x1b[1m${'中'.repeat(10)}\x1b[22m`, 4)
+assert.equal(stripAnsi(wrappedBold.join('')), '中'.repeat(10))
+assert.ok(wrappedBold.every(line => displayWidth(line) <= 4))
 
 console.log('tui screen checks passed')
