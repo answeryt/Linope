@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "linope.installed-apps";
+const retiredIds = new Set(["loop:pi"]);
 
 type StoredInstalledApp = {
   id: string;
@@ -44,7 +45,16 @@ function load(): InstalledApp[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return sortInstalledApps(parsed.filter(isStoredInstalledApp));
+    const stored = sortInstalledApps(parsed.filter(isStoredInstalledApp));
+    const visible = stored.filter((app) => !retiredIds.has(app.id));
+    if (visible.length !== stored.length) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(visible));
+      } catch {
+        // 存储不可用时仍然不把已下线的应用留在本次列表里。
+      }
+    }
+    return visible;
   } catch {
     return [];
   }
@@ -77,7 +87,7 @@ function now() {
 }
 
 function installApp(id: string) {
-  if (!id || state.some((app) => app.id === id)) return;
+  if (!id || retiredIds.has(id) || state.some((app) => app.id === id)) return;
   const timestamp = now();
   commit([
     ...state,
