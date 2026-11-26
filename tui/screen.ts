@@ -1,5 +1,6 @@
 import { logoLines } from './banner.js'
 import type { Focus } from './focus.js'
+import { renderMarkdown } from './markdown.js'
 import { fg, fill, paint, reset, theme } from './theme.js'
 
 export type Role = 'assistant' | 'error' | 'system' | 'user'
@@ -238,6 +239,125 @@ const clip = (text: string, width: number) => {
 
 const isTrimmedAway = (char: string) => char.trim().length === 0
 
+type Atom = {
+  text: string
+  width: number
+  space: boolean
+}
+
+type Face = {
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  color: string | null
+}
+
+const blankFace = (): Face => ({ bold: false, italic: false, underline: false, color: null })
+
+const applySgr = (face: Face, seq: string): Face => {
+  const next: Face = { ...face }
+  const body = seq.slice(2, -1)
+  const params = (body.length ? body.split(';') : ['0']).map(part => Number.parseInt(part, 10) || 0)
+
+  for (let index = 0; index < params.length; index += 1) {
+    const code = params[index] ?? 0
+
+    if (code === 0) {
+      next.bold = false
+      next.italic = false
+      next.underline = false
+      next.color = null
+    } else if (code === 1) {
+      next.bold = true
+    } else if (code === 3) {
+      next.italic = true
+    } else if (code === 4) {
+      next.underline = true
+    } else if (code === 22) {
+      next.bold = false
+    } else if (code === 23) {
+      next.italic = false
+    } else if (code === 24) {
+      next.underline = false
+    } else if (code === 39) {
+      next.color = null
+    } else if (code === 38 && params[index + 1] === 2) {
+      const red = params[index + 2] ?? 0
+      const green = params[index + 3] ?? 0
+      const blue = params[index + 4] ?? 0
+
+      next.color = `\x1b[38;2;${red};${green};${blue}m`
+      index += 4
+    }
+  }
+
+  return next
+}
+
+const facePrefix = (face: Face) => {
+  let out = face.color ?? ''
+
+  if (face.bold) {
+    out += '\x1b[1m'
+  }
+
+  if (face.italic) {
+    out += '\x1b[3m'
+  }
+
+  if (face.underline) {
+    out += '\x1b[4m'
+  }
+
+  return out
+}
+
+const atomsOf = (para: string): { atoms: Atom[]; faces: Face[] } => {
+  const atoms: Atom[] = []
+  const faces: Face[] = []
+  let face = blankFace()
+  let index = 0
+
+  while (index < para.length) {
+    if (para[index] === '\x1b') {
+      const match = /^\x1b\[[0-9;]*m/.exec(para.slice(index))
+
+      if (match) {
+        face = applySgr(face, match[0])
+        atoms.push({ text: match[0], width: 0, space: false })
+        faces.push(face)
+        index += match[0].length
+
+        continue
+      }
+    }
+
+    const code = para.codePointAt(index) ?? 0
+    const text = String.fromCodePoint(code)
+
+    atoms.push({ text, width: charWidth(text), space: text === ' ' })
+    faces.push(face)
+    index += text.length
+  }
+
+  return { atoms, faces }
+}
+
+const paintSlice = (atoms: Atom[], faces: Face[], start: number, cut: number, trim: boolean) => {
+  const face = start > 0 ? faces[start - 1] ?? blankFace() : blankFace()
+  let body = ''
+
+  for (let index = start; index < cut; index += 1) {
+    body += atoms[index]?.text ?? ''
+  }
+
+  if (trim) {
+    body = body.trimEnd()
+  }
+
+  return facePrefix(face) + body
+}
+
 const wrap = (text: string, width: number): string[] => {
   const limit = Math.max(1, width)
   const out: string[] = []
@@ -249,30 +369,30 @@ const wrap = (text: string, width: number): string[] => {
       continue
     }
 
-    const chars = charsOf(para)
+    const { atoms, faces } = atomsOf(para)
     let start = 0
 
-    while (start < chars.length) {
+    while (start < atoms.length) {
       let used = 0
       let index = start
       let lastSpace = -1
 
-      for (; index < chars.length; index += 1) {
-        const next = charWidth(chars[index] ?? '')
+      for (; index < atoms.length; index += 1) {
+        const atom = atoms[index]
 
-        if (used + next > limit) {
+        if (!atom || used + atom.width > limit) {
           break
         }
 
-        if (chars[index] === ' ') {
+        if (atom.space) {
           lastSpace = index
         }
 
-        used += next
+        used += atom.width
       }
 
-      if (index >= chars.length) {
-        out.push(chars.slice(start).join(''))
+      if (index >= atoms.length) {
+        out.push(paintSlice(atoms, faces, start, atoms.length, false))
 
         break
       }
@@ -281,20 +401,20 @@ const wrap = (text: string, width: number): string[] => {
 
       if (cut <= start) {
         out.push('')
-        out.push(chars.slice(start).join(''))
+        out.push(paintSlice(atoms, faces, start, atoms.length, false))
 
         break
       }
 
-      out.push(chars.slice(start, cut).join('').trimEnd())
+      out.push(paintSlice(atoms, faces, start, cut, true))
 
       let next = cut
 
-      while (next < chars.length && isTrimmedAway(chars[next] ?? '')) {
+      while (next < atoms.length && isTrimmedAway(atoms[next]?.text ?? '')) {
         next += 1
       }
 
-      if (next >= chars.length) {
+      if (next >= atoms.length) {
         out.push('')
 
         break
@@ -388,9 +508,10 @@ const paintedTurn = (turn: Turn, contentWidth: number): string[] => {
   const prefix = turn.role === 'user' ? '❯ ' : turn.role === 'error' ? '! ' : marker || '  '
   const color = turnColor(turn.role)
   const pad = ' '.repeat(prefix.length)
-  const lines = wrap(turn.text, contentWidth - prefix.length).map((line, index) =>
-    fg(color, `${index === 0 ? prefix : pad}${line}`)
-  )
+  const limit = Math.max(1, contentWidth - prefix.length)
+  const body =
+    turn.role === 'assistant' || turn.role === 'system' ? renderMarkdown(turn.text, limit, color) : turn.text
+  const lines = wrap(body, limit).map((line, index) => fg(color, `${index === 0 ? prefix : pad}${line}`))
 
   lines.push('')
 

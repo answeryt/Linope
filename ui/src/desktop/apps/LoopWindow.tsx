@@ -1,6 +1,6 @@
 import { prefersReducedMotion } from "@/components/ui/glass-motion";
 import { ChatBubbles } from "@/desktop/dialog/ChatBubbles";
-import { EmptyPane, cardStyle, ink, quiet } from "@/desktop/apps/shell";
+import { cardStyle, ink, quiet } from "@/desktop/apps/shell";
 
 type ConversationTab = {
   id: string;
@@ -17,6 +17,12 @@ type LoopTask = {
   registers: Record<string, unknown>;
 };
 
+type LoopProcess = {
+  activity: "away" | "busy" | "waiting";
+  capability: string;
+  id: string;
+};
+
 type LoopWindowProps = {
   conversations?: ConversationTab[];
   empty: string;
@@ -29,11 +35,7 @@ type LoopWindowProps = {
   }>;
   onCreateConversation?: () => void;
   onSelectConversation?: (id: string) => void;
-  process?: {
-    activity: "away" | "busy" | "waiting";
-    capability: string;
-    id: string;
-  } | null;
+  process?: LoopProcess | null;
   selectedId?: string;
   tasks?: LoopTask[];
   title: string;
@@ -66,6 +68,22 @@ function note(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+function cornerStatus(tasks: LoopTask[], process: LoopProcess | null | undefined, title: string) {
+  const shown = tasks.find((task) => task.leader) ?? tasks[0];
+  const parts: string[] = [];
+  if (shown) {
+    const step = steps[shown.pc] ?? shown.pc;
+    const tool = note(shown.registers.tool);
+    parts.push(tool ? `${step} · ${tool}` : step);
+  }
+  if (process) {
+    parts.push(process.capability || title);
+    parts.push(activities[process.activity]);
+  }
+  if (tasks.length > 1) parts.push(`还有 ${tasks.length - 1} 步`);
+  return parts.join(" · ");
+}
+
 function LoopWindow({
   conversations = [],
   empty,
@@ -79,62 +97,36 @@ function LoopWindow({
 }: LoopWindowProps) {
   const reduced = prefersReducedMotion();
   const selected = conversations.find((item) => item.id === selectedId) ?? conversations[0];
-  const status = process
-    ? `${process.id} · ${process.capability || title} · ${activities[process.activity]}`
-    : empty;
+  const status = cornerStatus(tasks, process, title);
 
   return (
     <div style={{ color: ink, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "44px 16px 0" }}>
-        {conversations.map((tab) => {
-          const chosen = tab.id === (selected?.id ?? "");
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onSelectConversation?.(tab.id)}
-              style={{
-                background: chosen ? "rgba(255,255,255,0.82)" : "rgba(255,255,255,0.38)",
-                border: 0,
-                borderRadius: 999,
-                color: ink,
-                cursor: "pointer",
-                flex: "0 0 auto",
-                fontSize: 13,
-                lineHeight: "18px",
-                padding: "6px 12px",
-              }}
-              type="button"
-            >
-              {tabText(tab)}
-            </button>
-          );
-        })}
-        <button
-          aria-label="新建对话"
-          onClick={() => onCreateConversation?.()}
-          style={{
-            background: "rgba(255,255,255,0.38)",
-            border: 0,
-            borderRadius: 999,
-            color: ink,
-            cursor: "pointer",
-            flex: "0 0 auto",
-            fontSize: 13,
-            lineHeight: "18px",
-            padding: "6px 12px",
-          }}
-          type="button"
-        >
-          +
-        </button>
+      <div style={{ alignItems: "flex-end", display: "flex", height: 44, maxWidth: "46%", minWidth: 0, padding: "0 16px 6px" }}>
+        {status ? (
+          <p
+            style={{
+              color: quiet,
+              fontSize: 13,
+              lineHeight: "18px",
+              margin: 0,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+            }}
+            title={status}
+          >
+            {status}
+          </p>
+        ) : null}
       </div>
-      <p style={{ color: quiet, fontSize: 13, lineHeight: "18px", margin: 0, padding: "8px 16px 0" }}>{status}</p>
-      <div style={{ display: "flex", flex: 1, gap: 10, minHeight: 0, padding: "10px 16px 16px" }}>
+      <div style={{ display: "flex", flex: 1, gap: 10, minHeight: 0, padding: "0 16px 16px" }}>
         <aside
           style={{
             ...cardStyle,
             display: "flex",
-            flex: "0 0 196px",
+            flex: "0 0 220px",
             flexDirection: "column",
             gap: 8,
             minHeight: 0,
@@ -142,18 +134,56 @@ function LoopWindow({
             padding: 10,
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 650, lineHeight: "18px" }}>这一步</span>
-          {tasks.length === 0 ? <EmptyPane>还没有任务。</EmptyPane> : null}
-          {tasks.map((task) => {
-            const tool = note(task.registers.tool);
+          <button
+            aria-label="新建对话"
+            onClick={() => onCreateConversation?.()}
+            style={{
+              alignSelf: "flex-start",
+              background: "rgba(255,255,255,0.38)",
+              border: 0,
+              borderRadius: 999,
+              color: ink,
+              cursor: "pointer",
+              fontSize: 13,
+              lineHeight: "18px",
+              padding: "6px 12px",
+            }}
+            type="button"
+          >
+            +
+          </button>
+          {conversations.length === 0 ? (
+            <p style={{ color: quiet, fontSize: 13, lineHeight: "18px", margin: 0 }}>{empty}</p>
+          ) : null}
+          {conversations.map((tab) => {
+            const chosen = tab.id === (selected?.id ?? "");
+            const label = tabText(tab);
             return (
-              <div key={`${task.pid}:${task.id}`} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 14, lineHeight: "20px" }}>{task.leader ? "主任务" : task.id}</span>
-                <span style={{ color: quiet, fontSize: 12, lineHeight: "16px" }}>
-                  {steps[task.pc] ?? task.pc}
-                  {tool ? ` · ${tool}` : ""}
-                </span>
-              </div>
+              <button
+                key={tab.id}
+                onClick={() => onSelectConversation?.(tab.id)}
+                style={{
+                  background: chosen ? "rgba(255,255,255,0.82)" : "rgba(255,255,255,0.38)",
+                  border: 0,
+                  borderRadius: 12,
+                  boxSizing: "border-box",
+                  color: ink,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  lineHeight: "18px",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  width: "100%",
+                }}
+                title={label}
+                type="button"
+              >
+                {label}
+              </button>
             );
           })}
         </aside>

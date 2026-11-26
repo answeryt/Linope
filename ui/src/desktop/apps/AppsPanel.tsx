@@ -18,7 +18,6 @@ import fileIcon from "@/desktop/apps/icons/文件.svg";
 import filePoster from "@/desktop/apps/icons/文件读写工具：快速、安全、高效.png";
 import loopLogo from "@/desktop/apps/icons/2f4014a4d031fae593e3b39842950b7d.jpg";
 import loopPoster from "@/desktop/apps/icons/智能代理循环：持续思考与进化.png";
-import piLogo from "@/desktop/apps/icons/02b3d27d8a40705a9070869e18568a21.png";
 import sandboxIcon from "@/desktop/apps/icons/沙箱.svg";
 import sandboxLogo from "@/desktop/apps/icons/5ea23a3a592737f004949841de4d3bee.jpg";
 import sandboxPoster from "@/desktop/apps/icons/7bafeea92765a97475715e2f0cfff50e.jpg";
@@ -31,7 +30,6 @@ const featureIcons: Record<string, string> = {
   网页搜索: searchIcon,
   运行代码: codeIcon,
   linope: loopLogo,
-  pi: piLogo,
   沙盒工具: sandboxLogo,
   上下文压缩工具: contextIcon,
   MCPHub: mcpHubIcon,
@@ -775,11 +773,9 @@ function Mark({ label, large = false, src }: { label: string; large?: boolean; s
             transform:
               src === loopLogo
                 ? "translateX(2px) scale(1.25)"
-                : src === piLogo
-                  ? "scale(1.25)"
-                  : src === contextIcon
-                    ? "scale(0.9)"
-                    : undefined,
+                : src === contextIcon
+                  ? "scale(0.9)"
+                  : undefined,
             transformOrigin: src === loopLogo ? "50% 100%" : undefined,
           }}
           width={size}

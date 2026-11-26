@@ -15,7 +15,6 @@ import time
 from typing import Any, Callable
 
 from capability.agent_loop.linope.loop import CommandResult, Loop, adopt_remote_tools
-from capability.tools.external_tools.mcp.mcp_tool_manager_plugin import discover_tools
 
 _WRITE = threading.Lock()
 _HUB_CAPABILITY = "tools.mcp_tool_manager"
@@ -57,7 +56,7 @@ class _RemoteTools:
 
     def __init__(self, capability: str, discover: Discover | None = None) -> None:
         self.capability = capability
-        self._discover = discover or discover_tools
+        self._discover = discover
         self._ready = threading.Event()
         self._lock = threading.Lock()
         self._error: BaseException | None = None
@@ -67,7 +66,14 @@ class _RemoteTools:
 
     def _fetch(self) -> None:
         try:
-            self._rows = self._discover()
+            discover = self._discover
+            if discover is None:
+                from capability.tools.external_tools.mcp.mcp_tool_manager_plugin import (
+                    discover_tools,
+                )
+
+                discover = discover_tools
+            self._rows = discover()
         except Exception as exc:
             self._error = exc
         finally:

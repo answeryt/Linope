@@ -41,8 +41,11 @@ function splitAppId(appId: string) {
   return { categoryId: appId.slice(0, index), name: appId.slice(index + 1) };
 }
 
+const hiddenAppIds = new Set(["loop:pi"]);
+
 const featuresByCategory = new Map<string, Array<AppFeature & { summary: string }>>();
 for (const [appId, introduction] of Object.entries(introductions)) {
+  if (hiddenAppIds.has(appId)) continue;
   const { categoryId, name } = splitAppId(appId);
   const rows = featuresByCategory.get(categoryId) ?? [];
   rows.push({ name, detail: introduction.detail, summary: introduction.summary });
