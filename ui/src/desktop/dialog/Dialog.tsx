@@ -13,6 +13,16 @@ import {
   useChatFrame,
 } from "@/desktop/dialog/ChatPanel";
 import { dialogGlass, dialogSurface } from "@/desktop/dialog/glass";
+import {
+  AttachmentCircle,
+  AttachmentPreview,
+  attachmentAnchor,
+  attachmentsFromDrop,
+  mergeAttachments,
+  messageWithAttachments,
+  releaseAttachments,
+  type Attachment,
+} from "@/desktop/dialog/Attachments";
 import { SettingsBodySlot, SettingsIsland, SettingsLensSlot } from "@/desktop/setting/SettingsPanel";
 import { AppsBodySlot, AppsIsland, AppsLensSlot } from "@/desktop/apps/AppsPanel";
 import { ToolBodySlot, ToolIsland, ToolLensSlot } from "@/desktop/apps/HostedAppWindow";
@@ -35,15 +45,39 @@ const railApps = [
   { id: "all", label: "全部应用", icon: allAppsIcon },
 ];
 
+function dragHasFiles(event: DragEvent) {
+  const types = event.dataTransfer?.types;
+  return Boolean(types && Array.from(types).includes("Files"));
+}
+
+
+function pointInNode(event: DragEvent, node: HTMLElement | null) {
+  if (!node) return false;
+  const box = node.getBoundingClientRect();
+  return (
+    event.clientX >= box.left &&
+    event.clientX <= box.right &&
+    event.clientY >= box.top &&
+    event.clientY <= box.bottom
+  );
+}
+
 function Dialog({ children }: { children: ReactNode }) {
   const glass = dialogGlass;
   const barRef = useRef<HTMLDivElement>(null);
+  const circleRef = useRef<HTMLButtonElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const railWheelRef = useRef<(() => void) | null>(null);
   const [pressedId, setPressedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [fileOver, setFileOver] = useState(false);
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const {
     callCapability,
     conversations,
@@ -143,14 +177,72 @@ function Dialog({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    const onDragOver = (event: DragEvent) => {
+      event.preventDefault();
+      const over =
+        dragHasFiles(event) &&
+        (pointInNode(event, barRef.current) || pointInNode(event, circleRef.current));
+      if (event.dataTransfer) event.dataTransfer.dropEffect = over ? "copy" : "none";
+      setFileOver((current) => (current === over ? current : over));
+    };
+    const onDrop = (event: DragEvent) => {
+      event.preventDefault();
+      const inside =
+        dragHasFiles(event) &&
+        (pointInNode(event, barRef.current) || pointInNode(event, circleRef.current));
+      setFileOver(false);
+      const files = event.dataTransfer?.files;
+      if (!inside || !files?.length) return;
+      const incoming = attachmentsFromDrop(files, event.dataTransfer?.items);
+      if (!incoming.length) return;
+      setAttachments((current) => mergeAttachments(current, incoming));
+    };
+    const clearFileOver = () => setFileOver(false);
+    const onDragLeave = (event: DragEvent) => {
+      if (!event.relatedTarget) clearFileOver();
+    };
+    window.addEventListener("dragover", onDragOver, true);
+    window.addEventListener("drop", onDrop, true);
+    window.addEventListener("dragend", clearFileOver);
+    window.addEventListener("dragleave", onDragLeave);
+    return () => {
+      window.removeEventListener("dragover", onDragOver, true);
+      window.removeEventListener("drop", onDrop, true);
+      window.removeEventListener("dragend", clearFileOver);
+      window.removeEventListener("dragleave", onDragLeave);
+    };
+  }, []);
+
+  useEffect(() => () => releaseAttachments(attachmentsRef.current), []);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewOpen(false);
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (previewRef.current?.contains(target) || circleRef.current?.contains(target)) return;
+      setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [previewOpen]);
+
+  useEffect(() => {
     if (!expanded) {
       return;
     }
     const close = (event: PointerEvent) => {
       const bar = barRef.current;
-      if (bar && event.target instanceof Node && bar.contains(event.target)) {
-        return;
-      }
+      if (!(event.target instanceof Node)) return;
+      if (bar?.contains(event.target)) return;
+      if (circleRef.current?.contains(event.target) || previewRef.current?.contains(event.target)) return;
       setExpanded(false);
       inputRef.current?.blur();
     };
@@ -280,6 +372,31 @@ function Dialog({ children }: { children: ReactNode }) {
   const windowLines = currentWindowLines(state, selectedConversation);
   const contextLines = currentWindowLines(state, selectedConversation ?? conversations.at(-1) ?? null);
 
+  const finishSend = () => {
+    setText("");
+    setAskWhere(false);
+    setPreviewOpen(false);
+    setAttachments((current) => {
+      releaseAttachments(current);
+      return [];
+    });
+    inputRef.current?.blur();
+  };
+  const openAttachment = (path: string) => {
+    const open = window.linopeKernel?.files?.open;
+    if (!open) return Promise.resolve("当前环境打不开这个文件。");
+    return open(path).catch(() => "打不开这个文件。");
+  };
+  const removeAttachment = (id: string) => {
+    setAttachments((current) => {
+      const found = current.find((item) => item.id === id);
+      if (found) releaseAttachments([found]);
+      const next = current.filter((item) => item.id !== id);
+      if (!next.length) setPreviewOpen(false);
+      return next;
+    });
+  };
+
   const deliverToLoop = (value: string, capability: string, appId: string) => {
     if (toolAppId !== appId || !toolVisible) {
       openTool(appId);
@@ -295,22 +412,18 @@ function Dialog({ children }: { children: ReactNode }) {
       : newConversation(capability, modelChanges(), value);
     if (!sentId) return;
     setSelectedConversationId(sentId);
-    setText("");
-    setAskWhere(false);
-    inputRef.current?.blur();
+    finishSend();
   };
 
   const deliverToChat = (value: string) => {
     const sent = sendMessage(value);
     if (!sent) return;
-    setText("");
-    setAskWhere(false);
+    finishSend();
     showConversation();
-    inputRef.current?.blur();
   };
 
   const send = () => {
-    const value = text.trim();
+    const value = messageWithAttachments(text, attachments);
     if (!value) return;
     const route = routeDraft(toolAppId, loops);
     if (route.kind === "loop") {
@@ -352,6 +465,15 @@ function Dialog({ children }: { children: ReactNode }) {
                 boxShadow: lensShadow,
               }}
             />
+            {attachments.length ? (
+              <div
+                data-glass-lens
+                style={{
+                  ...attachmentAnchor(width, height, glass.bottom),
+                  boxShadow: lensShadow,
+                }}
+              />
+            ) : null}
             <ChatLensSlot frame={panel.frame} open={visible} />
             <SettingsLensSlot frame={settingsFrame.frame} open={settingsVisible} />
             <AppsLensSlot frame={appsFrame.frame} open={appsVisible} />
@@ -508,7 +630,7 @@ function Dialog({ children }: { children: ReactNode }) {
         />
       ) : null}
       <EdgeSidebar onOpenApp={openTool} onOpenStore={() => openApps()} />
-      {askWhere && text.trim() ? (
+      {askWhere && messageWithAttachments(text, attachments) ? (
         <div
           className="pointer-events-auto absolute flex items-center gap-2"
           style={{
@@ -525,7 +647,7 @@ function Dialog({ children }: { children: ReactNode }) {
           <span style={{ fontSize: 14, lineHeight: "20px" }}>这句话要交给哪里？</span>
           <button
             className="cursor-pointer border-0"
-            onClick={() => deliverToChat(text.trim())}
+            onClick={() => deliverToChat(messageWithAttachments(text, attachments))}
             style={{ borderRadius: 999, background: "rgba(255,255,255,0.82)", padding: "6px 12px" }}
             type="button"
           >
@@ -534,7 +656,7 @@ function Dialog({ children }: { children: ReactNode }) {
           {linopeId ? (
             <button
               className="cursor-pointer border-0"
-              onClick={() => deliverToLoop(text.trim(), loops[linopeId], linopeId)}
+              onClick={() => deliverToLoop(messageWithAttachments(text, attachments), loops[linopeId], linopeId)}
               style={{ borderRadius: 999, background: "rgba(255,255,255,0.82)", padding: "6px 12px" }}
               type="button"
             >
@@ -543,10 +665,35 @@ function Dialog({ children }: { children: ReactNode }) {
           ) : null}
         </div>
       ) : null}
+      {attachments.length ? (
+        <AttachmentCircle
+          bottom={glass.bottom}
+          circleRef={circleRef}
+          height={height}
+          items={attachments}
+          onToggle={() => setPreviewOpen((current) => !current)}
+          open={previewOpen}
+          width={width}
+        />
+      ) : null}
+      {previewOpen && attachments.length ? (
+        <AttachmentPreview
+          bottom={glass.bottom + height + (askWhere ? 64 : 12)}
+          items={attachments}
+          onOpen={openAttachment}
+          onRemove={removeAttachment}
+          previewRef={previewRef}
+        />
+      ) : null}
       <div
         className="pointer-events-none absolute flex items-center justify-end"
         ref={barRef}
-        style={barStyle}
+        style={{
+          ...barStyle,
+          ...(fileOver
+            ? { borderRadius: glass.radius, boxShadow: "inset 0 0 0 2px rgba(28,28,30,0.72)" }
+            : null),
+        }}
       >
         <textarea
           aria-label="输入"

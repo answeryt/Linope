@@ -111,6 +111,10 @@ interface LinopeKernelApi {
   desktop: {
     presented(): void;
   };
+  files: {
+    pathFor(file: File): string;
+    open(path: string): Promise<string>;
+  };
   stop(): void;
   onEvent(callback: (event: unknown) => void): () => void;
 }
