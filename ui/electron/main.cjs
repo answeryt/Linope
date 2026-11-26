@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, shell } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { KernelSession } = require("./kernel-session.cjs");
@@ -44,6 +44,11 @@ function createWindow() {
     },
   });
   win.setBounds(area);
+  win.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file:")) {
+      event.preventDefault();
+    }
+  });
   mainWindow = win;
   kernelSession = new KernelSession({
     cwd: repoRoot,
@@ -168,6 +173,14 @@ function assertPromptWindow(event) {
     throw new Error("unknown window");
   }
 }
+
+ipcMain.handle("files:open", (event, filePath) => {
+  assertPromptWindow(event);
+  if (typeof filePath !== "string" || !filePath.trim() || filePath.includes("\0")) {
+    throw new Error("missing path");
+  }
+  return shell.openPath(filePath);
+});
 
 ipcMain.handle("prompt:stage", (event, request) => {
   assertPromptWindow(event);

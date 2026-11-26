@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 let actionSequence = 0;
 
@@ -70,6 +70,14 @@ contextBridge.exposeInMainWorld("linopeKernel", {
   desktop: {
     presented() {
       ipcRenderer.send("ui:presented");
+    },
+  },
+  files: {
+    pathFor(file) {
+      return webUtils.getPathForFile(file);
+    },
+    open(filePath) {
+      return ipcRenderer.invoke("files:open", filePath);
     },
   },
   stop() {
